@@ -1,0 +1,22 @@
+schema_version = "1.0.0"
+
+id = "claude_assistant"
+version = "0.20.0"
+name = "AI Studio"
+tagline = "Claude chat, local models and a render studio for Blender"
+maintainer = "louisdotxyz"
+type = "add-on"
+website = "https://github.com/louisdotxyz/ai-studio-blender"
+
+tags = ["3D View", "Render", "User Interface"]
+
+blender_version_min = "5.2.0"
+
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
+
+[permissions]
+network = "Claude Code online, MCP server and LM Studio on 127.0.0.1"
+files = "Chats, backups, renders and HDRIs in folders you choose"
+clipboard = "Paste images and copy answers"

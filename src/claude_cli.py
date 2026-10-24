@@ -1,0 +1,237 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Runs the local Claude Code CLI (``claude -p``) in a background thread.
+
+One process per user message; the conversation continues via ``--resume``.
+Output is read as stream-json and pushed onto a queue that the main thread
+drains. This module does not import ``bpy``.
+"""
+
+import glob
+import json
+import os
+import shlex
+import shutil
+import subprocess
+import threading
+
+# Blender started from the macOS Dock does not inherit the shell's PATH.
+_EXTRA_PATHS = [
+    "~/.local/bin",
+    "~/.claude/local",
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "~/.npm-global/bin",
+    "~/.bun/bin",
+    "~/.volta/bin",
+    "~/bin",
+]
+
+
+def _candidate_dirs():
+    dirs = [os.path.expanduser(p) for p in _EXTRA_PATHS]
+    # nvm installs, newest first
+    dirs += sorted(glob.glob(os.path.expanduser("~/.nvm/versions/node/*/bin")), reverse=True)
+    return dirs
+
+
+def search_path():
+    parts = os.environ.get("PATH", "").split(os.pathsep)
+    for d in _candidate_dirs():
+        if d not in parts:
+            parts.append(d)
+    return os.pathsep.join(p for p in parts if p)
+
+
+def find_claude(configured=""):
+    if configured:
+        path = os.path.expanduser(configured)
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+        return None
+    return shutil.which("claude", path=search_path())
+
+
+def build_env(claude_path):
+    env = dict(os.environ)
+    path = search_path()
+    claude_dir = os.path.dirname(os.path.realpath(claude_path))
+    env["PATH"] = os.pathsep.join([claude_dir, os.path.dirname(claude_path), path])
+    # Don't let an outer Claude Code session (if Blender was started from one) leak into the child.
+    for name in ("CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION"):
+        env.pop(name, None)
+    # Tool calls wait for the user (code approval, ask_user): the CLI's limits are much shorter,
+    # also the one for a tool that sends nothing for a while (300 s, "no response or progress").
+    from .mcp_server import TOOL_TIMEOUT_MS
+    env["MCP_TOOL_TIMEOUT"] = str(TOOL_TIMEOUT_MS)
+    env["CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT"] = str(TOOL_TIMEOUT_MS)
+    # Send the Blender tools directly instead of deferring them behind ToolSearch.
+    env["ENABLE_TOOL_SEARCH"] = "false"
+    return env
+
+
+class ClaudeRun:
+    """One ``claude -p`` process for one or more user messages.
+
+    stdin stays open while Claude works, so messages sent in between
+    (interjections) go into the same session. The CLI picks them up at the
+    next tool boundary (or starts a new turn) and echoes them back thanks to
+    ``--replay-user-messages``. stdin is closed after a ``result`` once every
+    sent message has been echoed, which ends the process.
+    """
+
+    def __init__(self, claude_path, events, *, cwd, mcp_config_path,
+                 system_prompt, session_id=None, model="", effort="", extra_args="",
+                 env_extra=None, prepare=None, local_args=None, single=False):
+        self.events = events  # queue.Queue of ("event", dict) / ("done", rc, stderr)
+        self.cmd = [
+            claude_path, "-p",
+            "--input-format", "stream-json",
+            "--output-format", "stream-json",
+            "--verbose",
+            "--include-partial-messages",
+            "--replay-user-messages",
+            "--mcp-config", mcp_config_path,
+            "--strict-mcp-config",
+        ]
+        if local_args:  # local model: own prompt, no built-in tools (see lmstudio.cli_args)
+            self.cmd += ["--allowedTools", "mcp__blender"] + local_args
+        else:
+            self.cmd += [
+                # Only built-in tools that help in Blender; the rest is token overhead.
+                "--tools", "Read,WebSearch,WebFetch",
+                # Pre-approve web access and reading (renders, datasheets, photos anywhere):
+                # in -p mode there is nobody to grant it. Writing stays off.
+                "--allowedTools", "mcp__blender,WebSearch,WebFetch,Read",
+                # Claude asks questions through the Blender tool ask_user instead.
+                "--disallowedTools", "Bash,Edit,Write,NotebookEdit,AskUserQuestion",
+                "--append-system-prompt", system_prompt,
+            ]
+        if session_id:
+            self.cmd += ["--resume", session_id]
+        if model:
+            self.cmd += ["--model", model]
+        if effort:
+            self.cmd += ["--effort", effort]
+        if extra_args:
+            self.cmd += shlex.split(extra_args)
+        self.cwd = cwd
+        self.env = build_env(claude_path)
+        if env_extra:  # local model: the CLI talks to LM Studio instead of Anthropic
+            self.env.pop("ANTHROPIC_API_KEY", None)
+            self.env.update(env_extra)
+        self.prepare = prepare  # optional callable(run) run in the thread first; returns an error or None
+        self.proc = None
+        self.cancelled = False
+        self._stderr = []
+        self._lock = threading.Lock()
+        self._outbox = []          # (content, uid) written once the process has started
+        self._unconsumed = set()   # uids sent but not yet echoed by the CLI
+        self._stdin_closed = False
+        self.single = single  # one message only (e.g. /compact, which the CLI never echoes back)
+        self._thread = threading.Thread(target=self._run, name="claude-cli", daemon=True)
+
+    def start(self):
+        self._thread.start()
+
+    @property
+    def running(self):
+        return self._thread.is_alive()
+
+    def send(self, content, uid):
+        """Send a user message (uid: UUID string). False if the run is already ending."""
+        with self._lock:
+            if self._stdin_closed or self.cancelled:
+                return False
+            if self.proc is None:
+                self._outbox.append((content, uid))
+                return True
+            return self._write(content, uid)
+
+    def _write(self, content, uid):
+        # Caller holds the lock.
+        message = {"type": "user", "uuid": uid, "message": {"role": "user", "content": content}}
+        try:
+            self.proc.stdin.write(json.dumps(message) + "\n")
+            self.proc.stdin.flush()
+        except (OSError, ValueError):
+            return False
+        self._unconsumed.add(uid)
+        return True
+
+    def _close_stdin(self):
+        # Caller holds the lock.
+        if not self._stdin_closed:
+            self._stdin_closed = True
+            try:
+                self.proc.stdin.close()
+            except (OSError, ValueError):
+                pass
+
+    def cancel(self):
+        self.cancelled = True
+        if self.proc and self.proc.poll() is None:
+            try:
+                self.proc.terminate()
+            except OSError:
+                pass
+
+    def _read_stderr(self):
+        for line in self.proc.stderr:
+            self._stderr.append(line)
+            del self._stderr[:-40]
+
+    def _run(self):
+        if self.prepare is not None:
+            error = self.prepare(self)
+            if error or self.cancelled:
+                self.events.put(("done", -1 if error else 0, error or ""))
+                return
+        try:
+            proc = subprocess.Popen(
+                self.cmd,
+                cwd=self.cwd,
+                env=self.env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+            )
+        except OSError as exc:
+            self.events.put(("done", -1, f"Could not start the Claude CLI: {exc}"))
+            return
+
+        err_thread = threading.Thread(target=self._read_stderr, args=(), daemon=True)
+        with self._lock:
+            self.proc = proc
+            err_thread.start()
+            for content, uid in self._outbox:
+                self._write(content, uid)
+            self._outbox.clear()
+            if not self._unconsumed or self.single:
+                self._close_stdin()
+
+        for line in proc.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                self._stderr.append(line + "\n")
+                continue
+            kind = obj.get("type")
+            if kind == "user" and obj.get("isReplay"):
+                with self._lock:
+                    self._unconsumed.discard(obj.get("uuid"))
+            elif kind == "result":
+                with self._lock:
+                    if not self._unconsumed:
+                        self._close_stdin()
+            self.events.put(("event", obj))
+
+        rc = proc.wait()
+        err_thread.join(timeout=2)
+        self.events.put(("done", rc, "".join(self._stderr).strip()))
