@@ -28,7 +28,8 @@ def main():
                     text = ANNOTATION.sub(r"\1\2 = \3", f.read())
                 with open(dst, "w", encoding="utf-8") as f:
                     f.write(text)
-        out = subprocess.run([sys.executable, "-m", "pyflakes", tmp], capture_output=True, text=True).stdout
+        result = subprocess.run([sys.executable, "-m", "pyflakes", tmp], capture_output=True, text=True)
+        out = result.stdout + result.stderr   # syntax errors come on stderr
     problems = [line.replace(tmp, "src") for line in out.splitlines() if not any(i in line for i in IGNORE)]
     print("\n".join(problems) or "LINT_OK")
     return 1 if problems else 0

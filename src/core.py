@@ -175,19 +175,48 @@ def remove_attachment(index):
 # ---------------------------------------------------------------------------
 # Sending
 
-def queue_prompt(text):
-    """Called from UI code (main thread). Answers an open question or queues a message.
+def queue_prompt(text, skill_names=()):
+    """Called from UI code (main thread). Answers an open question or queues a message
+    (with extra skills, e.g. from a Studio tab).
 
     The actual send happens in the timer, with a clean context for the screenshot.
     """
     text = (text or "").strip()
-    if questions and text and not attachments:
+    if questions and text and not attachments and not skill_names:
         answer_question(0, text)
         return True
     if not text and not attachments:
         return False
-    _prompt_queue.append(text)
+    _prompt_queue.append((text, list(skill_names)))
     return True
+
+
+# Wishes sent from a Studio tab: tab -> index in `messages` where its answer starts.
+studio_prompts = {}
+
+
+def studio_prompt(tab, text):
+    """Send a wish typed in a Studio tab (Render, Light, Material) with that tab's skills."""
+    names = [s["name"] for s in skills.list_skills(workdir()) if s.get("studio_tab") == tab]
+    if not queue_prompt(text, names):
+        return False
+    studio_prompts[tab] = len(messages)
+    return True
+
+
+def studio_reply(tab):
+    """("working" | "done", first line of the answer) for the last wish from `tab`, or (None, "")."""
+    start = studio_prompts.get(tab)
+    if start is None or start > len(messages):
+        return None, ""
+    answer = next((m for m in reversed(messages[start:]) if m["role"] == "assistant"), None)
+    if is_busy():
+        return "working", activity_text()
+    if answer is None:
+        return None, ""
+    line = next((l for l in plain_text(answer["text"]).splitlines()
+                 if l.strip() and not l.startswith("Version:")), "")
+    return "done", line.strip()
 
 
 def is_local(prefs=None):
@@ -252,15 +281,6 @@ def _run_extension_tool(tool, args, task=None):
                             "data": base64.b64encode(result["image_png"]).decode("ascii")})
         return {"content": content or [{"type": "text", "text": "Done."}], "isError": False}
     return mcp_server.text_result(str(result) if result is not None else "Done.")
-
-
-def studio_skills():
-    """Skills bound to the Studio tab you came from (see studio.claude_link.last_tab)."""
-    try:
-        from .studio import claude_link
-    except ImportError:
-        return []
-    return claude_link.studio_skills(workdir())
 
 
 def model_label(prefs=None):
@@ -415,7 +435,7 @@ def _build_content(text, atts, prefs):
     return content
 
 
-def _send(text):
+def _send(text, extra_skills=()):
     prefs = get_prefs()
     atts = list(attachments)
     attachments.clear()
@@ -432,8 +452,9 @@ def _send(text):
             active_skills.remove(name)  # file was deleted
         elif all(s["name"] != skill["name"] for s in chosen):
             chosen.append(skill)
-    for skill in studio_skills():   # the skills of the Studio tab you came from
-        if all(s["name"] != skill["name"] for s in chosen):
+    for name in extra_skills:   # e.g. the skills of the Studio tab the wish came from
+        skill = skills.find(workdir(), name)
+        if skill and all(s["name"] != skill["name"] for s in chosen):
             chosen.append(skill)
     if chosen:
         if not session_id:
@@ -1315,9 +1336,9 @@ def _tick():
     global _dirty, _last_second
     try:
         while _prompt_queue:
-            text = _prompt_queue.pop(0)
+            text, extra = _prompt_queue.pop(0)
             try:
-                _send(text)
+                _send(text, extra)
             except Exception:
                 add_message("error", tr("Sending failed:") + "\n" + traceback.format_exc(limit=3))
 

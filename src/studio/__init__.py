@@ -20,7 +20,8 @@ from . import background, cameras, claude_link, core, foreign, hdri, lights, run
 # sys.modules; api and variants are the helpers in execute_python.
 from . import api, claude_tools, variants  # noqa: F401
 from .props import RS_CameraSettings, RS_Item, RS_LightSettings, RS_Preferences, RS_Settings, _apply_clipping
-from .ui_common import STUDIO_TABS, _queue_progress_text, _unpin
+from .ui_common import (STUDIO_TABS, _queue_progress_text, _unpin, RS_OT_studio_prompt_confirm,
+                        RS_OT_studio_prompt_send, register_prompts, unregister_prompts)
 from .keymaps import register_keymaps, unregister_keymaps
 from .tab_camera import (RS_OT_camera_back, RS_OT_camera_from_view, RS_OT_dof_focus, RS_OT_duplicate_camera,
                          RS_OT_fit_frame, RS_OT_reset_frame, RS_OT_set_camera, RS_OT_set_fstop,
@@ -43,23 +44,13 @@ from .tab_queue import (RS_OT_add, RS_OT_cancel, RS_OT_clear, RS_OT_low_scale, R
 from .runner import RUN
 
 
-def _tab_skills(tab):
-    """Skills bound to a Studio tab (front matter studio_tab)."""
-    try:
-        from .. import core, skills
-        return [s for s in skills.list_skills(core.workdir()) if s.get("studio_tab") == tab]
-    except Exception:
-        return []
-
-
 class RS_OT_open_chat(Operator):
     bl_idname = "render_studio.open_chat"
     bl_label = "Open Claude"
-    bl_description = "Switch to the Claude tab: your messages there use the skills of this Studio tab"
+    bl_description = "Switch to the Claude tab: the whole answer, and talk about it there"
     bl_options = {'INTERNAL'}
 
     def execute(self, context):
-        claude_link.last_tab["dismissed"] = False
         claude_link.show_chat(context.region)
         return {'FINISHED'}
 
@@ -77,16 +68,7 @@ class RS_PT_tabs(Panel):
         _unpin(self)
         row = self.layout.row(align=True)
         row.scale_y = 1.3
-        tab = context.window_manager.render_studio_tab
         row.prop(context.window_manager, "render_studio_tab", expand=True)
-        # The chat uses this tab's skills from now on (shown there, ✕ turns them off).
-        claude_link.note_tab(tab)
-        bound = _tab_skills(tab)
-        if bound:
-            row = self.layout.row()
-            row.alignment = 'RIGHT'
-            row.operator(RS_OT_open_chat.bl_idname, text="Claude: " + ", ".join(s["title"] for s in bound),
-                         icon='SHADERFX', emboss=False, translate=False)
         if RUN.busy:   # rendering: compact, in every sub-tab – ring for the queue, ✕ cancels
             row = self.layout.row(align=True)
             row.progress(factor=RUN.list_progress, type='BAR', text=_queue_progress_text())
@@ -97,6 +79,8 @@ class RS_PT_tabs(Panel):
 
 classes = (
     RS_LightSettings,
+    RS_OT_studio_prompt_send,
+    RS_OT_studio_prompt_confirm,
     RS_PT_tabs,
     RS_OT_low_scale,
     RS_PT_output,
@@ -195,6 +179,7 @@ def register():
     bpy.types.Object.render_studio_camera = PointerProperty(type=RS_CameraSettings)
     bpy.types.Object.render_studio_light = PointerProperty(type=RS_LightSettings)
     bpy.types.STATUSBAR_HT_header.append(draw_statusbar)
+    register_prompts()
     lights.register()
     runner.register()
     hdri.register()
@@ -231,5 +216,6 @@ def unregister():
     del bpy.types.Scene.render_studio
     del bpy.types.WindowManager.render_studio_tab
     del bpy.types.WindowManager.render_studio_mat_open
+    unregister_prompts()
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

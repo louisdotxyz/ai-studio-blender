@@ -373,6 +373,8 @@ DE = {
     "Save as {}": "Speichern als {}",
     "Crash Details": "Absturz-Details",
     "Save failed": "Speichern fehlgeschlagen",
+    "Context of this chat: {}% used": "Kontext dieses Chats: {} % belegt",
+    "Limit": "Limit",
     "Last backup {} ({}): {}": "Letzte Sicherung {} ({}): {}",
     "Auto save": "Sicherung",
     "rendering a preview in the background…": "rendert eine Vorschau im Hintergrund…",

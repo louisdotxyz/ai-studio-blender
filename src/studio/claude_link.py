@@ -1,33 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Link between the Studio tabs and the Claude chat.
 
-The skills for the Studio tabs (camera, light, hdri, material, render) ship with
-the add-on (skills_default/) and are installed once into the skills folder like
-all other skills (skills.py); after that they belong to the user and are never
-rewritten. Their front matter "studio_tab" binds them to a Studio tab: the chat
-uses them while you come from that tab (see last_tab).
+Each tab (Render, Light, Material) has a prompt line: the wish goes to the chat with the
+skills bound to that tab (front matter "studio_tab", see skills.py); the tab shows that
+Claude is working and the first line of the answer, the discussion goes on in the chat.
 """
-
-import time
-
-# The Studio tab you were in last (set while the Studio panel is shown); the chat adds
-# that tab's skills to your messages until you dismiss them or go to another tab.
-last_tab = {"tab": "", "time": 0.0, "dismissed": False}
-
-
-def note_tab(tab):
-    """Called by the Studio panel's draw: you are looking at `tab`."""
-    if last_tab["tab"] != tab:
-        last_tab["dismissed"] = False
-    last_tab.update(tab=tab, time=time.time())
-
-
-def studio_skills(workdir):
-    """The skills bound to the Studio tab you came from (empty if dismissed)."""
-    if not last_tab["tab"] or last_tab["dismissed"]:
-        return []
-    from .. import skills
-    return [s for s in skills.list_skills(workdir) if s.get("studio_tab") == last_tab["tab"]]
 
 
 def assistant_core():

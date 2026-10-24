@@ -253,5 +253,39 @@ def settings_for_earlier_users():
             os.remove(chats)
 
 
+@section
+def prompt_from_studio_tab():
+    core = mod("core")
+    before = len(core._prompt_queue)
+    sent = core.studio_prompt('LIGHT', "softer key light")
+    item = core._prompt_queue[-1] if len(core._prompt_queue) > before else None
+    check("tab wish goes out with the tab's skills", sent and item and item[0] == "softer key light"
+          and {"light", "hdri"} <= set(item[1]), item)
+    core._prompt_queue[:] = core._prompt_queue[:before]
+    core.studio_prompts.clear()
+
+
+@section
+def camera_back():
+    import time
+    cameras = mod("studio").cameras
+    scene = bpy.context.scene
+    cam = scene.camera
+    cam.pop(cameras.HISTORY_KEY, None)
+    cameras._end_moves()         # earlier tests moved the camera; their move timer never ran
+    cameras.seed(scene)          # in Blender a timer does this at start
+    start = cam.location.copy()
+    cam.location.x += 1          # an accidental move …
+    bpy.context.view_layer.update()
+    cam.location.x += 1          # … in several steps
+    bpy.context.view_layer.update()
+    time.sleep(cameras.MOVE_PAUSE)
+    cameras._end_moves()         # the timer that ends a move (no timers in background mode)
+    steps = len(cameras.history(cam))
+    cameras.go_back(cam)
+    check("camera back after moving", steps == 1 and (cam.location - start).length < 1e-4,
+          (steps, tuple(cam.location), tuple(start)))
+
+
 ok = all(results)
 print("FUNCTIONAL_OK" if ok else "FUNCTIONAL_FAIL", "%d/%d" % (sum(results), len(results)))

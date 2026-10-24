@@ -153,6 +153,12 @@ class CLAUDE_OT_compact_chat(bpy.types.Operator):
     bl_description = "Summarize older parts of this chat so it uses less context (faster, avoids context errors)"
 
     @classmethod
+    def description(cls, context, properties):
+        fraction = core.context_fraction()
+        head = tr("Context of this chat: {}% used").format(round(fraction * 100)) + "\n" if fraction else ""
+        return head + tip(cls.bl_description)
+
+    @classmethod
     def poll(cls, context):
         return not core.is_busy() and core.session_id is not None
 
@@ -407,19 +413,6 @@ def _unregister_skill_operators():
         except RuntimeError:
             pass
     _skill_ops.clear()
-
-
-class CLAUDE_OT_studio_skills_off(bpy.types.Operator):
-    bl_idname = "claude.studio_skills_off"
-    bl_label = "Studio Skills Off"
-    bl_description = ("These skills come from the Studio tab you were in and go with your messages. "
-                      "Click to leave them out (they come back when you go to a Studio tab again)")
-    bl_options = {'INTERNAL'}
-
-    def execute(self, context):
-        from .studio import claude_link
-        claude_link.last_tab["dismissed"] = True
-        return {'FINISHED'}
 
 
 class CLAUDE_OT_use_skill(bpy.types.Operator):
@@ -993,8 +986,6 @@ class CLAUDE_PT_chat(bpy.types.Panel):
 
         # Chat area: fills what the cards, the input and the status line leave free.
         skill_rows = len(skills.list_skills(core.workdir())) // SKILLS_PER_ROW + 1
-        if core.studio_skills():
-            skill_rows += 1
         reserved = RESERVED_ROWS + len(core.attachments) + skill_rows + self._cards_height()
         if prefs is not None and prefs.backend == 'LOCAL':
             reserved += 1   # local model status has two lines
@@ -1167,13 +1158,6 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         # Skills, always visible: one row of icons (name and text in the tooltip),
         # "+" creates a new one; checked skills are highlighted.
         items = [s for s in skills.list_skills(core.workdir()) if s["in_chat"]]
-        tab_skills = core.studio_skills()
-        if tab_skills:
-            # Skills of the Studio tab you came from: used automatically, ✕ turns them off.
-            row = col.row(align=True)
-            row.operator("claude.studio_skills_off", text="Studio: " + ", ".join(s["title"] for s in tab_skills),
-                         icon='SHADERFX', translate=False, depress=True)
-            row.operator("claude.studio_skills_off", text="", icon='X')
         for start in range(0, len(items) + 1, SKILLS_PER_ROW):
             row = col.row(align=True)
             for skill in items[start:start + SKILLS_PER_ROW]:
@@ -1249,43 +1233,36 @@ class CLAUDE_PT_chat(bpy.types.Panel):
             self._draw_local_status(col, prefs)
             self._draw_autosave(col, prefs)
             return
+        # Short texts so they always fit; the details are in the tooltips. No red: a hint, not an alarm.
         row = layout.row(align=True)
         row.alignment = 'CENTER'
         fraction = core.context_fraction() if core.session_id else 0
         if fraction:
             limit = (prefs.compact_at / 100) if prefs and prefs.auto_compact else 0.95
             sub = row.row(align=True)
-            sub.alert = fraction >= limit
             sub.active = fraction >= limit * 0.8
-            sub.operator("claude.compact_chat", text=tr("Context {}%").format(round(fraction * 100)),
+            sub.operator("claude.compact_chat", text="%d%%" % round(fraction * 100), icon='TEXT',
                          emboss=False, translate=False)
         windows = _usage_windows()
-        status = (core.usage or {}).get("status")
-        if status == "rejected":
-            sub = row.row(align=True)
-            sub.alert = True
-            reset = (core.usage or {}).get("resetsAt")
-            text = tr("Limit reached") + (tr(" – available again {}").format(_format_reset(reset)) if reset else "")
-            sub.operator("claude.usage_info", text=text, emboss=False, translate=False)
+        if (core.usage or {}).get("status") == "rejected":
+            row.operator("claude.usage_info", text=tr("Limit"), icon='ERROR', emboss=False, translate=False)
         elif windows:
             low = min(left for _label, left, _reset in windows)
             sub = row.row(align=True)
-            sub.alert = low < 0.15
             sub.active = low < 0.15
-            text = " · ".join("%s %d%%" % (label, round(left * 100)) for label, left, _reset in windows)
-            sub.operator("claude.usage_info", text=text, emboss=False, translate=False)
+            text = " · ".join("%d%%" % round(left * 100) for _label, left, _reset in windows)
+            sub.operator("claude.usage_info", text=text, icon='TIME', emboss=False, translate=False)
         if prefs is not None and prefs.autosave:
             st = autosave.state
-            sub = row.row(align=True)
+            save = row.row(align=True)   # save now and the backup folder side by side
             if st["error"]:
-                sub.alert = True
-                sub.operator("claude.autosave_now", text=tr("Save failed"), icon='ERROR', emboss=False)
+                save.operator("claude.autosave_now", text=tr("Save failed"), icon='ERROR', emboss=False)
             else:
-                sub.active = bool(st["path"]) and st["reason"] != "memory low"
-                sub.alert = st["reason"] == "memory low"
-                text = time.strftime("%H:%M", time.localtime(st["last"])) if st["path"] else tr("Auto save")
+                sub = save.row(align=True)
+                sub.active = bool(st["path"])
+                text = time.strftime("%H:%M", time.localtime(st["last"])) if st["path"] else ""
                 sub.operator("claude.autosave_now", text=text, icon='FILE_TICK', emboss=False, translate=False)
-            row.operator("claude.open_backups", text="", icon='FILE_FOLDER', emboss=False)
+            save.operator("claude.open_backups", text="", icon='FILE_FOLDER', emboss=False)
 
     def _draw_usage(self, layout):
         prefs = get_prefs()
@@ -1430,7 +1407,6 @@ classes = (
     CLAUDE_OT_save_as_original,
     CLAUDE_OT_open_crash_log,
     CLAUDE_OT_make_project_folder,
-    CLAUDE_OT_studio_skills_off,
     CLAUDE_OT_autosave_now,
     CLAUDE_OT_open_backups,
     CLAUDE_MT_skills,

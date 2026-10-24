@@ -9,7 +9,8 @@ from bpy.props import (BoolProperty, FloatProperty, IntProperty, StringProperty)
 from bpy.types import Menu, Operator, Panel
 
 from . import api, background, hdri, lights, runner
-from .ui_common import LIGHT_TAB_ORDER, _SidebarPanel, _report_value_error, _select_only, _unpin, studio_tab
+from .ui_common import (LIGHT_TAB_ORDER, _SidebarPanel, _report_value_error, _select_only, _unpin,
+                        draw_claude_prompt, studio_tab)
 
 
 class RS_OT_select_light(Operator):
@@ -466,8 +467,7 @@ class RS_MT_hdris(Menu):
 
 
 class RS_PT_lighting(_SidebarPanel, Panel):
-    """The Light tab in one panel, so the order is always Presets, Lights (the World is
-    in the Render tab, background mode World).
+    """The Light tab in one panel, so the order is always Claude, Presets, Lights, World.
     Without a header, so it stays at the top of the tab."""
     bl_label = "Lighting"
     studio_tab = 'LIGHT'
@@ -479,6 +479,7 @@ class RS_PT_lighting(_SidebarPanel, Panel):
         scene = context.scene
         rs = scene.render_studio
         layout = self.layout
+        draw_claude_prompt(layout.box(), context, 'LIGHT')
 
         # Presets: dropdown with the current one, + saves the lights as a new preset
         box = layout.box()
@@ -523,10 +524,15 @@ class RS_PT_lighting(_SidebarPanel, Panel):
                 _draw_light_details(col.box(), obj, rs)
                 col.separator()
 
+        # World: HDRI (also when the background is transparent or a color, it still lights)
+        box = layout.box()
+        box.label(text="World", icon='WORLD')
+        _draw_world(box, scene, rs)
+
 
 def _draw_world(box, scene, rs):
-    """The World background in the Render tab: ◀ dropdown ▶ with the current HDRI, a large
-    preview, strength and rotation, and a wish field to generate an HDRI with Claude."""
+    """The World in the Light tab: ◀ dropdown ▶ with the current HDRI, a large preview,
+    strength and rotation."""
     path = hdri.current_path(scene)
     row = box.row(align=True)
     row.operator(RS_OT_hdri_step.bl_idname, text="", icon='TRIA_LEFT').direction = -1

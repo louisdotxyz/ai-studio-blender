@@ -8,8 +8,7 @@ from bpy.types import Operator, Panel
 from . import background, cameras, runner, sync
 from .props import FORMAT_PRESETS, PPI
 from .ui_common import (RENDER_TAB_ORDER, _SidebarPanel, _look_through, _unpin,
-                        active_camera, studio_tab)
-from .tab_light import _draw_world
+                        active_camera, draw_claude_prompt, studio_tab)
 
 
 class RS_OT_set_camera(Operator):
@@ -31,7 +30,8 @@ class RS_OT_set_camera(Operator):
 class RS_OT_camera_back(Operator):
     bl_idname = "render_studio.camera_back"
     bl_label = "Camera Back"
-    bl_description = "Put the camera back where it was before it was last moved (up to 20 steps)"
+    bl_description = ("Put the camera back where it was before it was last moved, also after moving it "
+                      "with Lock Camera to View, which Undo does not catch (up to 20 steps)")
     bl_options = {'UNDO', 'INTERNAL'}
 
     @classmethod
@@ -176,6 +176,7 @@ class RS_PT_camera(_SidebarPanel, Panel):
     def draw(self, context):
         _unpin(self)
         layout = self.layout
+        draw_claude_prompt(layout.box(), context, 'RENDER')
         scene = context.scene
         rq = scene.render_studio
         render = scene.render
@@ -185,6 +186,11 @@ class RS_PT_camera(_SidebarPanel, Panel):
         box = layout.box()
         row = box.row()
         row.label(text="Camera", icon='CAMERA_DATA')
+        # Moved the camera by accident (e.g. with "Lock Camera to View", which ⌘Z does not undo)?
+        steps = len(cameras.history(cam)) if cam is not None else 0
+        back = row.row(align=True)
+        back.enabled = steps > 0 and not rq.camera_locked
+        back.operator(RS_OT_camera_back.bl_idname, text="Back (%d)" % steps if steps else "Back", icon='LOOP_BACK')
         row.popover(RS_PT_frame.__name__, text="", icon='PREFERENCES')
         grid = box.grid_flow(row_major=True, columns=3, even_columns=True, align=True)
         for obj in cameras.scene_cameras(scene):
@@ -199,9 +205,6 @@ class RS_PT_camera(_SidebarPanel, Panel):
         sub = row.row(align=True)
         sub.enabled = not locked
         sub.prop(rq, "orbit_target", text="", icon='PIVOT_CURSOR', placeholder="Orbit Around: 3D Cursor")
-        back = row.row(align=True)
-        back.enabled = bool(cameras.history(cam)) and not locked
-        back.operator(RS_OT_camera_back.bl_idname, text="", icon='LOOP_BACK')
         row.prop(rq, "camera_locked", text="", icon='LOCKED' if locked else 'UNLOCKED')
 
         # Lens, format, scale
@@ -278,7 +281,7 @@ class RS_PT_camera(_SidebarPanel, Panel):
             if shading is not None and shading.type in {'SOLID', 'WIREFRAME'}:
                 box.label(text="Shown in Material Preview and Rendered", icon='INFO')
         elif rq.background_mode == 'NORMAL':
-            _draw_world(box, scene, rq)
+            # The World itself (HDRI, strength, rotation) is set in the Light tab.
             problems = background.world_problems(scene, space)
             if problems:
                 sub = box.column(align=True)

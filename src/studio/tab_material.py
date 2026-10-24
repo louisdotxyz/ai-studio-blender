@@ -9,7 +9,7 @@ from bpy.types import Menu, Operator, Panel
 
 from . import matpresets, runner
 from .matpresets import _color_input, _principled
-from .ui_common import MATERIAL_TAB_ORDER, _SidebarPanel, _unpin, studio_tab
+from .ui_common import MATERIAL_TAB_ORDER, _SidebarPanel, _unpin, draw_claude_prompt, studio_tab
 
 
 class RS_OT_material_duplicate(Operator):
@@ -566,6 +566,7 @@ class RS_PT_material(_SidebarPanel, Panel):
     def draw(self, context):
         _unpin(self)
         layout = self.layout
+        draw_claude_prompt(layout.box(), context, 'MATERIAL')
         obj = context.active_object
         p = runner.prefs(context)
         box = layout.box()
