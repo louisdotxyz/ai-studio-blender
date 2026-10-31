@@ -879,7 +879,7 @@ def versions():
 
 
 SUMMARY_KINDS = (  # (key, icon, label, tools, keywords in code descriptions)
-    ("material", 'MATERIAL', "Material", (), r"materi|beiz|farb|colou?r|textur|shader|rauheit|rough|glanz|holz"),
+    ("material", 'MATERIAL', "Material", ("studio_base_material",), r"materi|beiz|farb|colou?r|textur|shader|rauheit|rough|glanz|holz"),
     ("camera", 'CAMERA_DATA', "Camera", ("studio_camera",), r"kamera|camera|\bcam\b|brennweite|focal"),
     ("light", 'LIGHT', "Light", ("studio_light_setup",), r"licht|light|lampe|schatten|shadow"),
     ("world", 'WORLD', "World", ("studio_hdri_setup", "studio_environment_bake"), r"hdri|world|umgebung|himmel|sky"),

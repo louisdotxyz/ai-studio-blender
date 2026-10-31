@@ -190,7 +190,7 @@ class RS_PT_camera(_SidebarPanel, Panel):
         steps = len(cameras.history(cam)) if cam is not None else 0
         back = row.row(align=True)
         back.enabled = steps > 0 and not rq.camera_locked
-        back.operator(RS_OT_camera_back.bl_idname, text="Back (%d)" % steps if steps else "Back", icon='LOOP_BACK')
+        back.operator(RS_OT_camera_back.bl_idname, text="", icon='LOOP_BACK')
         row.popover(RS_PT_frame.__name__, text="", icon='PREFERENCES')
         grid = box.grid_flow(row_major=True, columns=3, even_columns=True, align=True)
         for obj in cameras.scene_cameras(scene):

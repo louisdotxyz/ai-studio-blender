@@ -136,7 +136,9 @@ class _SidebarPanel:
 
 
 def _item_progress_text():
-    """"45 % · 25 s" for the image that renders now."""
+    """"45 % · 25 s" for the image that renders now ("Draft", "Starting Blender" before)."""
+    if RUN.render_progress < 0.005 and RUN.status not in {"", "rendering"}:
+        return RUN.status.capitalize()
     text = "%d %%" % round(RUN.render_progress * 100)
     left = RUN.current_left()
     return text + (" · " + runner.format_time(left) if left is not None else "")

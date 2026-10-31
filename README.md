@@ -27,10 +27,12 @@ render studio for product shots, all in the sidebar of the 3D viewport.
 - **Light:** light setups and presets, single lights with target and height, HDRIs from a
   folder, generated HDRIs, rooms baked into HDRIs.
 - **Material:** preview, quick settings, a library of all materials grouped by part, base
-  materials from your own asset file, presets, eyedroppers for material and color.
+  materials from your own asset file (Claude or a button can save improved ones back),
+  presets, eyedroppers for material and color (objects picked together share changes).
 - **Queue:** ⌘R (High) / ⇧⌘R (Low) adds the camera. Images render in a second Blender
-  without a window, so you can keep working. It includes material variants (series in
-  different colors), a preview with browsing, and progress with time left.
+  without a window, so you can keep working. The preview shows the image that renders now
+  (a quick draft within seconds, then the final), with progress and time left. Includes
+  material variants (series in different colors) and browsing through earlier renders.
 
 **Files**
 - Every new file gets its own project folder: the file, backups (the newest N), assets, an

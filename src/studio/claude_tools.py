@@ -56,6 +56,24 @@ def _environment_bake(args):
     return f"Environment baked and used as World: {path}"
 
 
+def _base_material(args):
+    action = str(args.get("action") or "list").lower()
+    if action == "list":
+        from .tab_material import base_library_file, BASE_KEY
+        path = base_library_file()
+        if not path:
+            return "No base material library (Preferences › Studio)."
+        names = sorted(m.get(BASE_KEY) for m in bpy.data.materials if m.get(BASE_KEY))
+        return "Library: %s\nBase materials copied into this file: %s" % (path, ", ".join(names) or "none yet")
+    if action == "remove":
+        return "Removed from the base materials: " + api.remove_base_material(str(args["name"]))
+    material = args.get("material") or getattr(bpy.context.active_object, "active_material", None)
+    if material is None:
+        raise ValueError("No material given and the active object has none")
+    name = api.save_base_material(material, args.get("name") or None)
+    return "Saved to the base materials (all projects): " + name
+
+
 def _camera(args):
     from . import cameras
     scene = bpy.context.scene
@@ -152,6 +170,18 @@ def get_tools():
              "resolution": {"type": "integer"}, "samples": {"type": "integer"}},
              "required": ["name", "collection"]},
          "handler": _environment_bake},
+        {"name": "studio_base_material", "label": "Render Studio: base materials",
+         "description": "Render Studio's base material library (generic materials shared by all projects, "
+                        "the base group in the Material tab): 'list' them, 'save' a material of this file "
+                        "into it (replaces the one of the same name – change the copy here first, then save), "
+                        "or 'remove' one (ask the user first). Only when the user asks to change the base "
+                        "materials.",
+         "inputSchema": {"type": "object", "properties": {
+             "action": {"type": "string", "enum": ["list", "save", "remove"]},
+             "material": {"type": "string", "description": "Material in this file (default: active)"},
+             "name": {"type": "string", "description": "Name in the library (default: the base name)"}},
+             "required": ["action"]},
+         "handler": _base_material},
         {"name": "studio_camera", "label": "Render Studio: camera",
          "description": "Render Studio: create a camera. 'from_view' saves the user's current viewport view; "
                         "'place' puts a camera around the subject like the lights (horizontal degrees, 0 = "

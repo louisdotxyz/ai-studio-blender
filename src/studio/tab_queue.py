@@ -2,6 +2,7 @@
 """The Queue tab: adding cameras, the list, the preview of the renders, output settings."""
 
 import os
+import time
 
 import bpy
 from bpy.props import (EnumProperty, FloatProperty, IntProperty, StringProperty)
@@ -163,7 +164,13 @@ class RS_OT_view_camera(Operator):
 _preview_pending = set()
 
 
-_view = {"path": ""}   # the image you browsed to; "" = always the newest
+_view = {"path": ""}   # the image you browsed to; "" = the entry that renders now, else the newest
+
+
+def _live():
+    """The entry that renders now (a still of the list, not a preview for Claude)."""
+    job = RUN.current
+    return job if job and not job.get("preview") and not RUN.animation else None
 
 
 def _selected_image(images):
@@ -171,6 +178,9 @@ def _selected_image(images):
     if path and path in images:
         return path
     _view["path"] = ""
+    live = _live()
+    if live is not None:
+        return live.get("draft", "")   # its quick draft, "" until there is one
     return images[0] if images else ""
 
 
@@ -184,11 +194,12 @@ class RS_OT_preview_step(Operator):
 
     def execute(self, context):
         images = runner.queue_images(context.scene)
-        if not images:
+        entries = ([""] if _live() else []) + images   # "" = the entry that renders now
+        if not entries:
             return {'CANCELLED'}
-        current = _selected_image(images)
-        index = max(0, min(len(images) - 1, images.index(current) + self.direction))
-        _view["path"] = images[index] if index else ""
+        current = _view["path"] if _view["path"] in images else entries[0]
+        index = max(0, min(len(entries) - 1, entries.index(current) + self.direction))
+        _view["path"] = entries[index] if index else ""
         return {'FINISHED'}
 
 
@@ -207,6 +218,19 @@ def _schedule_preview(path):
         runner.tag_redraw()
         return None
     bpy.app.timers.register(load, first_interval=0.0)
+
+
+_prewarmed = [0.0]
+
+
+def _schedule_prewarm():
+    """The Queue tab is open: start the render worker now, so the first entry does not wait for
+    Blender to start (at most every 10 minutes; it closes again after a while without work)."""
+    now = time.monotonic()
+    if RUN.busy or runner.WORKER.alive() or now - _prewarmed[0] < 600:
+        return
+    _prewarmed[0] = now
+    bpy.app.timers.register(lambda: runner.prewarm() or None, first_interval=0.5)
 
 
 def _show_image_in_render_window(image):
@@ -234,7 +258,8 @@ class RS_OT_show_render(Operator):
         if path and os.path.isdir(path) and not _view["path"]:   # an animation: its folder
             bpy.ops.wm.path_open(filepath=path)
             return {'FINISHED'}
-        path = _selected_image(runner.queue_images(context.scene))
+        images = runner.queue_images(context.scene)
+        path = _selected_image(images) or (images[0] if images else "")   # no draft yet: the newest
         image = runner.show_in_preview(path) if path and os.path.isfile(path) else None
         runner.with_render_window(lambda: bpy.ops.render.view_show('INVOKE_DEFAULT'))
         if image is not None:
@@ -392,6 +417,7 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
 
     def draw(self, context):
         _unpin(self)
+        _schedule_prewarm()
         layout = self.layout
         scene = context.scene
         rq = scene.render_studio
@@ -407,36 +433,50 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
             row = col.row(align=True)
             row.label(text="", icon='FILE_FOLDER')
             row.prop(p, "output_root", text="")
-        # The newest render (or the one you browsed to), ◀ ▶ through the queue's images,
-        # the magnifier opens it big in the render window.
+        # The entry that renders now (its quick draft, then the image), or the newest render,
+        # ◀ ▶ through the queue's images, the magnifier opens it big in the render window.
         images = runner.queue_images(scene)
         path = _selected_image(images)
+        live = _live() if not _view["path"] else None
         image = bpy.data.images.get(runner.PREVIEW_IMAGE)
         if path and (image is None or
                      os.path.normpath(bpy.path.abspath(image.filepath)) != os.path.normpath(path)):
             _schedule_preview(path)   # data can't change inside draw
-        if images:
-            index = images.index(path) if path in images else 0
+            image = None              # still the older image until it is loaded
+        entries = ([""] if _live() else []) + images
+        if entries:
+            index = 0 if live is not None or path not in entries else entries.index(path)
             pic = col.box()
             head = pic.row(align=True)
             older = head.row(align=True)
-            older.enabled = index < len(images) - 1
+            older.enabled = index < len(entries) - 1
             older.operator(RS_OT_preview_step.bl_idname, text="", icon='TRIA_LEFT').direction = 1
             count = head.row(align=True)
             count.alignment = 'CENTER'
-            count.label(text="%d / %d" % (index + 1, len(images)) if index else "Newest")
+            count.label(text="Rendering" if live is not None else
+                        "%d / %d" % (index + 1, len(entries)) if index else "Newest")
             newer = head.row(align=True)
             newer.enabled = index > 0
             newer.operator(RS_OT_preview_step.bl_idname, text="", icon='TRIA_RIGHT').direction = -1
             head.operator(RS_OT_show_render.bl_idname, text="", icon='ZOOM_IN')
-            if image is not None:
+            if image is not None and path:
                 pic.template_icon(icon_value=layout.icon(image), scale=8.0)
-            variant = runner.variant_of(path)
-            pic.label(text=variant or os.path.basename(path), icon='RENDER_RESULT', translate=False)
-            if variant:
-                sub = pic.row()
-                sub.active = False
-                sub.label(text=os.path.basename(path), translate=False)
+            else:   # the same height until the draft is there
+                wait = pic.row()
+                wait.alignment = 'CENTER'
+                wait.scale_y = 8.0
+                wait.active = False
+                wait.label(text="", icon='TIME' if live is not None else 'NONE')
+            if live is not None:
+                pic.progress(factor=RUN.render_progress, type='BAR', text=_item_progress_text())
+                pic.label(text=live["camera"], icon='RENDER_STILL', translate=False)
+            else:
+                variant = runner.variant_of(path)
+                pic.label(text=variant or os.path.basename(path), icon='RENDER_RESULT', translate=False)
+                if variant:
+                    sub = pic.row()
+                    sub.active = False
+                    sub.label(text=os.path.basename(path), translate=False)
         # [+ Add] [LQ|HQ] [still|animation] [clear]
         row = col.row(align=True)
         row.scale_y = 1.2

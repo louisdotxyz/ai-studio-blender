@@ -31,8 +31,9 @@ TICK = 0.2
 # After asking the worker to stop: how long until it is killed hard.
 KILL_AFTER = 3.0
 WORKER_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "render_worker.py")
-# Cycles: "Sample 16/64", EEVEE: "Rendering 16 / 64 samples"
-_SAMPLE_RE = re.compile(r"(?:Sample|Rendering)\s+(\d+)\s*/\s*(\d+)")
+# Cycles: "Sample 16/64", EEVEE: "Rendering 16 / 64 samples"; big Cycles images add " tile 3/9"
+_SAMPLE_RE = re.compile(r"(?:Sample|Rendering)\s+(\d+)\s*/\s*(\d+)(?:\s+tile\s+(\d+)/(\d+))?")
+DRAFT = {"max_size": 640, "samples": 16}   # the quick first image of an entry (preview)
 
 
 def prefs(context=None):
@@ -106,8 +107,10 @@ def with_render_window(func):
 
 
 class Worker:
-    """The second Blender. It stays open between entries as long as your scene and the camera
-    stay the same (see _on_depsgraph_update); otherwise the next entry starts a fresh one."""
+    """The second Blender. It starts without a file (ahead of time when the Queue tab opens,
+    the GPU kernels load meanwhile) and keeps your scene loaded between entries as long as the
+    scene and the camera stay the same (see _on_depsgraph_update); otherwise it opens a fresh
+    copy of the file – a new process only after it was stopped."""
 
     def __init__(self):
         self.proc = None
@@ -116,6 +119,7 @@ class Worker:
         self.fingerprint = None
         self.base = ""
         self.idle_since = 0.0
+        self.started = 0.0
         self._log = None
 
     def alive(self):
@@ -126,9 +130,23 @@ class Worker:
         return (self.alive() and self.generation == generation and self.camera_key == camera_key
                 and self.fingerprint == scene_fingerprint(scene))
 
-    def start(self, scene, generation, camera_key):
-        """Save a plain copy of the file (the scene itself is not changed) and open it in `Blender -b`."""
+    def launch(self):
+        """Start the empty worker process (nothing to save, Blender does not wait)."""
+        if self.alive():
+            return
         self.kill()
+        cmd = [bpy.app.binary_path, "-b", "--factory-startup", "-noaudio",
+               "--python-exit-code", "3", "--python", WORKER_SCRIPT, "--", json.dumps(_device_settings())]
+        self._log = open(worker_log_path(), "w", encoding="utf-8")
+        self.proc = subprocess.Popen(cmd, stdout=self._log, stderr=subprocess.STDOUT, stdin=subprocess.PIPE,
+                                     text=True)
+        self.started = time.monotonic()
+        self.idle_since = time.monotonic()
+        log("worker launched")
+
+    def start(self, scene, generation, camera_key):
+        """Save a plain copy of the file (the scene itself is not changed) and open it in the worker."""
+        self.launch()
         base = os.path.join(jobs_dir(), "base_%d_%d.blend" % (os.getpid(), generation))
         RUN.preparing = True   # the save handlers must not take this copy for the user's save
         try:
@@ -136,19 +154,14 @@ class Worker:
                                         relative_remap=True, check_existing=False)
         finally:
             RUN.preparing = False
-        cmd = [bpy.app.binary_path, "-b", "--factory-startup", "-noaudio", base]
         try:
-            if bpy.context.preferences.filepaths.use_scripts_auto_execute:
-                cmd.append("-y")   # drivers with Python expressions, as in your Blender
+            scripts = bpy.context.preferences.filepaths.use_scripts_auto_execute   # drivers with Python
         except AttributeError:
-            pass
-        cmd += ["--python-exit-code", "3", "--python", WORKER_SCRIPT, "--", json.dumps(_device_settings())]
-        self._log = open(worker_log_path(), "w", encoding="utf-8")
-        self.proc = subprocess.Popen(cmd, stdout=self._log, stderr=subprocess.STDOUT, stdin=subprocess.PIPE,
-                                     text=True)
+            scripts = False
+        self.send({"load": base, "scripts": bool(scripts)})   # the worker deletes it once it is open
         self.generation, self.camera_key, self.base = generation, camera_key, base
         self.fingerprint = scene_fingerprint(scene)
-        log("worker started (scene state %d, camera %s)" % (generation, camera_key))
+        log("worker loads the scene (state %d, camera %s)" % (generation, camera_key))
 
     def send(self, job):
         self.proc.stdin.write(json.dumps(job) + "\n")
@@ -184,11 +197,31 @@ class Worker:
             except OSError:
                 pass
             self._log = None
-        _remove_file(self.base)
+        # Copies it did not get to open any more
+        prefix = "base_%d_" % os.getpid()
+        for name in os.listdir(jobs_dir()):
+            if name.startswith(prefix) and name.endswith(".blend"):
+                _remove_file(os.path.join(jobs_dir(), name))
         self.proc, self.base, self.generation, self.camera_key = None, "", -1, None
 
 
 WORKER = Worker()
+
+
+def prewarm():
+    """Launch the worker ahead of the next entry (Queue tab opened, a render was stopped)."""
+    if bpy.app.background or WORKER.alive() or RUN.busy:
+        return
+    p = prefs()
+    if p is not None and not p.auto_render:
+        return
+    try:
+        WORKER.launch()
+    except OSError as ex:
+        log("worker did not launch: %s" % ex)
+        return
+    if not bpy.app.timers.is_registered(_idle_timer):
+        bpy.app.timers.register(_idle_timer, first_interval=5.0)
 _previews = []            # quick renders for Claude: {"camera", "max_size", "samples", "callback"}
 _preview_counter = [0]
 
@@ -200,7 +233,7 @@ def request_preview(scene, camera, max_size, samples, callback):
         raise RuntimeError("No camera to render from")
     _previews.append({"camera": camera, "max_size": max_size, "samples": samples, "callback": callback})
     RUN.start(scene)
-IDLE_KEEP = 90.0   # seconds a worker stays open after the queue, for the next entry
+IDLE_KEEP = 300.0   # seconds a worker stays open after the queue, for the next entry
 
 
 def _idle_timer():
@@ -503,6 +536,8 @@ class Runner:
             bpy.app.timers.register(_idle_timer, first_interval=5.0)
         elif bpy.app.background:
             WORKER.stop()
+        else:
+            prewarm()   # stopped in the middle: the next entry should not wait for a new Blender
         tag_redraw()
 
     def _next_item(self, scene):
@@ -564,9 +599,13 @@ class Runner:
             log("job could not be prepared: %s" % ex)
             self._job_failed(scene, item.uid, label)
             return
+        if not self.animation:
+            draft = os.path.join(jobs_dir(), "draft_%d.png" % item.uid)
+            job["draft"] = dict(DRAFT, path=draft)
+            self.current["draft_path"] = draft
         camera_key = camera.name
         reuse = WORKER.fits(scene, _generation[0], camera_key)
-        self.status = "rendering" if reuse else "starting Blender"
+        self.status = "rendering" if reuse else ("loading scene" if WORKER.alive() else "starting Blender")
         log("render %s → %s%s" % (label, path, " (same worker)" if reuse else ""))
         try:
             if not reuse:
@@ -608,7 +647,7 @@ class Runner:
         self.sample_factor = 0.0
         self.phase = 'RENDER'
         reuse = WORKER.fits(scene, _generation[0], camera.name)
-        self.status = "rendering" if reuse else "starting Blender"
+        self.status = "rendering" if reuse else ("loading scene" if WORKER.alive() else "starting Blender")
         log("preview %s%s" % (camera.name, " (same worker)" if reuse else ""))
         try:
             if not reuse:
@@ -652,6 +691,9 @@ class Runner:
             self._end_render(scene, False, discard=True)
             return
         result = self._read_progress(job["uid"])
+        if result and not self.animation and not os.path.exists(job["path"]) \
+                and time.monotonic() - job.setdefault("done_at", time.monotonic()) < 3.0:
+            return   # "done" came a moment before the image showed up on disk: look again
         if result is not None:
             self._end_render(scene, result)
         elif not WORKER.alive():
@@ -674,22 +716,41 @@ class Runner:
         if start is None:
             return None
         lines = lines[start + 1:]
+        job = self.current
         for line in lines:
             if line.startswith("RS done %s" % uid):
                 return True
             if line.startswith("RS fail %s" % uid):
                 log("worker: " + line[:300])
                 return False
+        for i, line in enumerate(lines):
+            if line.startswith("RS draft-start %s" % uid):
+                job["drafting"] = True
+            elif line.startswith("RS draft %s" % uid):
+                # The draft's samples are not the entry's: only what comes after it counts.
+                job["drafting"] = False
+                if not job.get("draft") and os.path.isfile(job.get("draft_path", "")):
+                    job["draft"] = job["draft_path"]
+                    log("draft after %.1f s" % (time.monotonic() - job["started"]))
+                    tag_redraw()
+                lines = lines[i + 1:]
+                break
+        if job.get("drafting"):
+            self.status = "draft"
+            return None
         for line in reversed(lines):
             line = line.strip()
             if line.startswith("RS Sample"):
                 match = _SAMPLE_RE.search(line)
                 done, total = (int(match.group(1)), int(match.group(2))) if match else (0, 0)
+                tile, tiles = (int(match.group(3)), int(match.group(4))) if match and match.group(4) else (0, 1)
                 if total and not self.animation:
-                    self.sample_factor = min(1.0, done / total)
-                if done and not self.current["sampling"]:
-                    self.current["sampling"] = time.monotonic()
-                self.status = "finishing" if total and done >= total else "rendering"
+                    self.sample_factor = min(1.0, (tile + done / total) / max(tiles, 1))
+                if done and not job["sampling"]:
+                    job["sampling"] = time.monotonic()
+                    log("first sample after %.1f s" % (job["sampling"] - job["started"]))
+                last_tile = tile + 1 >= tiles
+                self.status = "finishing" if total and done >= total and last_tile else "rendering"
                 return None
             if line.startswith("RS Status"):
                 self.status = _status_label(line[len("RS Status"):].strip())
@@ -716,6 +777,7 @@ class Runner:
         job = self.current
         self.phase = 'START'
         self.current = None
+        _remove_file(job.get("draft_path", ""))
         if job.get("preview"):
             exists = bool(ok) and os.path.exists(job["path"])
             log("preview %s: %s" % ("done" if exists else "failed", job["camera"]))

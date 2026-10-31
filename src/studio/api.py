@@ -163,6 +163,23 @@ def use_hdri(path, scene=None):
     return path
 
 
+def save_base_material(material, name=None):
+    """Put a material of this file into the base material library (the group with the base
+    materials in the Material tab), replacing one of the same name. `material` is a Material or
+    its name; `name` the name in the library (default: the base name or the material's name)."""
+    from . import baselib
+    if isinstance(material, str):
+        material = bpy.data.materials[material]
+    return baselib.save(material, name)
+
+
+def remove_base_material(name):
+    """Take a material out of the base material library (ask the user first)."""
+    from . import baselib
+    baselib.remove(name)
+    return name
+
+
 def environment_bake(name, collection, location=None, world=None, resolution=4096, samples=256,
                      scene=None, use=True):
     """Renders a modelled room (the objects of `collection`) as a 32-bit equirectangular EXR into

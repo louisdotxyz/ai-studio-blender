@@ -76,7 +76,7 @@ def worker_queue_and_variants():
     V.queue(["rot", "blau"], camera="Camera", quality="LOW")
     log = open(log_path, encoding="utf-8").read()[mark:]
     check("queue rendered both", runner.RUN.message == "2 of 2 saved", runner.RUN.message)
-    check("one worker for the series", log.count("worker started") == 1 and log.count("(same worker)") == 1)
+    check("one worker for the series", log.count("worker launched") == 1 and log.count("(same worker)") == 1, log)
     check("scene unchanged by the queue", tuple(node.inputs["Base Color"].default_value) == before)
     renders = V.renders(quality="LOW")
     colors = {}
@@ -224,7 +224,7 @@ def configurable_names():
 def studio_tools_offered():
     names = {t["name"] for t in mod("core").extension_tools()}
     check("studio tools offered to Claude", {"studio_render_queue", "studio_light_setup", "studio_hdri_setup",
-                                             "studio_camera"} <= names, sorted(names))
+                                             "studio_camera", "studio_base_material"} <= names, sorted(names))
 
 
 @section
@@ -285,6 +285,112 @@ def camera_back():
     cameras.go_back(cam)
     check("camera back after moving", steps == 1 and (cam.location - start).length < 1e-4,
           (steps, tuple(cam.location), tuple(start)))
+
+
+@section
+def draft_before_the_render():
+    runner = mod("studio").runner
+    scene = small_scene()
+    scene.render.resolution_x, scene.render.resolution_y, scene.cycles.samples = 1280, 960, 40
+    log_path = os.path.join(runner.jobs_dir(), "..", "queue.log")
+    mark = os.path.getsize(log_path)
+    rq = scene.render_studio
+    rq.items.clear()
+    rq.quality = 'HIGH'
+    bpy.ops.render_studio.add()
+    seen = []
+    runner.on_render_saved.append(lambda path, *_a: seen.append(path))
+    runner.RUN.start(scene)
+    runner.on_render_saved.clear()
+    log = open(log_path, encoding="utf-8").read()[mark:]
+    check("draft first, then the image", "draft after" in log and seen and os.path.exists(seen[0])
+          and not [n for n in os.listdir(runner.jobs_dir()) if n.startswith("draft_")], log[-600:])
+    rq.quality = 'LOW'
+    small_scene()
+
+
+@section
+def worker_reloads_the_file():
+    import time
+    runner = mod("studio").runner
+    scene = small_scene()
+    worker = runner.Worker()
+    try:
+        worker.start(scene, 901, "Camera")
+        pid = worker.proc.pid
+        worker.start(scene, 902, "Camera")   # the scene changed: the same Blender opens a fresh copy
+        end = time.monotonic() + 60
+        text = ""
+        while time.monotonic() < end and text.count("RS loaded") < 2:
+            time.sleep(0.3)
+            text = open(runner.worker_log_path(), encoding="utf-8", errors="replace").read()
+        check("worker opens new copies itself", text.count("RS loaded") == 2 and worker.proc.pid == pid
+              and worker.alive(), text[-400:])
+    finally:
+        worker.stop()
+
+
+@section
+def material_groups():
+    tab = mod("studio").tab_material
+    material = bpy.data.materials.new("Group Test")
+    objects = []
+    for i in range(3):
+        mesh = bpy.data.meshes.new("gt%d" % i)
+        obj = bpy.data.objects.new("gt%d" % i, mesh)
+        bpy.context.scene.collection.objects.link(obj)
+        mesh.materials.append(material)
+        objects.append(obj)
+    for obj in objects[:2]:
+        obj[tab.GROUP_KEY] = "g1"   # linked with the eyedropper
+    bpy.ops.object.select_all(action='DESELECT')
+    bpy.context.view_layer.objects.active = objects[0]
+    bpy.ops.render_studio.material_duplicate()
+    a, b, c = (o.active_material for o in objects)
+    check("duplicate changes the whole group", a is b and a is not material and c is material)
+    bpy.ops.render_studio.material_unlink()
+    check("unlink takes one object out", objects[0].active_material is not b
+          and tab.GROUP_KEY not in objects[0] and objects[1].active_material is b)
+    for obj in objects:
+        bpy.data.objects.remove(obj)
+
+
+@section
+def material_under_the_eyedropper():
+    tab = mod("studio").tab_material
+    cube = bpy.data.objects["Cube"]
+    material, obj = tab.material_at_ray(bpy.context, Vector((0, -10, 0)), Vector((0, 1, 0)))
+    check("eyedropper finds the material", obj == cube and material == cube.active_material, (material, obj))
+    material, obj = tab.material_at_ray(bpy.context, Vector((0, -10, 50)), Vector((0, 1, 0)))
+    check("eyedropper misses empty space", material is None and obj is None)
+
+
+@section
+def base_material_saved():
+    studio = mod("studio")
+    tab, baselib = studio.tab_material, studio.baselib
+    library = os.path.join(TMP, "Base Materials.blend")
+    glass = bpy.data.materials.new("Glass")
+    glass.asset_mark()
+    bpy.data.libraries.write(library, {glass}, fake_user=True)
+    bpy.data.materials.remove(glass)
+    studio.runner.prefs().material_library = library
+    mine = bpy.data.materials.new("my glass")
+    mine.diffuse_color = (0.1, 0.9, 0.2, 1.0)
+    mine[tab.BASE_KEY] = "Glass"   # a copy of the base material, changed here
+    name = baselib.save(mine)
+    new = bpy.data.materials.new("Rubber new")
+    baselib.save(new, "Rubber")
+    with bpy.data.libraries.load(library, assets_only=True) as (source, target):
+        names = sorted(source.materials)
+        target.materials = ["Glass"]
+    saved = target.materials[0]
+    check("base material replaced in the library", name == "Glass" and names == ["Glass", "Rubber"]
+          and abs(saved.diffuse_color[1] - 0.9) < 1e-4, names)
+    baselib.remove("Rubber")
+    with bpy.data.libraries.load(library, assets_only=True) as (source, _target):
+        check("base material removed", sorted(source.materials) == ["Glass"], list(source.materials))
+    studio.runner.prefs().material_library = ""
 
 
 ok = all(results)

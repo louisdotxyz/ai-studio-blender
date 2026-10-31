@@ -2,6 +2,7 @@
 """The Material tab: the active material, quick settings, the library."""
 
 import os
+import uuid
 
 import bpy
 from bpy.props import (EnumProperty, IntProperty, StringProperty)
@@ -12,27 +13,45 @@ from .matpresets import _color_input, _principled
 from .ui_common import MATERIAL_TAB_ORDER, _SidebarPanel, _unpin, draw_claude_prompt, studio_tab
 
 
+# Objects linked with the eyedropper form a group (same id in GROUP_KEY): Duplicate gives the
+# whole group the copy, Unlink takes one object out of its group.
+GROUP_KEY = "render_studio_material_group"
+
+
+def material_group(context, obj, material):
+    """The objects that change together with `obj`: its eyedropper group, else the selection."""
+    gid = obj.get(GROUP_KEY)
+    group = [o for o in context.scene.objects
+             if gid and o.get(GROUP_KEY) == gid and getattr(o, "active_material", None) == material]
+    if not group:
+        group = [o for o in set(context.selected_objects) | {obj}
+                 if hasattr(o.data, "materials") and o.active_material == material]
+    return sorted(group, key=lambda o: o.name)
+
+
 class RS_OT_material_duplicate(Operator):
     bl_idname = "render_studio.material_duplicate"
     bl_label = "Duplicate Material"
-    bl_description = "A copy of this material for the active object only"
+    bl_description = ("A copy of this material for this object and the objects linked with it "
+                      "(eyedropper group, otherwise the selected objects)")
     bl_options = {'UNDO', 'INTERNAL'}
 
     def execute(self, context):
         obj = context.active_object
         if obj is None or obj.active_material is None:
             return {'CANCELLED'}
+        group = material_group(context, obj, obj.active_material)
         copy = obj.active_material.copy()
-        matpresets.assign(copy, [obj])
-        self.report({'INFO'}, "%s created" % copy.name)
+        matpresets.assign(copy, group)
+        self.report({'INFO'}, "%s for %d object%s" % (copy.name, len(group), "" if len(group) == 1 else "s"))
         return {'FINISHED'}
 
 
 class RS_OT_material_unlink(Operator):
     bl_idname = "render_studio.material_unlink"
     bl_label = "Unlink Material"
-    bl_description = ("The selected objects get their own copy of this material (shared among them), "
-                      "so changes no longer affect the other objects")
+    bl_description = ("Take this object out of its group: it gets its own copy of the material, "
+                      "changes no longer affect the others")
     bl_options = {'UNDO', 'INTERNAL'}
 
     def execute(self, context):
@@ -40,14 +59,13 @@ class RS_OT_material_unlink(Operator):
         material = obj.active_material if obj is not None else None
         if material is None:
             return {'CANCELLED'}
-        group = [o for o in set(context.selected_objects) | {obj}
-                 if hasattr(o.data, "materials") and o.active_material == material]
-        if material.users <= len(group):
-            self.report({'INFO'}, "Only these objects use the material")
+        if material.users <= 1:
+            self.report({'INFO'}, "Only this object uses the material")
             return {'CANCELLED'}
         copy = material.copy()
-        matpresets.assign(copy, group)
-        self.report({'INFO'}, "%d objects use %s now" % (len(group), copy.name))
+        matpresets.assign(copy, [obj])
+        obj.pop(GROUP_KEY, None)
+        self.report({'INFO'}, "%s uses %s now" % (obj.name, copy.name))
         return {'FINISHED'}
 
 
@@ -357,16 +375,26 @@ class RS_OT_pick_from_object(Operator):
         if event.type != 'LEFTMOUSE' or event.value != 'PRESS':
             return {'RUNNING_MODAL'}
         self._end(context)
-        material = _material_under_mouse(context, event)
+        material, source = _material_under_mouse(context, event)
         if material is None:
-            self.report({'INFO'}, "No material there")
+            self.report({'WARNING'}, "No object with a material under the mouse (click inside a 3D viewport)")
             return {'CANCELLED'}
         obj = context.active_object
         if self.mode == 'MATERIAL':
             objects = set(context.selected_objects)
             if obj is not None:
                 objects.add(obj)
+            objects.discard(source)
+            if not objects:
+                self.report({'WARNING'}, "Select the objects that should get the material first")
+                return {'CANCELLED'}
+            # Linked objects form a group with the one picked from (see material_group).
+            gid = source.get(GROUP_KEY) or uuid.uuid4().hex[:12]
+            source[GROUP_KEY] = gid
+            for target in objects:
+                target[GROUP_KEY] = gid
             matpresets.assign(material, sorted(objects, key=lambda o: o.name))
+            self.report({'INFO'}, "%s → %d object%s" % (material.name, len(objects), "" if len(objects) == 1 else "s"))
         else:
             if obj is None or obj.active_material is None or obj.active_material == material:
                 return {'CANCELLED'}
@@ -375,7 +403,7 @@ class RS_OT_pick_from_object(Operator):
 
 
 def _material_under_mouse(context, event):
-    """The material of the face under the mouse in any 3D viewport of the window."""
+    """(material, object) of the face under the mouse in any 3D viewport of the window."""
     from bpy_extras import view3d_utils
     x, y = event.mouse_x, event.mouse_y
     for area in context.window.screen.areas:
@@ -390,20 +418,31 @@ def _material_under_mouse(context, event):
             coord = (x - region.x, y - region.y)
             origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
             direction = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
-            depsgraph = context.evaluated_depsgraph_get()
-            hit, _loc, _normal, index, obj, _matrix = context.scene.ray_cast(depsgraph, origin, direction)
-            if not hit or obj is None:
-                return None
-            evaluated = obj.evaluated_get(depsgraph)
-            material = None
-            data = getattr(evaluated, "data", None)
-            if isinstance(data, bpy.types.Mesh) and 0 <= index < len(data.polygons):
-                slot = data.polygons[index].material_index
-                if slot < len(evaluated.material_slots):
-                    material = evaluated.material_slots[slot].material
-            material = material or evaluated.active_material
-            return material.original if material is not None else None
-    return None
+            camera = context.scene.camera
+            if rv3d.view_perspective == 'CAMERA' and not rv3d.is_perspective and camera is not None:
+                # Orthographic camera view: Blender puts the ray start in the middle of the clip
+                # range (500 m ahead with a clip end of 1 km) – move it back onto the camera plane.
+                origin = origin - direction * (origin - camera.matrix_world.translation).dot(direction)
+            return material_at_ray(context, origin, direction)
+    return None, None
+
+
+def material_at_ray(context, origin, direction):
+    """(material, object) of the face a ray hits first ((None, None) if it hits nothing)."""
+    depsgraph = context.evaluated_depsgraph_get()
+    hit, _loc, _normal, index, obj, _matrix = context.scene.ray_cast(depsgraph, origin, direction)
+    if not hit or obj is None:
+        return None, None
+    original = getattr(obj, "original", obj)
+    evaluated = original.evaluated_get(depsgraph)
+    material = None
+    data = getattr(evaluated, "data", None)
+    if isinstance(data, bpy.types.Mesh) and 0 <= index < len(data.polygons):
+        slot = data.polygons[index].material_index
+        if slot < len(evaluated.material_slots):
+            material = evaluated.material_slots[slot].material
+    material = material or original.active_material
+    return (getattr(material, "original", material) if material is not None else None), original
 
 
 def _copy_color(source, target):
@@ -415,6 +454,37 @@ def _copy_color(source, target):
         dst.default_value = tuple(src.default_value)
     else:
         target.diffuse_color = source.diffuse_color
+
+
+class RS_OT_material_to_base(Operator):
+    bl_idname = "render_studio.material_to_base"
+    bl_label = "Save to Base Materials"
+    bl_description = ("Save the active material into the base material library, so every project can use it "
+                      "(replaces one of the same name)")
+    bl_options = {'INTERNAL'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.active_material is not None and bool(base_library_file())
+
+    def invoke(self, context, event):
+        material = context.active_object.active_material
+        return context.window_manager.invoke_confirm(
+            self, event, title="Save to base materials?",
+            message="%s goes into %s" % (material.get(BASE_KEY) or material.name,
+                                         os.path.basename(base_library_file())),
+            confirm_text="Save")
+
+    def execute(self, context):
+        from . import baselib
+        try:
+            name = baselib.save(context.active_object.active_material)
+        except Exception as ex:
+            self.report({'ERROR'}, str(ex))
+            return {'CANCELLED'}
+        self.report({'INFO'}, "%s saved to the base materials" % name)
+        return {'FINISHED'}
 
 
 class RS_OT_material_group_toggle(Operator):
@@ -594,7 +664,12 @@ class RS_PT_material(_SidebarPanel, Panel):
                               depress=(i == obj.active_material_index)).index = i
         col = box.column(align=True)
         row = col.row(align=True)
-        row.prop(obj, "active_material", text="")
+        browse = row.row(align=True)
+        if material is not None:
+            browse.ui_units_x = 1.6   # just the material's icon: the list of materials to pick from
+        browse.prop(obj, "active_material", text="")
+        if material is not None:
+            row.prop(material, "name", text="")   # rename right here
         if material is not None and material.users > 1:
             users = row.row(align=True)
             users.enabled = False
@@ -640,6 +715,7 @@ class RS_PT_material(_SidebarPanel, Panel):
         box = layout.box()
         row = box.row()
         row.label(text="Library", icon='ASSET_MANAGER')
+        row.operator(RS_OT_material_to_base.bl_idname, text="", icon='EXPORT')
         row.menu(RS_MT_material_new.bl_idname, text="", icon='ADD')
         groups = _library_groups()
         if not groups:

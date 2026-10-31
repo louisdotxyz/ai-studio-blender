@@ -12,7 +12,11 @@ Material of the active object (the one in the Studio Material tab). Answer in 1-
 - Colors of product variants (stain, print colors) belong into Varianten.json (RENDER skill), not into the
   material: change the material itself only for the base look.
 - Generic materials (glass, stainless steel, aluminium, chrome, rubber, ABS, paint, speaker cloth) come from the
-  library group "Grundlage" in the Material tab: reuse them instead of building new ones.
+  base material group in the Material tab (base_group(), copies carry material["render_studio_base"]): reuse
+  them instead of building new ones.
+- Changing a base material for all projects (only when the user asks): improve the copy here, then
+  studio_base_material(action="save"). A new base material: same with a clear name. "remove" only after
+  ask_user.
 - Principled BSDF with real values: metallic 0 or 1, roughness 0.05-0.9, a fitting IOR, base color never
   pure black or white. Procedural detail (Noise/Voronoi/Bump) only if the wish needs it, scaled to the
   object. Keep node groups in use. Name materials "<Type> | <Material>" for

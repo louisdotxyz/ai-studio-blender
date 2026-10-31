@@ -18,7 +18,7 @@ from bpy.types import Operator, Panel
 from . import background, cameras, claude_link, core, foreign, hdri, lights, runner, sync
 # Loaded for their side effects: the chat finds claude_tools (Claude's studio_* tools) in
 # sys.modules; api and variants are the helpers in execute_python.
-from . import api, claude_tools, variants  # noqa: F401
+from . import api, baselib, claude_tools, variants  # noqa: F401
 from .props import RS_CameraSettings, RS_Item, RS_LightSettings, RS_Preferences, RS_Settings, _apply_clipping
 from .ui_common import (STUDIO_TABS, _queue_progress_text, _unpin, RS_OT_studio_prompt_confirm,
                         RS_OT_studio_prompt_send, register_prompts, unregister_prompts)
@@ -33,7 +33,7 @@ from .tab_light import (RS_MT_hdris, RS_MT_light_presets, RS_OT_add_light, RS_OT
                         RS_OT_lights_adjust, RS_OT_select_light, RS_OT_show_world, RS_OT_toggle_light,
                         RS_OT_world_restore, RS_PT_light_settings, RS_PT_lighting)
 from .tab_material import (RS_MT_material_new, RS_MT_material_presets_delete, RS_OT_material_assign,
-                           RS_OT_material_duplicate, RS_OT_material_group_toggle, RS_OT_material_new,
+                           RS_OT_material_duplicate, RS_OT_material_group_toggle, RS_OT_material_new, RS_OT_material_to_base,
                            RS_OT_material_preset, RS_OT_material_preset_delete, RS_OT_material_preset_save,
                            RS_OT_material_presets_io, RS_OT_material_slot, RS_OT_material_unlink,
                            RS_OT_material_viewport, RS_OT_open_shading, RS_OT_pick_from_object,
@@ -138,6 +138,7 @@ classes = (
     RS_OT_open_chat,
     RS_OT_preview_step,
     RS_OT_material_new,
+    RS_OT_material_to_base,
     RS_OT_pick_from_object,
     RS_OT_material_group_toggle,
     RS_MT_material_new,
