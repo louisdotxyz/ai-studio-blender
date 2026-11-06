@@ -159,6 +159,22 @@ def assign(material, objects):
     return count
 
 
+def replace(old, new):
+    """Every slot that holds `old` gets `new` (all objects of the file). Returns the number of
+    changed objects."""
+    count = 0
+    for obj in bpy.data.objects:
+        if obj.library is not None or not hasattr(obj.data, "materials") or obj.data.library is not None:
+            continue
+        hit = False
+        for slot in obj.material_slots:
+            if slot.material == old:
+                slot.material = new
+                hit = True
+        count += hit
+    return count
+
+
 def _color_input(material):
     """The color input of the shader on the material output: Principled "Base Color" or a
     node group input named like a color ("Base Color", "Color", "Farbe", …)."""

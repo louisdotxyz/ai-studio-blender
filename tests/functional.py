@@ -356,6 +356,32 @@ def material_groups():
 
 
 @section
+def library_click_switches_everywhere():
+    old, new = bpy.data.materials.new("Holz A"), bpy.data.materials.new("Holz B")
+    other = bpy.data.materials.new("Alu")
+    objects = []
+    for i in range(3):
+        obj = bpy.data.objects.new("sw%d" % i, bpy.data.meshes.new("sw%d" % i))
+        bpy.context.scene.collection.objects.link(obj)
+        obj.data.materials.append(other if i == 2 else old)
+        objects.append(obj)
+    objects[1].data.materials.append(old)   # a second slot with the same material
+    bpy.ops.object.select_all(action='DESELECT')
+    bpy.context.view_layer.objects.active = objects[0]
+    bpy.ops.render_studio.material_assign(name=new.name)
+    slots = [s.material for o in objects for s in o.material_slots]
+    check("library click switches every object with the old material",
+          slots == [new, new, new, other] and old.use_fake_user, slots)
+    bpy.ops.render_studio.material_assign(name=old.name)
+    check("and back", [s.material for s in objects[1].material_slots] == [old, old])
+    bpy.ops.render_studio.material_assign(name=other.name, only_selected=True)
+    check("shift: only the active object", objects[0].active_material == other
+          and objects[1].active_material == old)
+    for obj in objects:
+        bpy.data.objects.remove(obj)
+
+
+@section
 def material_under_the_eyedropper():
     tab = mod("studio").tab_material
     cube = bpy.data.objects["Cube"]
@@ -391,6 +417,35 @@ def base_material_saved():
     with bpy.data.libraries.load(library, assets_only=True) as (source, _target):
         check("base material removed", sorted(source.materials) == ["Glass"], list(source.materials))
     studio.runner.prefs().material_library = ""
+
+
+
+@section
+def expired_login():
+    core = mod("core")
+    opened = []
+    core.claude_cli.open_login = opened.append
+    core._login_opened = False
+    count = len(core.messages)
+    core._handle_event({"type": "result", "is_error": True, "session_id": core.session_id,
+                        "result": "Failed to authenticate: OAuth session expired and could not be refreshed"})
+    core._handle_done(1, "")
+    hint = [m for m in core.messages[count:] if m["role"] == "info"]
+    check("expired login: hint and login window", core.login_needed and len(opened) == 1 and hint,
+          (core.login_needed, opened, core.messages[count:]))
+    core._handle_done(1, "Not logged in · Please run /login")
+    check("login window opens only once on its own", len(opened) == 1, opened)
+    core._handle_done(0, "")
+    check("login hint gone after a good run", not core.login_needed)
+    del core.messages[count:]
+    # The start check / polling: `claude auth status` answers in a thread, the timer applies it.
+    for answer, needed in ((False, True), (True, False)):
+        thread = core.threading.Thread(target=lambda: None)
+        thread.start()
+        thread.join()
+        core._login_check.update(thread=thread, result=answer)
+        core._poll_login()
+        check("auth status %s -> button %s" % (answer, needed), core.login_needed == needed)
 
 
 ok = all(results)

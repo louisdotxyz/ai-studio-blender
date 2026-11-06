@@ -482,6 +482,15 @@ class CLAUDE_OT_new_skill(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class CLAUDE_OT_login(bpy.types.Operator):
+    bl_idname = "claude.login"
+    bl_label = "Log in"
+    bl_description = "Log in to Claude again: opens a terminal with 'claude auth login', which opens the browser"
+
+    def execute(self, context):
+        return {'FINISHED'} if core.open_login() else {'CANCELLED'}
+
+
 class CLAUDE_OT_open_path(bpy.types.Operator):
     bl_idname = "claude.open_path"
     bl_label = "Open"
@@ -994,6 +1003,7 @@ class CLAUDE_PT_chat(bpy.types.Panel):
 
         self._draw_crash(layout, context)
         self._draw_timeline(layout, context)
+        self._draw_login(layout)
         self._draw_questions(layout, context)
         self._draw_pending(layout, context)
         self._draw_input(layout, context, prefs)
@@ -1118,6 +1128,13 @@ class CLAUDE_PT_chat(bpy.types.Panel):
             hint.label(text="or type your own answer below")
 
     # -- code approval ----------------------------------------------------
+
+    def _draw_login(self, layout):
+        if not core.login_needed or core.is_local():
+            return
+        box = layout.box()
+        box.label(text=tr("Logged out of Claude"), icon='ERROR')
+        box.operator("claude.login", text=tr("Log in"), icon='URL')
 
     def _draw_pending(self, layout, context):
         if not core.pending:
@@ -1393,6 +1410,7 @@ classes = (
     CLAUDE_OT_undo_steps,
     CLAUDE_OT_use_skill,
     CLAUDE_OT_new_skill,
+    CLAUDE_OT_login,
     CLAUDE_OT_open_path,
     CLAUDE_OT_set_local_model,
     CLAUDE_OT_refresh_local_models,

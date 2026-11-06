@@ -5,7 +5,7 @@ import os
 import uuid
 
 import bpy
-from bpy.props import (EnumProperty, IntProperty, StringProperty)
+from bpy.props import (BoolProperty, EnumProperty, IntProperty, StringProperty)
 from bpy.types import Menu, Operator, Panel
 
 from . import matpresets, runner
@@ -515,15 +515,30 @@ class RS_MT_material_presets_delete(Menu):
 class RS_OT_material_assign(Operator):
     bl_idname = "render_studio.material_assign"
     bl_label = "Assign Material"
-    bl_description = "Put this material on the selected objects (their active slot)"
+    bl_description = ("Switch to this material: every object with the current material gets it, "
+                      "to compare materials. Shift: only the selected objects")
     bl_options = {'UNDO', 'INTERNAL'}
 
     name: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    only_selected: BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    def invoke(self, context, event):
+        self.only_selected = event.shift
+        return self.execute(context)
 
     def execute(self, context):
         material = bpy.data.materials.get(self.name)
         if material is None:
             return {'CANCELLED'}
+        obj = context.active_object
+        old = obj.active_material if obj is not None else None
+        if old is not None and old != material and not self.only_selected:
+            count = matpresets.replace(old, material)
+            if not old.users and not old.get(BASE_KEY):
+                old.use_fake_user = True   # stays in the library to switch back
+            self.report({'INFO'}, "%s → %s on %d object%s" % (old.name, material.name, count,
+                                                              "" if count == 1 else "s"))
+            return {'FINISHED'}
         objects = set(context.selected_objects)
         if context.active_object is not None:
             objects.add(context.active_object)

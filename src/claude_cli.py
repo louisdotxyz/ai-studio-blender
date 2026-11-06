@@ -69,6 +69,50 @@ def build_env(claude_path):
     return env
 
 
+# Words in the CLI's output when the login is missing or has expired.
+_AUTH_WORDS = ("failed to authenticate", "oauth", "not logged in", "please run /login",
+               "invalid api key", "authentication_error")
+
+
+def is_auth_error(text):
+    low = (text or "").lower()
+    return any(word in low for word in _AUTH_WORDS)
+
+
+def logged_in(claude_path):
+    """True/False from ``claude auth status``, None when it can't be told (old CLI, timeout)."""
+    try:
+        result = subprocess.run([claude_path, "auth", "status"], capture_output=True, text=True,
+                                timeout=20, env=build_env(claude_path), stdin=subprocess.DEVNULL)
+        return bool(json.loads(result.stdout)["loggedIn"])
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+        return None
+
+
+def open_login(claude_path):
+    """Run ``claude auth login`` in a terminal window: it opens the browser, and the
+    terminal is there if the CLI asks to paste a code."""
+    import sys
+    import tempfile
+    if sys.platform == "darwin":
+        script = os.path.join(tempfile.gettempdir(), "ai_studio_claude_login.command")
+        with open(script, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\n"
+                    f"{shlex.quote(claude_path)} auth login\n"
+                    "echo\necho 'Back to Blender and send the message again. This window can be closed.'\n")
+        os.chmod(script, 0o755)
+        subprocess.Popen(["open", script])
+    elif sys.platform == "win32":
+        subprocess.Popen(["cmd", "/c", "start", "Claude login", "cmd", "/k", claude_path, "auth", "login"])
+    else:
+        terminal = shutil.which("x-terminal-emulator") or shutil.which("gnome-terminal")
+        if terminal:
+            subprocess.Popen([terminal, "--", claude_path, "auth", "login"])
+        else:
+            subprocess.Popen([claude_path, "auth", "login"], stdin=subprocess.DEVNULL,
+                             start_new_session=True)
+
+
 class ClaudeRun:
     """One ``claude -p`` process for one or more user messages.
 

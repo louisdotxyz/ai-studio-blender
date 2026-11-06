@@ -8,6 +8,7 @@ import queue
 import re
 import sys
 import tempfile
+import threading
 import time
 import traceback
 import uuid
@@ -102,6 +103,10 @@ lessons_count = 0    # lessons of the current model (shown in the sidebar)
 _turn = {"start": 0.0, "util": None, "code_calls": 0}  # for the per-answer statistics
 COMPACT_COMMAND = "/compact"
 _last_sent = {}      # kind -> hash of the context last sent in this session (to skip repeats)
+login_needed = False  # the CLI's login is missing or expired (the panel shows a Log in button)
+_login_opened = False  # the login window was opened once on its own already
+_login_check = {"thread": None, "result": None, "next": 0.0}  # background `claude auth status`
+LOGIN_POLL = 3.0      # seconds between checks while logged out and the login window is open
 
 
 def mark_dirty():
@@ -1223,7 +1228,10 @@ def _handle_event(obj):
         if is_local() and lmstudio.status.get("context"):
             context["window"] = lmstudio.status["context"]
         if obj.get("is_error"):
-            add_message("error", str(obj.get("result") or obj.get("subtype") or tr("Unknown error")))
+            text = str(obj.get("result") or obj.get("subtype") or tr("Unknown error"))
+            if claude_cli.is_auth_error(text):
+                _set_login_needed(True)
+            add_message("error", text)
 
 
 
@@ -1259,17 +1267,83 @@ def _handle_done(rc, stderr):
         if stderr:
             msg += "\n" + stderr[-1200:]
         low = (stderr or "").lower()
-        if "login" in low or "api key" in low or "auth" in low:
-            msg += "\n" + tr("Tip: open a terminal and run 'claude' once to log in.")
+        if claude_cli.is_auth_error(low):
+            _set_login_needed(True)
         if "unknown option" in low:
             msg += "\n" + tr("Tip: update Claude Code with 'claude update' in a terminal.")
         add_message("error", msg)
+        if login_needed:
+            _login_hint()
+    elif rc == 0 and not is_local():
+        _set_login_needed(False)
     save_current_chat()
     prefs = get_prefs()
     if (rc == 0 and not was_compacting and not (run and run.cancelled) and prefs and prefs.auto_compact
             and context_fraction() >= prefs.compact_at / 100):
         compact(auto=True)
     mark_dirty()
+
+
+def _set_login_needed(value):
+    global login_needed
+    login_needed = value
+
+
+def _login_hint():
+    """Say what to do, and open the login window the first time on its own."""
+    global _login_opened
+    add_message("info", tr("You are logged out of Claude. Log in with the button below "
+                           "(it opens the browser), then send your message again."))
+    if not _login_opened:
+        _login_opened = True
+        open_login()
+
+
+def open_login():
+    global _login_opened
+    prefs = get_prefs()
+    claude_path = claude_cli.find_claude(prefs.claude_path if prefs else "")
+    if not claude_path:
+        add_message("error", tr("Claude CLI not found – see the README"))
+        return False
+    try:
+        claude_cli.open_login(claude_path)
+    except OSError as exc:
+        add_message("error", tr("Could not open the login: {}").format(exc))
+        return False
+    _login_opened = True   # check often now, so the button goes away right after the login
+    return True
+
+
+def check_login():
+    """Ask `claude auth status` in a thread; the timer applies the answer (login_needed)."""
+    thread = _login_check["thread"]
+    if (thread and thread.is_alive()) or is_local():
+        return
+    prefs = get_prefs()
+    claude_path = claude_cli.find_claude(prefs.claude_path if prefs else "")
+    if not claude_path:
+        return
+
+    def run():
+        _login_check["result"] = claude_cli.logged_in(claude_path)
+
+    _login_check["result"] = None
+    _login_check["thread"] = threading.Thread(target=run, daemon=True)
+    _login_check["thread"].start()
+
+
+def _poll_login():
+    thread = _login_check["thread"]
+    if thread and not thread.is_alive():
+        _login_check["thread"] = None
+        result = _login_check["result"]
+        if result is not None and login_needed == result:
+            _set_login_needed(not result)
+            mark_dirty()
+        _login_check["next"] = time.monotonic() + (LOGIN_POLL if _login_opened else 30.0)
+    elif login_needed and not thread and time.monotonic() >= _login_check["next"]:
+        check_login()
 
 
 _CODE_FENCE = re.compile(r"```(?:python|py)?[ \t]*\n(.*?)```", re.S)
@@ -1374,6 +1448,8 @@ def _tick():
         for hook in tick_hooks:
             hook()
 
+        _poll_login()
+
         if is_local():
             lmstudio.poll_if_due()  # load state and memory for the sidebar
             if lmstudio.live["polled"] != _last_poll[0]:
@@ -1431,6 +1507,7 @@ def register():
         lmstudio.preload(prefs.local_model, prefs.local_context)
     if not bpy.app.timers.is_registered(_tick):
         bpy.app.timers.register(_tick, first_interval=0.5, persistent=True)
+    check_login()   # show the Log in button before the first message if Claude is logged out
 
 
 def unregister():

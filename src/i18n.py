@@ -156,8 +156,14 @@ DE = {
         "Claude CLI nicht gefunden. Installiere Claude Code und melde dich einmal im Terminal mit 'claude' "
         "an, oder setze den Pfad in den Add-on-Einstellungen.",
     "Claude CLI exited with code {}.": "Claude CLI beendet mit Code {}.",
-    "Tip: open a terminal and run 'claude' once to log in.":
-        "Tipp: Öffne das Terminal und führe einmal 'claude' aus, um dich anzumelden.",
+    "You are logged out of Claude. Log in with the button below (it opens the browser), then send your message again.":
+        "Du bist bei Claude abgemeldet. Melde dich mit dem Knopf unten an (öffnet den Browser) und sende "
+        "die Nachricht dann noch einmal.",
+    "Logged out of Claude": "Bei Claude abgemeldet",
+    "Log in": "Anmelden",
+    "Could not open the login: {}": "Anmeldung konnte nicht geöffnet werden: {}",
+    "Log in to Claude again: opens a terminal with 'claude auth login', which opens the browser":
+        "Neu bei Claude anmelden: öffnet ein Terminal mit 'claude auth login', das den Browser öffnet",
     "Tip: update Claude Code with 'claude update' in a terminal.":
         "Tipp: Aktualisiere Claude Code im Terminal mit 'claude update'.",
     "Could not connect to Blender (MCP status: {}).": "Verbindung zu Blender fehlgeschlagen (MCP-Status: {}).",
