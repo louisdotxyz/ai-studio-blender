@@ -31,7 +31,6 @@ from mathutils import Matrix, Vector
 
 from . import cameras, orbit
 
-COLLECTION_NAME = "RS_Lights"
 PRESET_KEY = "render_studio_preset"
 TYPES = ('POINT', 'SUN', 'SPOT', 'AREA')
 SHAPES = ('SQUARE', 'RECTANGLE', 'DISK', 'ELLIPSE')
@@ -64,7 +63,7 @@ def scene_lights(scene):
 
 
 def light_collection(scene):
-    return cameras.named_collection(scene, COLLECTION_NAME)
+    return cameras.named_collection(scene, cameras.light_collection_name())
 
 
 def subject(scene, target):
@@ -122,14 +121,6 @@ def duplicate_light(scene, src):
     for coll in collections or [light_collection(scene)]:
         coll.objects.link(new)
     return new
-
-
-def remove_setup_lights(scene):
-    for obj in [o for o in scene.objects if o.type == 'LIGHT' and PRESET_KEY in o]:
-        data = obj.data
-        bpy.data.objects.remove(obj)
-        if data.users == 0:
-            bpy.data.lights.remove(data)
 
 
 # ------------------------------------------------------------ Light setups
@@ -193,16 +184,24 @@ def parse_setup(spec):
 
 
 def apply_setup(scene, target, spec, replace=True, tag=True):
-    """Creates the lights of a setup around the subject. With replace=True the
-    lights of the previous setup go away first; your own lights stay."""
+    """Creates the lights of a setup around the subject. With replace=True the lights of the
+    previous setup are reused (they keep your names and collections), extra ones go away;
+    your own lights stay."""
     spec = parse_setup(spec)
-    if replace:
-        remove_setup_lights(scene)
+    old = [o for o in scene_lights(scene) if PRESET_KEY in o] if replace else []
     center, radius = subject(scene, target)
     front = front_angle(scene, center)
     created = []
     for item in spec["lights"]:
-        data = bpy.data.lights.new(item["name"], item["type"])
+        obj = next((o for o in old if o.name == item["name"]), old[0] if old else None)
+        if obj is not None:
+            old.remove(obj)
+            data = obj.data
+            data.type = item["type"]
+            data.color = (1.0, 1.0, 1.0)
+            data.use_temperature = False
+        else:
+            data = bpy.data.lights.new(item["name"], item["type"])
         distance = item["distance"] * radius
         if item["type"] == 'SUN':
             data.energy = item["power"] * SUN_STRENGTH
@@ -223,12 +222,18 @@ def apply_setup(scene, target, spec, replace=True, tag=True):
         if "kelvin" in item:
             data.use_temperature = True
             data.temperature = item["kelvin"]
-        obj = bpy.data.objects.new(item["name"], data)
-        light_collection(scene).objects.link(obj)
+        if obj is None:
+            obj = bpy.data.objects.new(item["name"], data)
+            light_collection(scene).objects.link(obj)
         if tag:
             obj[PRESET_KEY] = spec["name"]
         place(obj, center, front + math.radians(item["horizontal"]), math.radians(item["vertical"]), distance)
         created.append(obj)
+    for obj in old:   # the previous setup had more lights
+        data = obj.data
+        bpy.data.objects.remove(obj)
+        if data.users == 0:
+            bpy.data.lights.remove(data)
     remember_focus(scene, center, radius)
     return created
 

@@ -7,7 +7,7 @@ Build a real room around the product and bake it into an HDRI world. Answer brie
 studio_context(kind="environment") -> subject, floor, camera, HDRI folder, existing rooms and worlds.
 1. Read the reference: size, ceiling height, parts (walls, floor, ceiling, beams, columns, windows, niches,
    doors, radiators, pipes, lamps), materials, light (overcast or hard sun, direction).
-2. Build in the collection "ENV | <Name>", objects "<Name> <Part>", boxes from real meters via
+2. Build in the collection AS_set, objects "<Name> <Part>", each marked obj["as_env"] = True, boxes from real meters via
    mesh.from_pydata, the camera-facing side first. Bevel 5-20 mm on columns/beams/walls. Window glass
    visible_shadow = False. Outside: ground + neighbour facades 10-25 m away, not higher than the windows need.
 3. Materials: real PBR scans beat procedural. Poly Haven API (allowed): json from
@@ -19,8 +19,9 @@ studio_context(kind="environment") -> subject, floor, camera, HDRI folder, exist
 4. Bake World "<Name> Bake" (copy an existing "… Bake" world: overcast gradient, a Math node for the sky
    strength, 40-120 for a bright day). Never delete or edit the user's worlds.
 5. Backup first: bpy.ops.wm.save_as_mainfile(filepath=<file>_backup_<Name>.blend, copy=True).
-   Room objects hide_render = False, then studio_environment_bake(name="<Name>", collection="ENV | <Name>",
-   world="<Name> Bake", resolution=1024, samples=32) as a test. Look at the EXR (T.exr_preview, Read).
+   Then studio_environment_bake(name="<Name>", world="<Name> Bake", resolution=1024, samples=32)
+   as a test (it takes the as_env objects, also when they are hidden in renders). Look at the EXR (T.exr_preview, Read).
    Fix, then final resolution=4096, samples=256 (several minutes; ignore an MCP timeout and check the file).
-   Afterwards room objects hide_render = True; the shadow-catcher floor stays visible.
+   Afterwards room objects hide_render = True (the bake does not need them visible); the
+   shadow-catcher floor stays visible.
    Delete test EXRs only after asking.

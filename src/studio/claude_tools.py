@@ -50,10 +50,17 @@ def _hdri_setup(args):
 def _environment_bake(args):
     world = args.get("world")
     path = api.environment_bake(
-        str(args.get("name") or "Environment"), str(args.get("collection") or ""),
+        str(args.get("name") or "Environment"), str(args.get("collection") or "") or None,
         world=bpy.data.worlds.get(world) if world else None,
         resolution=int(args.get("resolution") or 1024), samples=int(args.get("samples") or 32))
     return f"Environment baked and used as World: {path}"
+
+
+def _section(args):
+    names = args.get("objects") or []
+    result = api.section(names, axis=str(args.get("axis") or "X"), offset=float(args.get("offset_m") or 0.0),
+                         plane_object=args.get("plane_object") or None, keep=bool(args.get("keep")))
+    return json.dumps(result, indent=1)
 
 
 def _base_material(args):
@@ -160,16 +167,30 @@ def get_tools():
          "inputSchema": {"type": "object", "properties": {"setup": _SETUP}, "required": ["setup"]},
          "handler": _hdri_setup},
         {"name": "studio_environment_bake", "label": "Render Studio: baked environment",
-         "description": "Render Studio: bake a modelled room (all objects of a collection 'ENV | <Name>') "
+         "description": "Render Studio: bake a modelled room (the objects marked obj['as_env'] = True; "
+                        "they render even when hidden) "
                         "into a 32-bit HDRI and use it as the World. Test: resolution 1024, samples 32; "
                         "final: 4096 / 256. Save a backup copy of the file first.",
          "inputSchema": {"type": "object", "properties": {
              "name": {"type": "string"},
-             "collection": {"type": "string", "description": "e.g. 'ENV | Loft'"},
+             "collection": {"type": "string", "description": "Only for older files: a collection "
+                            "'ENV | <Name>' instead of the as_env marker"},
              "world": {"type": "string", "description": "World that lights the room while baking"},
              "resolution": {"type": "integer"}, "samples": {"type": "integer"}},
-             "required": ["name", "collection"]},
+             "required": ["name"]},
          "handler": _environment_bake},
+        {"name": "studio_section", "label": "Render Studio: section",
+         "description": "Cut objects (e.g. a 3D scan and the CAD part) with a plane and measure the cut: "
+                        "width/height of each contour in mm, and how far the others lie from the first "
+                        "(mean/max mm). Shows the contours as edge objects (temp collection, keep=true keeps them).",
+         "inputSchema": {"type": "object", "properties": {
+             "objects": {"type": "array", "items": {"type": "string"}, "description": "Object names, the reference (scan) first"},
+             "axis": {"type": "string", "enum": ["X", "Y", "Z"], "description": "Plane normal (default X)"},
+             "offset_m": {"type": "number", "description": "Plane position along the axis in meters"},
+             "plane_object": {"type": "string", "description": "Instead of axis: an object whose local XY plane cuts"},
+             "keep": {"type": "boolean"}},
+             "required": ["objects"]},
+         "handler": _section},
         {"name": "studio_base_material", "label": "Render Studio: base materials",
          "description": "Render Studio's base material library (generic materials shared by all projects, "
                         "the base group in the Material tab): 'list' them, 'save' a material of this file "

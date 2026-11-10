@@ -66,12 +66,24 @@ def project_name(blend_filepath=None, name=""):
     return safe_name(os.path.splitext(os.path.basename(filepath))[0])
 
 
+UNSAVED_ROOT = "~/Documents/AI Studio"   # renders of a file that was never saved
+
+
+def default_root():
+    """No output folder set: right next to the .blend file (in its project folder, also for a
+    backup that is open), for an unsaved file ~/Documents/AI Studio."""
+    if bpy.data.filepath:
+        from .. import autosave
+        return autosave.main_folder(bpy.data.filepath)
+    return os.path.expanduser(UNSAVED_ROOT)
+
+
 def output_root(root):
-    return os.path.abspath(os.path.expanduser(bpy.path.abspath(root or "~/Downloads")))
+    return os.path.abspath(os.path.expanduser(bpy.path.abspath(root))) if root else default_root()
 
 
 def project_dir(root, project):
-    """`~/Downloads/<name>_renders`"""
+    """`<folder of the .blend>/<name>_renders` (or `<output folder>/<name>_renders`)"""
     return os.path.join(output_root(root), project + folder_names()['SUFFIX'])
 
 
@@ -83,14 +95,6 @@ def quality_dir(root, project, quality):
 def archive_dir(root, project):
     """`<name>_renders/archive` – one folder for all renders, for sorting by hand."""
     return os.path.join(project_dir(root, project), folder_names()['ARCHIVE'])
-
-
-def ensure_folders(root, project):
-    """`<name>_renders/{low, high, animation, archive}`."""
-    base = project_dir(root, project)
-    names = folder_names()
-    for key in ('LOW', 'HIGH', 'ANIM', 'ARCHIVE'):
-        os.makedirs(os.path.join(base, names[key]), exist_ok=True)
 
 
 def _highest_number(folder, stem):
@@ -141,9 +145,9 @@ def _stem(camera_name, name="", blend_filepath=None, quality=None):
 
 
 def job_path(root, camera_name, quality, name="", blend_filepath=None, ext=EXT):
-    """`<name>_renders/<low|high>/<name>_<camera>_001.png` (extension from the still format)"""
+    """`<name>_renders/<low|high>/<name>_<camera>_001.png` (extension from the still format).
+    Folders are made only when something is rendered into them (the archive never)."""
     project = project_name(blend_filepath, name)
-    ensure_folders(root, project)
     folder = quality_dir(root, project, quality)
     # low and high share one counter, so their files never clash in the shared archive
     others = [quality_dir(root, project, q) for q in QUALITIES if q != quality]
@@ -154,7 +158,6 @@ def job_path(root, camera_name, quality, name="", blend_filepath=None, ext=EXT):
 def anim_dir(root, camera_name, quality, name="", blend_filepath=None):
     """Folder for an animation: `<name>_renders/animation/<name>_<camera>_<low|high>_001/`."""
     project = project_name(blend_filepath, name)
-    ensure_folders(root, project)
     names = folder_names()
     folder = os.path.join(project_dir(root, project), names['ANIM'])
     stem = "%s_%s" % (_stem(camera_name, name, blend_filepath), names[quality])

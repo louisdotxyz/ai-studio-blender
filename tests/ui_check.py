@@ -9,7 +9,7 @@ import traceback
 
 import bpy
 
-PKG = next(n for n in bpy.context.preferences.addons.keys() if n.endswith(".claude_assistant"))
+PKG = next(n for n in bpy.context.preferences.addons.keys() if n.endswith(".AI_Studio"))
 errors = []
 
 

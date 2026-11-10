@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Claude Studio – AI chat and render studio in the 3D viewport sidebar.
+"""AI Studio – AI chat and render studio in the 3D viewport sidebar.
 
 Unofficial community add-on, not affiliated with or endorsed by Anthropic.
 Two sidebar tabs: "Claude" (the chat) and "Studio" (cameras, light, materials,
@@ -13,6 +13,7 @@ Architecture:
 - ``blender_tools``: scene description, code execution, screenshots, renders, undo.
 - ``chatview``     : the fixed-height chat area and its scrolling.
 - ``ui``           : chat sidebar panel, menus and operators.
+- ``live``         : Live Connection for external Claude sessions (/live on that server).
 - ``lmstudio``     : local models through LM Studio (Claude Code with ANTHROPIC_BASE_URL).
 - ``autosave``     : regular backups and saves right before risky moments.
 - ``attachments``, ``skills``, ``memory``, ``lessons``: the matching features.
@@ -21,24 +22,28 @@ Architecture:
 - ``i18n``         : German translation of the UI.
 """
 
-from . import autosave, core, i18n, preferences, settings, studio, ui
+from . import autosave, core, i18n, live, migrate, preferences, settings, studio, ui
 
 
 def register():
+    moved = migrate.before_register()   # the old id 'claude_assistant' must be off first
     i18n.register()
     studio.register_prefs()   # the extension's preferences hold Studio's settings
     preferences.register()
     ui.register()
     core.register()
+    live.register()
     autosave.register()
     studio.register()
     settings.register()
+    migrate.after_register(moved)
 
 
 def unregister():
     settings.unregister()
     studio.unregister()
     autosave.unregister()
+    live.unregister()
     core.unregister()
     ui.unregister()
     preferences.unregister()

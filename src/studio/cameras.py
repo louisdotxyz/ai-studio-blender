@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Camera collection, hiding cameras in the viewport and the movement lock.
 
-- New cameras (the "+" in the camera bar) go into the collection "RS_Cameras",
-  new lights into "RS_Lights". Collections with the old names ("Render Studio
-  Cameras/Lights", up to 0.12) are renamed when a file is opened.
+- New cameras (the "+" in the camera bar) go into the camera collection, new lights
+  into the light collection (names in Preferences › Studio, default AS_camera and
+  AS_lights). Collections with older names (RS_Cameras, RS_Lights, "Render Studio
+  Cameras/Lights") are renamed when a file is opened.
 - Cameras are hidden in the viewport by default: once per scene (when a file
   is opened or the extension is enabled) all cameras are hidden. Looking
   through a hidden camera works as usual; the eye in the Render tab shows them
@@ -15,9 +16,31 @@
 
 import bpy
 
-COLLECTION_NAME = "RS_Cameras"
-# Names up to 0.12 -> current name.
-OLD_NAMES = {"Render Studio Cameras": "RS_Cameras", "Render Studio Lights": "RS_Lights"}
+# Names of earlier versions, renamed to the collection names set in the preferences.
+OLD_CAMERAS = ("Render Studio Cameras", "RS_Cameras")
+OLD_LIGHTS = ("Render Studio Lights", "RS_Lights")
+
+
+def _pref(key, default):
+    from . import runner
+    p = runner.prefs()
+    return (getattr(p, key, "") or "").strip() or default if p is not None else default
+
+
+def camera_collection_name():
+    return _pref("camera_collection", "AS_camera")
+
+
+def light_collection_name():
+    return _pref("light_collection", "AS_lights")
+
+
+def archive_collection_name():
+    return _pref("archive_collection", "AS_archiv")
+
+
+def temp_collection_name():
+    return _pref("temp_collection", "temp")
 
 
 def scene_cameras(scene):
@@ -27,11 +50,13 @@ def scene_cameras(scene):
 
 
 def rename_old_collections():
-    """Renames the collections of older versions to RS_Cameras / RS_Lights."""
-    for old, new in OLD_NAMES.items():
-        coll = bpy.data.collections.get(old)
-        if coll is not None and coll.library is None and bpy.data.collections.get(new) is None:
-            coll.name = new
+    """Renames the collections of older versions (RS_Cameras, RS_Lights …) to the names set in
+    the preferences, unless one of that name exists already."""
+    for olds, new in ((OLD_CAMERAS, camera_collection_name()), (OLD_LIGHTS, light_collection_name())):
+        for old in olds:
+            coll = bpy.data.collections.get(old)
+            if coll is not None and old != new and coll.library is None and bpy.data.collections.get(new) is None:
+                coll.name = new
 
 
 def named_collection(scene, name):
@@ -46,7 +71,7 @@ def named_collection(scene, name):
 
 
 def camera_collection(scene):
-    return named_collection(scene, COLLECTION_NAME)
+    return named_collection(scene, camera_collection_name())
 
 
 def _layer_collection(layer, coll):
@@ -77,7 +102,7 @@ def set_cameras_visible(scene, visible):
         for cam in scene_cameras(scene):
             if cam.name in view_layer.objects:
                 cam.hide_set(not visible, view_layer=view_layer)
-        coll = bpy.data.collections.get(COLLECTION_NAME)
+        coll = bpy.data.collections.get(camera_collection_name())
         layer = _layer_collection(view_layer.layer_collection, coll) if coll is not None else None
         if layer is not None and visible and layer.hide_viewport:
             layer.hide_viewport = False
@@ -90,6 +115,22 @@ def hide_by_default(scene):
         return
     rs.cameras_hidden_once = True
     set_cameras_visible(scene, False)
+
+
+BLENDER_SAMPLES = 4096   # Cycles' own default: far more than a denoised product shot needs
+
+
+def default_samples(scene):
+    """Once per scene: Blender's 4096 Cycles samples become the add-on's default (512)."""
+    rs = scene.render_studio
+    if rs.samples_set_once:
+        return
+    rs.samples_set_once = True
+    from . import runner
+    cycles = getattr(scene, "cycles", None)
+    p = runner.prefs()
+    if cycles is not None and cycles.samples == BLENDER_SAMPLES:
+        cycles.samples = p.default_samples if p is not None else 512
 
 
 @bpy.app.handlers.persistent
@@ -108,6 +149,10 @@ def _on_load_post(*_args):
             hide_by_default(scene)
         except Exception as ex:
             print("Render Studio: could not hide the cameras:", ex)
+        try:
+            default_samples(scene)
+        except Exception as ex:
+            print("Render Studio: samples:", ex)
     try:
         apply_min_clipping()
     except Exception as ex:

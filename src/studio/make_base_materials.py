@@ -53,7 +53,6 @@ def build(folder):
         bpy.data.materials.remove(material)
     for name, inputs in MATERIALS.items():
         material = bpy.data.materials.new(name)
-        material.use_nodes = True
         node = next(n for n in material.node_tree.nodes if n.bl_idname == 'ShaderNodeBsdfPrincipled')
         for key, value in inputs.items():
             node.inputs[key].default_value = value

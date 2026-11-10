@@ -204,6 +204,11 @@ class RS_LightSettings(PropertyGroup):
         subtype='DISTANCE', get=lights.get_light_height, set=lights.set_light_height, options=set())
 
 
+def _look_changed(settings, context):
+    from . import look
+    look.on_change(settings, context)
+
+
 class RS_Settings(PropertyGroup):
     items: CollectionProperty(type=RS_Item)
     # Output presets (gear menu in the Queue tab)
@@ -266,6 +271,12 @@ class RS_Settings(PropertyGroup):
         default='STILL',
         options=set(),
     )
+    look_glow: FloatProperty(name="Glow", description="Soft glow around bright parts (compositor)",
+                             default=0.0, min=0.0, max=1.0, subtype='FACTOR', options=set(), update=_look_changed)
+    look_contrast: FloatProperty(name="Contrast", description="More contrast (compositor)",
+                                 default=0.0, min=0.0, max=1.0, subtype='FACTOR', options=set(), update=_look_changed)
+    look_vignette: FloatProperty(name="Vignette", description="Darker corners (compositor)",
+                                 default=0.0, min=0.0, max=1.0, subtype='FACTOR', options=set(), update=_look_changed)
     background_mode: EnumProperty(
         name="Background",
         items=[
@@ -312,6 +323,7 @@ class RS_Settings(PropertyGroup):
         get=cameras.get_lock, set=cameras.set_lock, options=set(),
     )
     cameras_hidden_once: BoolProperty(options={'HIDDEN'})
+    samples_set_once: BoolProperty(options={'HIDDEN'})
     # Orbit (see orbit.py): applies to all cameras, stays until changed
     orbit_target: PointerProperty(
         type=bpy.types.Object, poll=_is_not_camera, update=orbit.on_target,
@@ -456,9 +468,10 @@ class RS_Preferences(PropertyGroup):
     output_root: StringProperty(
         name="Output Folder",
         description="Where the renders go: a folder per file (<name> + suffix) with subfolders for "
-                    "Low, High, Animation and one archive folder for sorting by hand",
+                    "Low, High, Animation and one archive folder for sorting by hand. Empty: right next to "
+                    "the .blend file (unsaved files: Documents/AI Studio)",
         subtype='DIR_PATH',
-        default="~/Downloads",
+        default="",
     )
     output_suffix: StringProperty(
         name="Folder Suffix", description="Appended to the file name for its render folder, e.g. Chair_renders",
@@ -469,6 +482,18 @@ class RS_Preferences(PropertyGroup):
     render_archive_dir: StringProperty(
         name="Archive", description="Subfolder for sorting images by hand (the add-on never writes there)",
         default="archive")
+    camera_collection: StringProperty(
+        name="Cameras", description="Collection for new cameras (an existing one of this name is used)",
+        default="AS_camera")
+    light_collection: StringProperty(
+        name="Lights", description="Collection for new lights (an existing one of this name is used)",
+        default="AS_lights")
+    archive_collection: StringProperty(
+        name="Archive", description="Collection for replaced objects (e.g. the old CAD version): hidden, "
+        "you delete them yourself", default="AS_archiv")
+    temp_collection: StringProperty(
+        name="Temporary", description="Collection for Claude's helper objects, emptied after each answer",
+        default="temp")
     material_library: StringProperty(
         name="Base Materials",
         description="A .blend file with materials marked as assets: shown as a group in the Material tab's "
@@ -484,6 +509,12 @@ class RS_Preferences(PropertyGroup):
         name="Low: Samples",
         description="Share of the High Quality samples (Render tab > Sampling) used for Low Quality",
         subtype='PERCENTAGE', default=50, min=1, max=100,
+    )
+    default_samples: IntProperty(
+        name="High: Samples",
+        description="Cycles samples for High Quality in new files and in files that still have Blender's "
+                    "4096 (set once per scene; with Denoise and Noise Threshold 512 is enough for product shots)",
+        default=512, min=1, max=65536,
     )
     auto_render: BoolProperty(
         name="Render Right Away",
@@ -503,9 +534,10 @@ class RS_Preferences(PropertyGroup):
     )
     hdri_folder: StringProperty(
         name="HDRI Folder",
-        description="HDRI files (.hdr, .exr) in this folder and its subfolders appear in the Light tab",
+        description="HDRI files (.hdr, .exr) in this folder and its subfolders appear in the Light tab "
+                    "(empty: an 'HDRI' folder in the add-on's data folder)",
         subtype='DIR_PATH',
-        default="~/Desktop/projects/+/HDRI",
+        default="",
     )
 
     def draw_renders(self, layout):
@@ -518,6 +550,7 @@ class RS_Preferences(PropertyGroup):
         for key in ("low_dir", "high_dir", "anim_dir", "render_archive_dir"):
             sub.prop(self, key)
         col.separator()
+        col.prop(self, "default_samples")
         col.prop(self, "low_resolution")
         col.prop(self, "low_samples_percent")
         col.separator()
@@ -532,6 +565,12 @@ class RS_Preferences(PropertyGroup):
         col.prop(self, "hdri_folder")
         col.prop(self, "material_library")
         col.prop(self, "material_preset_folder")
+        col.separator()
+        sub = col.column(heading="Collections")
+        sub.prop(self, "camera_collection")
+        sub.prop(self, "light_collection")
+        sub.prop(self, "archive_collection")
+        sub.prop(self, "temp_collection")
         col.separator()
         for idname, _key, _modifiers, props, label in SHORTCUTS:
             kmi = _user_keymap_item(idname, props)

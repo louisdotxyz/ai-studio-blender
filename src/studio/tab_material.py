@@ -1,14 +1,16 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The Material tab: the active material, quick settings, the library."""
 
+import json
 import os
+import re
 import uuid
 
 import bpy
 from bpy.props import (BoolProperty, EnumProperty, IntProperty, StringProperty)
 from bpy.types import Menu, Operator, Panel
 
-from . import matpresets, runner
+from . import cadswap, matpresets, runner
 from .matpresets import _color_input, _principled
 from .ui_common import MATERIAL_TAB_ORDER, _SidebarPanel, _unpin, draw_claude_prompt, studio_tab
 
@@ -330,7 +332,6 @@ class RS_OT_material_new(Operator):
 
     def execute(self, context):
         material = bpy.data.materials.new(self.preset or "Material")
-        material.use_nodes = True
         node = _principled(material)
         if self.preset and node is not None:
             matpresets.apply(node, self.preset)
@@ -515,35 +516,289 @@ class RS_MT_material_presets_delete(Menu):
 class RS_OT_material_assign(Operator):
     bl_idname = "render_studio.material_assign"
     bl_label = "Assign Material"
-    bl_description = ("Switch to this material: every object with the current material gets it, "
-                      "to compare materials. Shift: only the selected objects")
     bl_options = {'UNDO', 'INTERNAL'}
 
     name: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
     only_selected: BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    select: BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, _context, props):
+        material = bpy.data.materials.get(props.name)
+        count = len(material_users().get(material, ())) if material is not None else 0
+        used = "Used by %d object%s" % (count, "" if count == 1 else "s") if count else "Not used"
+        return (used + ".\nClick: every object with the current material switches to this one. "
+                "Shift: only the selected objects. Ctrl: select the objects that use it. Right-click: more")
 
     def invoke(self, context, event):
         self.only_selected = event.shift
+        self.select = event.ctrl or event.oskey
         return self.execute(context)
 
     def execute(self, context):
         material = bpy.data.materials.get(self.name)
         if material is None:
             return {'CANCELLED'}
+        if self.select:
+            return bpy.ops.render_studio.material_select(name=material.name)
         obj = context.active_object
-        old = obj.active_material if obj is not None else None
-        if old is not None and old != material and not self.only_selected:
+        old = current_material(context)
+        bare = obj is not None and obj.select_get() and hasattr(obj.data, "materials") and obj.active_material is None
+        if (old is not None and old != material and not self.only_selected and not bare
+                and old in material_users()):
             count = matpresets.replace(old, material)
-            if not old.users and not old.get(BASE_KEY):
-                old.use_fake_user = True   # stays in the library to switch back
+            _keep(old)
+            remember(material)
             self.report({'INFO'}, "%s → %s on %d object%s" % (old.name, material.name, count,
                                                               "" if count == 1 else "s"))
             return {'FINISHED'}
         objects = set(context.selected_objects)
-        if context.active_object is not None:
-            objects.add(context.active_object)
+        if obj is not None:
+            objects.add(obj)
         matpresets.assign(material, sorted(objects, key=lambda o: o.name))
+        remember(material)
         return {'FINISHED'}
+
+
+# The material the tab works on when no object with a material is active (after a switch or
+# a click in the library), so a library click can switch it without selecting an object first.
+_current = [""]
+
+
+def remember(material):
+    _current[0] = material.name if material is not None else ""
+
+
+def current_material(context):
+    obj = context.active_object
+    if obj is not None and hasattr(obj.data, "materials") and obj.active_material is not None:
+        return obj.active_material
+    return bpy.data.materials.get(_current[0]) if _current[0] else None
+
+
+def material_users():
+    """{material: {objects that have it in a slot}} for the whole file."""
+    users = {}
+    for obj in bpy.data.objects:
+        for slot in obj.material_slots:
+            if slot.material is not None:
+                users.setdefault(slot.material, set()).add(obj)
+    return users
+
+
+def _keep(material):
+    """A project material nobody uses any more stays in the file (to switch back);
+    unused base copies come from the library again anyway."""
+    if not material.users and not material.get(BASE_KEY):
+        material.use_fake_user = True
+
+
+def unused_materials():
+    """Project materials no object uses (base copies and favorites excluded)."""
+    used, favs = material_users(), favorites()
+    return [m for m in _library_materials()
+            if m not in used and m.library is None and not m.get(BASE_KEY) and m.name not in favs]
+
+
+def _favorites_file():
+    from .paths import data_dir
+    return os.path.join(data_dir(), "material_favorites.json")
+
+
+_favorites = []
+
+
+def favorites():
+    """Names of favorite materials, for every project (a base material stays a favorite)."""
+    if not _favorites:
+        try:
+            with open(_favorites_file(), encoding="utf-8") as f:
+                _favorites.append(set(json.load(f)))
+        except (OSError, ValueError):
+            _favorites.append(set())
+    return _favorites[0]
+
+
+def toggle_favorite(name):
+    favs = favorites()
+    favs.symmetric_difference_update({name})
+    with open(_favorites_file(), "w", encoding="utf-8") as f:
+        json.dump(sorted(favs), f, indent=1)
+    return name in favs
+
+
+def variant_name(material):
+    base = re.sub(r" V\d+$", "", material.name)
+    n = 2
+    while bpy.data.materials.get("%s V%d" % (base, n)):
+        n += 1
+    return "%s V%d" % (base, n)
+
+
+class RS_OT_material_variant(Operator):
+    bl_idname = "render_studio.material_variant"
+    bl_label = "Color Variant"
+    bl_description = ("A copy of the current material to try another color: every object with it switches "
+                      "to the copy, the original stays in the library")
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    def execute(self, context):
+        old = current_material(context)
+        if old is None:
+            return {'CANCELLED'}
+        copy = old.copy()
+        copy.name = variant_name(old)
+        copy.pop(BASE_KEY, None)    # a variant of a base material belongs to the project
+        copy.use_fake_user = False
+        count = matpresets.replace(old, copy)
+        _keep(old)
+        if not count:
+            copy.use_fake_user = True
+        remember(copy)
+        self.report({'INFO'}, "%s for %d object%s" % (copy.name, count, "" if count == 1 else "s"))
+        return {'FINISHED'}
+
+
+class RS_OT_material_select(Operator):
+    bl_idname = "render_studio.material_select"
+    bl_label = "Select Objects"
+    bl_description = "Select the objects that use this material and make it the current one"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    name: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    def execute(self, context):
+        material = bpy.data.materials.get(self.name)
+        if material is None:
+            return {'CANCELLED'}
+        remember(material)
+        if context.mode != 'OBJECT':
+            self.report({'INFO'}, "Selecting objects works in Object Mode")
+            return {'FINISHED'}
+        objects = [o for o in context.view_layer.objects if any(s.material == material for s in o.material_slots)]
+        for obj in context.view_layer.objects:
+            try:
+                obj.select_set(obj in objects)
+            except RuntimeError:
+                pass
+        if objects:
+            first = sorted(objects, key=lambda o: o.name)[0]
+            context.view_layer.objects.active = first
+            first.active_material_index = next(i for i, s in enumerate(first.material_slots)
+                                               if s.material == material)
+        self.report({'INFO'}, "%d object%s with %s" % (len(objects), "" if len(objects) == 1 else "s",
+                                                        material.name))
+        return {'FINISHED'}
+
+
+class RS_OT_material_favorite(Operator):
+    bl_idname = "render_studio.material_favorite"
+    bl_label = "Favorite"
+    bl_description = "Add to or remove from the favorites at the top of the library (in every project)"
+    bl_options = {'INTERNAL'}
+
+    name: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    def execute(self, context):
+        toggle_favorite(self.name)
+        runner.tag_redraw()
+        return {'FINISHED'}
+
+
+class RS_OT_material_rename(Operator):
+    bl_idname = "render_studio.material_rename"
+    bl_label = "Rename Material"
+    bl_description = "Rename this material (\"Part | Material\" puts it into the group \"Part\")"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    name: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    new_name: StringProperty(name="Name")
+
+    def invoke(self, context, event):
+        self.new_name = self.name
+        return context.window_manager.invoke_props_dialog(self)
+
+    def execute(self, context):
+        material = bpy.data.materials.get(self.name)
+        if material is None or not self.new_name.strip():
+            return {'CANCELLED'}
+        was_current = _current[0] == material.name
+        if self.name in favorites():
+            toggle_favorite(self.name)
+            material.name = self.new_name.strip()
+            toggle_favorite(material.name)
+        else:
+            material.name = self.new_name.strip()
+        if was_current:
+            remember(material)
+        return {'FINISHED'}
+
+
+class RS_OT_material_delete(Operator):
+    bl_idname = "render_studio.material_delete"
+    bl_label = "Delete Material"
+    bl_description = "Remove this material from the file"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    name: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    def invoke(self, context, event):
+        material = bpy.data.materials.get(self.name)
+        if material is None:
+            return {'CANCELLED'}
+        count = len(material_users().get(material, ()))
+        message = ("%d object%s lose%s it" % (count, "" if count == 1 else "s", "s" if count == 1 else "")
+                   if count else "Not used by any object")
+        return context.window_manager.invoke_confirm(self, event, title="Delete %s?" % material.name,
+                                                     message=message, confirm_text="Delete")
+
+    def execute(self, context):
+        material = bpy.data.materials.get(self.name)
+        if material is None:
+            return {'CANCELLED'}
+        bpy.data.materials.remove(material)
+        return {'FINISHED'}
+
+
+class RS_OT_material_clean_unused(Operator):
+    bl_idname = "render_studio.material_clean_unused"
+    bl_label = "Remove Unused"
+    bl_description = "Remove the project materials no object uses (base materials and favorites stay)"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    def invoke(self, context, event):
+        names = [m.name for m in unused_materials()]
+        if not names:
+            return {'CANCELLED'}
+        return context.window_manager.invoke_confirm(
+            self, event, title="Remove %d unused material%s?" % (len(names), "" if len(names) == 1 else "s"),
+            message=", ".join(names[:8]) + (" …" if len(names) > 8 else ""), confirm_text="Remove")
+
+    def execute(self, context):
+        unused = unused_materials()
+        for material in unused:
+            bpy.data.materials.remove(material)
+        self.report({'INFO'}, "%d material%s removed" % (len(unused), "" if len(unused) == 1 else "s"))
+        return {'FINISHED'}
+
+
+def draw_tile_menu(self, context):
+    """Right-click on a library tile: the material's own entries in Blender's button menu."""
+    op = getattr(context, "button_operator", None)
+    if op is None or op.bl_rna.identifier != "RENDER_STUDIO_OT_material_assign":
+        return
+    material = bpy.data.materials.get(op.name)
+    if material is None:
+        return
+    layout = self.layout
+    layout.separator()
+    layout.operator(RS_OT_material_select.bl_idname, icon='RESTRICT_SELECT_OFF').name = material.name
+    fav = material.name in favorites()
+    layout.operator(RS_OT_material_favorite.bl_idname, icon='SOLO_ON' if fav else 'SOLO_OFF',
+                    text="Remove from Favorites" if fav else "Add to Favorites").name = material.name
+    layout.operator(RS_OT_material_rename.bl_idname, text="Rename…", icon='GREASEPENCIL').name = material.name
+    if not material.get(BASE_KEY):
+        layout.operator(RS_OT_material_delete.bl_idname, text="Delete…", icon='TRASH').name = material.name
 
 
 def _library_materials():
@@ -614,12 +869,21 @@ def _schedule_base_append():
     bpy.app.timers.register(append, first_interval=0.0)
 
 
-def _library_groups():
-    """[(group, [(material, short name)])]: the project's own materials, the base materials,
-    and components: "Driver X | Rubber" belongs to the group "Driver X"."""
+FAVORITES_GROUP = "Favorites"
+
+
+def _library_groups(search=""):
+    """[(group, [(material, short name)])]: favorites, the project's own materials, the base
+    materials, and components: "Driver X | Rubber" belongs to the group "Driver X"."""
     groups = {}
     base = base_group()
+    search = search.strip().lower()
+    favs = favorites()
     for mat in _library_materials():
+        if search and search not in mat.name.lower():
+            continue
+        if mat.name in favs:
+            groups.setdefault(FAVORITES_GROUP, []).append((mat, mat.name))
         head, sep, rest = mat.name.partition(" | ")
         if mat.get(BASE_KEY):
             group, short = base, mat.name
@@ -630,7 +894,7 @@ def _library_groups():
         groups.setdefault(group, []).append((mat, short))
     if base not in groups and base_library_file():
         groups[base] = []   # shown closed; opening it copies the materials in
-    order = sorted(groups, key=lambda g: (g != PROJECT_GROUP, g != base, g.lower()))
+    order = sorted(groups, key=lambda g: (g != FAVORITES_GROUP, g != PROJECT_GROUP, g != base, g.lower()))
     return [(g, groups[g]) for g in order]
 
 
@@ -656,10 +920,22 @@ class RS_PT_material(_SidebarPanel, Panel):
         p = runner.prefs(context)
         box = layout.box()
         if obj is None or not hasattr(obj.data, "materials"):
-            row = box.row()
-            row.label(text="Select an object", icon='INFO')
+            # No object with materials: the current material (last switched or clicked) stays editable.
+            material = current_material(context)
+            row = box.row(align=True)
+            if material is None:
+                row.label(text="Select an object or click a material", icon='INFO')
+            else:
+                row.prop(material, "name", text="", icon='MATERIAL')
+                row.operator(RS_OT_material_variant.bl_idname, text="", icon='COLOR')
             row.popover(RS_PT_material_settings.__name__, text="", icon='PREFERENCES')
-            self._draw_library(layout, context, None, None)
+            if material is not None:
+                if p is None or p.mat_preview:
+                    box.template_icon(icon_value=layout.icon(material),
+                                      scale=float(p.mat_preview_size) if p is not None else 8.0)
+                self._draw_settings(layout, material, _principled(material), p)
+            self._draw_library(layout, context, material, None)
+            cadswap.draw(layout)
             return
         material = obj.active_material
         node = _principled(material)
@@ -691,6 +967,9 @@ class RS_PT_material(_SidebarPanel, Panel):
             users.label(text="%d×" % material.users)
         row.operator(RS_OT_material_duplicate.bl_idname, text="", icon='DUPLICATE')
         sub = row.row(align=True)
+        sub.enabled = material is not None
+        sub.operator(RS_OT_material_variant.bl_idname, text="", icon='COLOR')
+        sub = row.row(align=True)
         sub.enabled = material is not None and material.users > 1
         sub.operator(RS_OT_material_unlink.bl_idname, text="", icon='UNLINKED')
         row.operator(RS_OT_pick_from_object.bl_idname, text="", icon='EYEDROPPER').mode = 'MATERIAL'
@@ -701,6 +980,7 @@ class RS_PT_material(_SidebarPanel, Panel):
 
         # 3. Library
         self._draw_library(layout, context, material, node)
+        cadswap.draw(layout)
 
     @staticmethod
     def _draw_settings(layout, material, node, p):
@@ -732,20 +1012,29 @@ class RS_PT_material(_SidebarPanel, Panel):
         row.label(text="Library", icon='ASSET_MANAGER')
         row.operator(RS_OT_material_to_base.bl_idname, text="", icon='EXPORT')
         row.menu(RS_MT_material_new.bl_idname, text="", icon='ADD')
-        groups = _library_groups()
+        wm = context.window_manager
+        box.prop(wm, "render_studio_mat_search", text="", icon='VIEWZOOM')
+        search = wm.render_studio_mat_search
+        groups = _library_groups(search)
         if not groups:
-            box.label(text="No materials in this file", icon='INFO')
+            box.label(text="No match" if search else "No materials in this file", icon='INFO')
             return
-        opened = set(context.window_manager.render_studio_mat_open.split("\n"))
+        users = material_users()
+        unused = len(unused_materials())
+        opened = set(wm.render_studio_mat_open.split("\n"))
         for group, items in groups:
-            # The project's own materials are open unless closed, components closed unless opened.
-            is_open = (group == PROJECT_GROUP) != (group in opened)
+            # Favorites and the project's own materials are open unless closed, the others closed
+            # unless opened; while searching every group with a match is open.
+            is_open = bool(search) or (group in (FAVORITES_GROUP, PROJECT_GROUP)) != (group in opened)
             if len(groups) > 1:
                 head = box.row(align=True)
                 head.emboss = 'NONE'
                 head.operator(RS_OT_material_group_toggle.bl_idname,
                               text="%s  (%d)" % (group, len(items)) if items else group,
                               icon='DOWNARROW_HLT' if is_open else 'RIGHTARROW').name = group
+                if group == PROJECT_GROUP and unused:
+                    head.operator(RS_OT_material_clean_unused.bl_idname, text="%d unused" % unused,
+                                  icon='TRASH')
             if not is_open:
                 continue
             if group == base_group():
@@ -755,10 +1044,12 @@ class RS_PT_material(_SidebarPanel, Panel):
                     continue
             grid = box.grid_flow(row_major=True, columns=LIBRARY_COLUMNS, even_columns=True, align=False)
             for mat, short in items:
+                count = len(users.get(mat, ()))
                 cell = grid.column(align=True)
+                cell.active = bool(count) or mat == material or bool(mat.get(BASE_KEY))
                 pic = cell.box() if mat == material else cell.column()
                 pic.template_icon(icon_value=layout.icon(mat), scale=LIBRARY_ICON_SCALE)
                 name = cell.row(align=True)
                 name.scale_y = 0.75
-                name.operator(RS_OT_material_assign.bl_idname, text=short, depress=(mat == material),
-                              emboss=(mat == material)).name = mat.name
+                name.operator(RS_OT_material_assign.bl_idname, text="%d× %s" % (count, short) if count else short,
+                              depress=(mat == material), emboss=(mat == material)).name = mat.name

@@ -75,7 +75,8 @@ def save(material, name=None):
     from .tab_material import BASE_KEY
     name = name or material.get(BASE_KEY) or material.name
     library = library_file()
-    tmp = os.path.join(tempfile.gettempdir(), "ai_studio_base_material.blend")
+    fd, tmp = tempfile.mkstemp(suffix=".blend", prefix="ai_studio_base_material_")   # unique: Blenders in parallel
+    os.close(fd)
     bpy.data.libraries.write(tmp, {material}, fake_user=True, compress=False)
     try:
         _run(library, {"name": name, "source": tmp, "source_name": material.name})

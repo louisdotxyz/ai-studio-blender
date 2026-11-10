@@ -13,6 +13,19 @@ from mathutils import Vector
 from . import core, hdri, hdri_gen, lights, runner
 
 ENVIRONMENT_FOLDER = "Environment"   # subfolder of the HDRI folder for baked rooms
+ENV_KEY = "as_env"                   # obj["as_env"] = True marks the objects of a modelled room
+
+
+def room_objects(scene=None, collection=None):
+    """The objects of the modelled room: marked with obj["as_env"], or those of `collection`
+    (older files: collections "ENV | <Name>")."""
+    scene = scene or bpy.context.scene
+    if collection:
+        coll = bpy.data.collections.get(collection) if isinstance(collection, str) else collection
+        if coll is None:
+            raise ValueError("Collection %r not found" % collection)
+        return list(coll.all_objects)
+    return [o for o in scene.objects if o.get(ENV_KEY)]
 
 LIGHT_SETUP_FORMAT = """\
 Answer with JSON only, in this format:
@@ -132,7 +145,7 @@ def environment_context(scene):
     for obj in scene.objects:
         if obj.type != 'MESH' or obj.hide_render or not obj.visible_get():
             continue
-        if any(c.name.startswith("ENV |") for c in obj.users_collection):
+        if obj.get(ENV_KEY) or any(c.name.startswith("ENV |") for c in obj.users_collection):
             continue
         z = min((obj.matrix_world @ Vector(c)).z for c in obj.bound_box)
         floor = z if floor is None else min(floor, z)
@@ -145,6 +158,7 @@ def environment_context(scene):
         if cam is not None and cam.type == 'CAMERA' else None,
         "hdri_folder": hdri.folder_path(p.hdri_folder if p else ""),
         "environment_folder": ENVIRONMENT_FOLDER,
+        "room_objects": len(room_objects(scene)),   # marked with obj["as_env"]
         "environments": sorted(c.name for c in bpy.data.collections if c.name.startswith("ENV |")),
         "worlds": [w.name for w in bpy.data.worlds],
     }
@@ -180,21 +194,22 @@ def remove_base_material(name):
     return name
 
 
-def environment_bake(name, collection, location=None, world=None, resolution=4096, samples=256,
+def environment_bake(name, collection=None, location=None, world=None, resolution=4096, samples=256,
                      scene=None, use=True):
-    """Renders a modelled room (the objects of `collection`) as a 32-bit equirectangular EXR into
-    <HDRI folder>/Environment and, with use=True, uses it as the World. Returns the file path.
+    """Renders a modelled room as a 32-bit equirectangular EXR into <HDRI folder>/Environment and,
+    with use=True, uses it as the World. Returns the file path. The room: the objects marked
+    obj["as_env"] (or those of `collection`); they are rendered even if hidden in renders.
 
     location: panorama position (default: center of the subject). world: World that lights the
-    room while baking (default: the scene's World). Everything outside the collection is hidden
-    while rendering; camera, render settings, World and hide_render states are restored."""
+    room while baking (default: the scene's World). Everything else is hidden while rendering;
+    camera, render settings, World and hide_render states are restored."""
     import os
     from .. import autosave
     autosave.save_now("before environment bake", force=True)   # long Cycles render
     scene = scene or bpy.context.scene
-    coll = bpy.data.collections.get(collection) if isinstance(collection, str) else collection
-    if coll is None:
-        raise ValueError("Collection %r not found" % collection)
+    keep = set(room_objects(scene, collection))
+    if not keep:
+        raise ValueError('No room objects: mark them with obj["as_env"] = True')
     p = runner.prefs()
     root = hdri.folder_path(p.hdri_folder if p else "")
     if not root:
@@ -212,7 +227,6 @@ def environment_bake(name, collection, location=None, world=None, resolution=409
     saved_image = {k: getattr(image, k) for k in ("media_type", "file_format", "color_depth", "color_mode")
                    if hasattr(image, k)}
     saved_camera, saved_world = scene.camera, scene.world
-    keep = set(coll.all_objects)
     hidden = {obj: obj.hide_render for obj in scene.objects}
 
     data = bpy.data.cameras.new("RS Environment Bake")
@@ -224,8 +238,7 @@ def environment_bake(name, collection, location=None, world=None, resolution=409
     scene.collection.objects.link(cam)
     try:
         for obj in hidden:
-            if obj not in keep:
-                obj.hide_render = True
+            obj.hide_render = obj not in keep
         if world is not None:
             scene.world = world
         scene.camera = cam
@@ -264,3 +277,173 @@ def environment_bake(name, collection, location=None, world=None, resolution=409
         hdri.apply(scene, path, scene.render_studio)
         hdri.set_rotation(None, 0.0)   # baked in world axes
     return path
+
+
+# ---------------------------------------------------------------- objects, CAD versions, references
+
+def archive(objects):
+    """Move objects (or names) into the hidden archive collection instead of deleting them; the user
+    deletes them there. Returns how many were moved."""
+    from . import cadswap
+    return cadswap.archive([bpy.data.objects[o] if isinstance(o, str) else o for o in objects])
+
+
+def temp_collection():
+    """The collection for helper objects; it is deleted after Claude's answer."""
+    from . import cadswap
+    return cadswap.temp_collection()
+
+
+def cad_take_over(new_objects, materials=True, collections=True, delete=False):
+    """A new CAD version takes over from the old one: by part name ("Gabel", "Gabel.001",
+    "Gabel <1>" are the same part) the new objects get the materials and collections of the old
+    ones, the old ones go into the archive (delete=True only when the user asked for it).
+    Returns {"pairs": [[new, old], …], "new_without_partner": […], "old_without_partner": […]}."""
+    from . import cadswap
+    objects = [bpy.data.objects[o] if isinstance(o, str) else o for o in new_objects]
+    pairs, lonely_new, lonely_old = cadswap.match(objects)
+    cadswap.take_over(pairs, materials, collections, 'DELETE' if delete else 'ARCHIVE')
+    return {"pairs": [[n.name, o.name] for n, o in pairs],
+            "new_without_partner": [o.name for o in lonely_new],
+            "old_without_partner": [o.name for o in lonely_old]}
+
+
+REFERENCE_DIRS = ("refrence", "reference", "references", "Referenz")
+IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".tif", ".tiff", ".heic", ".jxl")
+
+
+def _reference_dir(folder):
+    """The reference folder directly in `folder` (any spelling of REFERENCE_DIRS), or None."""
+    import os
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return None
+    wanted = {d.lower() for d in REFERENCE_DIRS}
+    return next((os.path.join(folder, n) for n in sorted(names)
+                 if n.lower() in wanted and os.path.isdir(os.path.join(folder, n))), None)
+
+
+def project_root(path=None):
+    """The nearest folder at or above the .blend file that has a reference folder
+    ("reference", "references", "Referenz", "refrence"), e.g. Chair/reference next to
+    Chair/Chair.blend or Project/reference above Project/DATA/Chair/Chair.blend. Stops at home."""
+    import os
+    filepath = path or bpy.data.filepath
+    if not filepath:
+        return None
+    home = os.path.expanduser("~")
+    folder = os.path.dirname(os.path.abspath(filepath))
+    while folder and os.path.dirname(folder) != folder:
+        if _reference_dir(folder):
+            return folder
+        if os.path.normcase(folder) == os.path.normcase(home):
+            break
+        folder = os.path.dirname(folder)
+    return None
+
+
+def references(topic=None):
+    """Without topic: the topics (subfolders) of the project's reference folder. With a topic
+    ("CMF", case does not matter): the image paths in it (subfolders too). HEIC/JXL: convert a
+    copy with `sips -s format jpeg` into a temp folder before reading. Never write into the folder."""
+    import os
+    root = project_root()
+    if root is None:
+        raise ValueError("No reference folder next to or above this file (make one named 'reference')")
+    base = _reference_dir(root)
+    topics = sorted(d for d in os.listdir(base) if os.path.isdir(os.path.join(base, d)))
+    if topic is None:
+        return topics
+    name = next((t for t in topics if t.lower() == str(topic).strip().lower()), None)
+    if name is None:
+        raise ValueError("No reference topic %r (there are: %s)" % (topic, ", ".join(topics)))
+    found = []
+    for folder, _dirs, files in os.walk(os.path.join(base, name)):
+        found += [os.path.join(folder, f) for f in sorted(files) if f.lower().endswith(IMAGE_EXTS)]
+    return found
+
+
+# ---------------------------------------------------------------- section through scan and model
+
+def section(objects, axis="X", offset=0.0, plane_object=None, keep=False, compare=True):
+    """Cut objects (or names, e.g. a scan and the CAD part) with a plane and measure the cut.
+
+    Plane: `axis` "X"/"Y"/"Z" at `offset` meters along it, or the local XY plane of
+    `plane_object`. The contours become edge objects "Section <name>" in the temp collection
+    (keep=True: in the collection "Sections"). Returns per object width/height in the plane (mm),
+    the center and the number of cut edges; with compare and two or more objects also how far the
+    contours of the others lie from the first one (mean/max mm), e.g. CAD against the scan."""
+    import bmesh
+    from mathutils import kdtree
+    from . import cadswap
+    objects = [bpy.data.objects[o] if isinstance(o, str) else o for o in objects]
+    if plane_object is not None:
+        plane_object = bpy.data.objects[plane_object] if isinstance(plane_object, str) else plane_object
+        co = plane_object.matrix_world.translation.copy()
+        normal = (plane_object.matrix_world.to_3x3() @ Vector((0, 0, 1))).normalized()
+    else:
+        normal = Vector({"X": (1, 0, 0), "Y": (0, 1, 0), "Z": (0, 0, 1)}[str(axis).upper()])
+        co = normal * float(offset)
+    u = normal.orthogonal().normalized()
+    v = normal.cross(u).normalized()
+    if str(axis).upper() == "Z" and plane_object is None:
+        u, v = Vector((1, 0, 0)), Vector((0, 1, 0))
+    elif str(axis).upper() in ("X", "Y") and plane_object is None:
+        v = Vector((0, 0, 1))
+        u = v.cross(normal).normalized()
+    if keep:
+        coll = bpy.data.collections.get("Sections") or bpy.data.collections.new("Sections")
+        if coll not in bpy.context.scene.collection.children_recursive:
+            bpy.context.scene.collection.children.link(coll)
+    else:
+        coll = cadswap.temp_collection()
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    result, contours = {}, []
+    for obj in objects:
+        evaluated = obj.evaluated_get(depsgraph)
+        mesh = evaluated.to_mesh()
+        bm = bmesh.new()
+        bm.from_mesh(mesh)
+        evaluated.to_mesh_clear()
+        bm.transform(obj.matrix_world)
+        cut = bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], plane_co=co,
+                                     plane_no=normal, dist=1e-6)["geom_cut"]
+        verts = [vert for vert in cut if isinstance(vert, bmesh.types.BMVert)]
+        index = {vert: i for i, vert in enumerate(verts)}
+        points = [vert.co.copy() for vert in verts]
+        pairs = [(index[e.verts[0]], index[e.verts[1]]) for e in cut
+                 if isinstance(e, bmesh.types.BMEdge) and e.verts[0] in index and e.verts[1] in index]
+        bm.free()
+        name = "Section " + obj.name
+        if not points:
+            result[obj.name] = {"cut": False}
+            contours.append([])
+            continue
+        old = bpy.data.objects.get(name)
+        if old is not None:
+            bpy.data.objects.remove(old)
+        data = bpy.data.meshes.new(name)
+        data.from_pydata([p - co for p in points], pairs, [])
+        section_obj = bpy.data.objects.new(name, data)
+        section_obj.location = co
+        coll.objects.link(section_obj)
+        us = [p.dot(u) for p in points]
+        vs = [p.dot(v) for p in points]
+        center = sum(points, Vector()) / len(points)
+        result[obj.name] = {"cut": True, "width_mm": round((max(us) - min(us)) * 1000, 2),
+                            "height_mm": round((max(vs) - min(vs)) * 1000, 2),
+                            "center_m": [round(c, 4) for c in center], "edges": len(pairs),
+                            "object": section_obj.name}
+        contours.append(points)
+    if compare and len(contours) > 1 and contours[0]:
+        tree = kdtree.KDTree(len(contours[0]))
+        for i, p in enumerate(contours[0]):
+            tree.insert(p, i)
+        tree.balance()
+        for obj, points in zip(objects[1:], contours[1:]):
+            if points:
+                dists = [tree.find(p)[2] for p in points]
+                result[obj.name]["to_" + objects[0].name + "_mm"] = {
+                    "mean": round(sum(dists) / len(dists) * 1000, 2), "max": round(max(dists) * 1000, 2)}
+    return result

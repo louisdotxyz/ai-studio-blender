@@ -44,6 +44,14 @@ How to work:
 - Small, focused steps. After visible changes, check the result (screenshot, or print values).
 - Prefer bpy.data and direct property access over bpy.ops. Reuse existing materials/objects \
 instead of creating duplicates. Never delete or overwrite user data or files without asking.
+- Objects you replace or that are no longer wanted: api.archive(objects) moves them into the hidden \
+archive collection, where the user deletes them. Delete objects only when the user says so explicitly.
+- Helper objects (cutters, measuring planes, test objects): put them into api.temp_collection(); it is \
+deleted after your answer. Nothing the user should keep goes there.
+- A new CAD version next to the old one: api.cad_take_over(new_objects) gives the new parts the \
+materials and collections of the old parts with the same name and archives the old ones.
+- Reference images: api.references() lists the topics in the project's reference folder, \
+api.references("CMF") the image paths of one topic (e.g. "reference CMF"); look at them with Read.
 - If something is unclear or there are real alternatives, call ask_user (one question, 2-5 short options) \
 instead of guessing or asking in plain text.
 
@@ -107,6 +115,13 @@ login_needed = False  # the CLI's login is missing or expired (the panel shows a
 _login_opened = False  # the login window was opened once on its own already
 _login_check = {"thread": None, "result": None, "next": 0.0}  # background `claude auth status`
 LOGIN_POLL = 3.0      # seconds between checks while logged out and the login window is open
+LOGIN_FAST = 600.0    # check that often for this long after the login window opened
+_login_since = [0.0]  # when the login window was opened last
+login_ok = False      # logged in for sure (status check or a good answer)
+update_needed = False  # the CLI is too old for the add-on's options
+local_down = False    # LM Studio did not answer
+_live_waiting = []    # Live Connection code waiting until the chat's answer is done
+_setup_cache = {"time": -10.0, "state": None}
 
 
 def mark_dirty():
@@ -498,8 +513,12 @@ def _start_run(outgoing, prefs, single=False):
         add_message("error", tr("Choose a local model first (LM Studio models in ~/.lmstudio/models)."))
         return
     if not local and not bpy.app.online_access:
-        add_message("error", tr("Online access is disabled, but Claude Code needs the internet. Enable "
-                                "it in Preferences › System › Network › Allow Online Access."))
+        if bpy.app.online_access_override:
+            add_message("error", tr("Blender was started offline (--offline-mode), but Claude Code needs "
+                                    "the internet. Start Blender without it, or use a local model."))
+        else:
+            add_message("error", tr("Online access is off in Blender, but Claude Code needs the internet. "
+                                    "Click 'Allow' in the setup card below, then send the message again."))
         return
     claude_path = claude_cli.find_claude(prefs.claude_path if prefs else "")
     if not claude_path:
@@ -601,13 +620,22 @@ def _k(n):
     return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
 
 
+def _chat_tasks():
+    """Open approvals and questions of the chat (the Live Connection's don't end with a run)."""
+    return [task for task in pending + questions if not task.live]
+
+
+def _clear_chat_tasks():
+    pending[:] = [task for task in pending if task.live]
+    questions.clear()
+
+
 def stop():
     if current_run:
         current_run.cancel()
-    for task in pending + questions:
+    for task in _chat_tasks():
         task.finish(mcp_server.text_result("Cancelled: the user stopped the request.", True))
-    pending.clear()
-    questions.clear()
+    _clear_chat_tasks()
     for msg in queued:  # keep what the user wrote
         msg.pop("uid", None)
         messages.append(msg)
@@ -951,7 +979,7 @@ def approve(index, accept):
     if task.done:
         return
     if accept:
-        task.finish(_run_code_task(task))
+        task.finish(_run_live_code(task) if task.live else _run_code_task(task))
     else:
         add_message("info", tr("Rejected: {}").format(task.description or tr("Code")))
         task.finish(mcp_server.text_result(
@@ -986,7 +1014,54 @@ def answer_question(index, answer):
 # ---------------------------------------------------------------------------
 # Tool dispatch (main thread)
 
+def _run_live_code(task):
+    autosave.note_step(tr("code: {}").format(task.description or "…"))
+    output, ok = blender_tools.execute_python(task.code, "Claude Live", max_output=200000, live=True)
+    file = bpy.data.filepath
+    return {"ok": True, "output": output, "file": file} if ok else {"ok": False, "error": output, "file": file}
+
+
+def _dispatch_live(task):
+    """A request over the Live Connection (live.py): the answer is the JSON sent back."""
+    args = task.arguments
+    if task.name == "live_info":
+        with blender_tools.viewport_context():
+            return {"ok": True, "text": blender_tools.scene_summary(max_objects=200)}
+    if task.name == "live_object":
+        obj, text = blender_tools.object_info(str(args.get("name", "")))
+        return {"ok": True, "text": text} if obj is not None else {"ok": False, "error": text}
+    if task.name == "live_screenshot":
+        try:
+            size = max(64, min(4096, int(args.get("max_size") or 1280)))
+            png = blender_tools.capture_viewport(size)
+        except Exception as exc:
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        return {"ok": True, "png": base64.b64encode(png).decode("ascii")}
+    task.code = str(args.get("code", ""))
+    task.description = str(args.get("description", "")).strip()
+    if not task.code.strip():
+        return {"ok": False, "error": "Parameter 'code' is required.", "file": bpy.data.filepath}
+    if current_run:   # the chat is changing the scene right now: one after the other
+        _live_waiting.append(task)
+        mark_dirty()
+        return mcp_server.DEFERRED
+    return _live_python(task)
+
+
+def _live_python(task):
+    prefs = get_prefs()
+    if task.description:
+        add_message("info", "Cowork: " + task.description)
+    if prefs and prefs.auto_approve:
+        return _run_live_code(task)
+    pending.append(task)
+    mark_dirty()
+    return mcp_server.DEFERRED
+
+
 def _dispatch(task):
+    if task.live:
+        return _dispatch_live(task)
     args = task.arguments
     name = task.name
     prefs = get_prefs()
@@ -1242,10 +1317,9 @@ def _handle_done(rc, stderr):
     if streaming_text.strip():  # cancelled mid-answer: keep what was there
         add_message("assistant", streaming_text)
     streaming_text = ""
-    for task in pending + questions:
+    for task in _chat_tasks():
         task.finish(mcp_server.text_result("Request ended.", True))
-    pending.clear()
-    questions.clear()
+    _clear_chat_tasks()
     if _followups and not (run and run.cancelled):
         # Messages that arrived while the process was already closing.
         outgoing = list(_followups)
@@ -1258,6 +1332,7 @@ def _handle_done(rc, stderr):
     set_activity("idle")
     _take_version_word()
     _offer_written_code()
+    _empty_temp()
     if run and run.cancelled:
         add_message("info", tr("Stopped"))
     elif rc == -1 and (stderr or "").startswith("LM Studio"):
@@ -1271,17 +1346,122 @@ def _handle_done(rc, stderr):
             _set_login_needed(True)
         if "unknown option" in low:
             msg += "\n" + tr("Tip: update Claude Code with 'claude update' in a terminal.")
+            _set_flag("update_needed", True)
         add_message("error", msg)
         if login_needed:
             _login_hint()
     elif rc == 0 and not is_local():
         _set_login_needed(False)
+        _set_flag("login_ok", True)
+        _set_flag("update_needed", False)
+    if rc == -1 and (stderr or "").startswith("LM Studio"):
+        _set_flag("local_down", True)
+    elif rc == 0:
+        _set_flag("local_down", False)
     save_current_chat()
     prefs = get_prefs()
     if (rc == 0 and not was_compacting and not (run and run.cancelled) and prefs and prefs.auto_compact
             and context_fraction() >= prefs.compact_at / 100):
         compact(auto=True)
     mark_dirty()
+
+
+def _empty_temp():
+    """After an answer: delete Claude's helper objects (the marked temp collection), one undo step."""
+    try:
+        from .studio import cadswap
+        count = cadswap.empty_temp()
+    except Exception:
+        traceback.print_exc()
+        return
+    if count:
+        try:
+            with blender_tools.viewport_context():
+                bpy.ops.ed.undo_push(message="Claude: helper objects removed")
+        except Exception:
+            pass
+        add_message("info", tr("Removed {} helper objects (temp)").format(count))
+
+
+def _set_flag(name, value):
+    globals()[name] = value
+    mark_dirty()
+
+
+def open_update():
+    prefs = get_prefs()
+    claude_path = claude_cli.find_claude(prefs.claude_path if prefs else "")
+    if claude_path:
+        claude_cli.open_update(claude_path)
+        _set_flag("update_needed", False)
+
+
+def start_lmstudio():
+    """Start LM Studio's server in the background (the next message uses it)."""
+    def run():
+        try:
+            lmstudio._lms("server", "start", timeout=60)
+        except Exception as exc:
+            print("AI Studio: LM Studio did not start:", exc)
+    threading.Thread(target=run, daemon=True).start()
+    _set_flag("local_down", False)
+
+
+def setup_state():
+    """What a new user still has to set up (cached for a few seconds, drawn every redraw)."""
+    now = time.monotonic()
+    if _setup_cache["state"] is not None and now - _setup_cache["time"] < 3.0:
+        return _setup_cache["state"]
+    prefs = get_prefs()
+    cli = claude_cli.find_claude(prefs.claude_path if prefs else "")
+    from .studio import core as studio_core, runner as studio_runner, tab_material
+    p = studio_runner.prefs()
+    state = {
+        "cli": cli,
+        "login": False if login_needed else (True if login_ok else None),
+        "base": tab_material.base_library_file(),
+        "output": studio_core.output_root(p.output_root if p is not None else ""),
+        "output_set": bool(p is not None and p.output_root),
+        "live": bool(prefs and prefs.live_connection),
+        "online": online_state(),
+    }
+    from . import live_clients
+    state["live_code"] = live_clients.code_connected()
+    state["live_desktop"] = live_clients.desktop_connected() if live_clients.desktop_installed() else None
+    _setup_cache.update(time=now, state=state)
+    return state
+
+
+def online_state():
+    """'ON', 'OFF' (the user can allow it) or 'LOCKED' (Blender started with --offline-mode).
+    A fresh Blender starts with online access off until it is allowed once: then Claude Code
+    can not be used from the add-on, while LM Studio (local) still works."""
+    if bpy.app.online_access:
+        return 'ON'
+    return 'LOCKED' if bpy.app.online_access_override else 'OFF'
+
+
+def allow_online():
+    """Turn on Preferences › System › Network › Allow Online Access (the user clicked for it)."""
+    if bpy.app.online_access_override:
+        return False
+    bpy.context.preferences.system.use_online_access = True
+    bpy.context.preferences.is_dirty = True
+    _setup_cache["state"] = None
+    mark_dirty()
+    return bool(bpy.app.online_access)
+
+
+def live_status():
+    """Text for the chat when another Claude session uses the Live Connection, else ""."""
+    if _live_waiting:
+        return tr("Cowork waits until this answer is done")
+    if any(task.live for task in pending):
+        return tr("Cowork wants to run code")
+    seen = mcp_server.live_seen[0]
+    if seen and time.time() - seen < 20:
+        return tr("Cowork connected · last request {} s ago").format(int(time.time() - seen))
+    return ""
 
 
 def _set_login_needed(value):
@@ -1312,6 +1492,8 @@ def open_login():
         add_message("error", tr("Could not open the login: {}").format(exc))
         return False
     _login_opened = True   # check often now, so the button goes away right after the login
+    _login_since[0] = time.monotonic()
+    _login_check["next"] = 0.0
     return True
 
 
@@ -1340,8 +1522,14 @@ def _poll_login():
         result = _login_check["result"]
         if result is not None and login_needed == result:
             _set_login_needed(not result)
+            if result and _login_opened:
+                add_message("info", tr("Logged in to Claude."))
             mark_dirty()
-        _login_check["next"] = time.monotonic() + (LOGIN_POLL if _login_opened else 30.0)
+        if result:
+            _set_flag("login_ok", True)
+            _setup_cache["state"] = None
+        fast = _login_opened and time.monotonic() - _login_since[0] < LOGIN_FAST
+        _login_check["next"] = time.monotonic() + (LOGIN_POLL if fast else 30.0)
     elif login_needed and not thread and time.monotonic() >= _login_check["next"]:
         check_login()
 
@@ -1403,7 +1591,7 @@ def _tag_redraw():
 
 
 _last_second = -1
-_last_poll = [0.0]
+_last_poll = [0.0, 0]
 
 
 def _tick():
@@ -1449,6 +1637,19 @@ def _tick():
             hook()
 
         _poll_login()
+
+        while _live_waiting and not current_run:
+            task = _live_waiting.pop(0)
+            if task.cancelled:
+                continue
+            result = _live_python(task)
+            if result is not mcp_server.DEFERRED:
+                task.finish(result)
+            _dirty = True
+
+        if live_status() and int(time.time()) != _last_poll[1]:   # "last request … ago"
+            _last_poll[1] = int(time.time())
+            _dirty = True
 
         if is_local():
             lmstudio.poll_if_due()  # load state and memory for the sidebar

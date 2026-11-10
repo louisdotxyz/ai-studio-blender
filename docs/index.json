@@ -1,0 +1,38 @@
+{
+  "version": "v1",
+  "blocklist": [],
+  "assetlib_auth_method": "PER_LIBRARY",
+  "data": [
+    {
+      "schema_version": "1.0.0",
+      "id": "AI_Studio",
+      "name": "AI Studio",
+      "tagline": "Claude chat, local models and a render studio for Blender",
+      "version": "1.0.0",
+      "type": "add-on",
+      "maintainer": "louisdotxyz",
+      "license": [
+        "SPDX:GPL-3.0-or-later"
+      ],
+      "blender_version_min": "5.0.0",
+      "website": "https://github.com/louisdotxyz/ai-studio-blender",
+      "permissions": {
+        "network": "Claude Code online; MCP, Live Connection, LM Studio on 127.0.0.1",
+        "files": "Chats, backups, renders and HDRIs in folders you choose",
+        "clipboard": "Paste images and copy answers"
+      },
+      "tags": [
+        "3D View",
+        "Render",
+        "User Interface"
+      ],
+      "platforms": [
+        "macos-arm64",
+        "macos-x64"
+      ],
+      "archive_url": "./AI_Studio-1.0.0.zip",
+      "archive_size": 249694,
+      "archive_hash": "sha256:2fe77dbed5c208f89ce7e9c06fee3bd18bc60aa6d5218e03bf722505df28e67a"
+    }
+  ]
+}

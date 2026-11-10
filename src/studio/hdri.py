@@ -22,8 +22,14 @@ _favorites = None
 
 # ------------------------------------------------------------------- Files
 
+def default_folder():
+    """Where HDRIs go when no folder is set: <add-on data>/studio/HDRI."""
+    from . import paths
+    return os.path.join(paths.data_dir(), "HDRI")
+
+
 def folder_path(folder):
-    return os.path.abspath(os.path.expanduser(bpy.path.abspath(folder))) if folder else ""
+    return os.path.abspath(os.path.expanduser(bpy.path.abspath(folder))) if folder else default_folder()
 
 
 def scan(folder):
@@ -332,7 +338,7 @@ def _watch_timer():
             _watch["state"] = state
             from . import runner
             p = runner.prefs()
-            if p is not None and p.hdri_folder:
+            if p is not None:
                 import_blenderkit(p.hdri_folder)
     except Exception as ex:
         print("Render Studio: BlenderKit check:", ex)

@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
-id = "claude_assistant"
-version = "0.23.0"
+id = "AI_Studio"
+version = "1.0.0"
 name = "AI Studio"
 tagline = "Claude chat, local models and a render studio for Blender"
 maintainer = "louisdotxyz"
@@ -10,13 +10,16 @@ website = "https://github.com/louisdotxyz/ai-studio-blender"
 
 tags = ["3D View", "Render", "User Interface"]
 
-blender_version_min = "5.2.0"
+blender_version_min = "5.0.0"
+
+# macOS only (the Claude Code login, terminals and the Live Connection setup are made for it)
+platforms = ["macos-arm64", "macos-x64"]
 
 license = [
   "SPDX:GPL-3.0-or-later",
 ]
 
 [permissions]
-network = "Claude Code online, MCP server and LM Studio on 127.0.0.1"
+network = "Claude Code online; MCP, Live Connection, LM Studio on 127.0.0.1"
 files = "Chats, backups, renders and HDRIs in folders you choose"
 clipboard = "Paste images and copy answers"

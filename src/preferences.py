@@ -41,6 +41,11 @@ def _backend_changed(self, context):
         lmstudio.preload(self.local_model, self.local_context)
 
 
+def _live_connection_changed(self, context):
+    from . import live
+    live.sync()
+
+
 def get_prefs():
     addon = bpy.context.preferences.addons.get(__package__)
     return addon.preferences if addon else None
@@ -187,6 +192,21 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
         description="Auto mode: Claude runs code directly without asking every time (undo with Ctrl+Z)",
         default=False,
     )
+    live_connection: BoolProperty(
+        name="Live Connection (External Claude Sessions)",
+        description="Let other Claude sessions on this computer (Cowork, blender-mcp) work in the open Blender. "
+                    "Port and token are in ~/.config/ai-studio/live.json. "
+                    "'Run Code Without Asking' applies to them too",
+        default=True,
+        update=_live_connection_changed,
+    )
+    live_port: IntProperty(
+        name="Port", description="Fixed port for the Live Connection (0 = a free one each start). "
+        "Takes effect when Blender starts", default=0, min=0, max=65535,
+    )
+    setup_done: BoolProperty(
+        name="Setup Done", description="The setup card in the chat was closed", default=False,
+    )
     send_scene_context: BoolProperty(
         name="Send Scene Info",
         description="Attach a description of the scene to every message",
@@ -230,7 +250,10 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
             box = layout.box()
             box.alert = True
             box.label(text="Online access is disabled: Claude Code needs the internet.", icon='ERROR')
-            box.label(text="Enable it in Preferences › System › Network › Allow Online Access.")
+            if bpy.app.online_access_override:
+                box.label(text="Blender was started with --offline-mode: start it without it.")
+            else:
+                box.operator("claude.allow_online", icon='URL')
         layout.row().prop(self, "prefs_tab", expand=True)
         box = layout.box()
         getattr(self, "_draw_" + self.prefs_tab.lower())(box, context)
@@ -256,6 +279,11 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
         col.prop(self, "attach_folder")
         col.separator()
         col.prop(self, "auto_approve")
+        col.prop(self, "live_connection")
+        sub = col.row(align=True)
+        sub.active = self.live_connection
+        sub.prop(self, "live_port")
+        sub.operator("claude.copy_live_connection", text="", icon='COPYDOWN')
         col.prop(self, "show_stats")
         row = col.row(heading="Auto Summarize")
         row.prop(self, "auto_compact", text="")

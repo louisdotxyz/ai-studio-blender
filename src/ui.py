@@ -10,7 +10,7 @@ import bpy.utils.previews
 from bpy.props import BoolProperty, CollectionProperty, EnumProperty, IntProperty, StringProperty
 
 from . import attachments as att_mod
-from . import autosave, chatview, core, lmstudio, memory, skills
+from . import autosave, chatview, claude_cli, core, lmstudio, memory, skills
 from .i18n import tip, tr
 from .preferences import get_prefs
 
@@ -489,6 +489,187 @@ class CLAUDE_OT_login(bpy.types.Operator):
 
     def execute(self, context):
         return {'FINISHED'} if core.open_login() else {'CANCELLED'}
+
+
+class CLAUDE_OT_allow_online(bpy.types.Operator):
+    bl_idname = "claude.allow_online"
+    bl_label = "Allow Online Access"
+    bl_description = ("Turns on Preferences › System › Network › Allow Online Access. Claude Code needs the "
+                      "internet; a new Blender starts with it off")
+
+    def execute(self, context):
+        if not core.allow_online():
+            self.report({'ERROR'}, tr("Blender was started with --offline-mode: start it without it"))
+            return {'CANCELLED'}
+        self.report({'INFO'}, tr("Online access is on"))
+        return {'FINISHED'}
+
+
+class CLAUDE_OT_install_cli(bpy.types.Operator):
+    bl_idname = "claude.install_cli"
+    bl_label = "Install Claude Code"
+    bl_description = "Opens a terminal with Claude Code's official installer (claude.ai/install.sh)"
+
+    def execute(self, context):
+        try:
+            claude_cli.open_install()
+        except OSError as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
+class CLAUDE_OT_update_cli(bpy.types.Operator):
+    bl_idname = "claude.update_cli"
+    bl_label = "Update Claude Code"
+    bl_description = "Opens a terminal with 'claude update'"
+
+    def execute(self, context):
+        core.open_update()
+        return {'FINISHED'}
+
+
+class CLAUDE_OT_start_lmstudio(bpy.types.Operator):
+    bl_idname = "claude.start_lmstudio"
+    bl_label = "Start LM Studio"
+    bl_description = "Start LM Studio's server ('lms server start'), then send the message again"
+
+    def execute(self, context):
+        core.start_lmstudio()
+        return {'FINISHED'}
+
+
+class CLAUDE_OT_make_base_materials(bpy.types.Operator):
+    bl_idname = "claude.make_base_materials"
+    bl_label = "Create Base Materials"
+    bl_description = ("Writes 'Base Materials.blend' (glass, metals, plastics, rubber, paint, fabric) into your "
+                      "first asset library (or the add-on's folder) and uses it in the Material tab")
+
+    def execute(self, context):
+        import subprocess
+        from .studio import paths, runner as studio_runner, tab_material
+        libraries = context.preferences.filepaths.asset_libraries
+        folder = bpy.path.abspath(libraries[0].path) if len(libraries) else paths.data_dir()
+        script = os.path.join(os.path.dirname(__file__), "studio", "make_base_materials.py")
+        result = subprocess.run([bpy.app.binary_path, "-b", "--factory-startup", "-noaudio", "--python", script,
+                                 "--", folder], capture_output=True, text=True, timeout=300)
+        path = os.path.join(folder, "Base Materials.blend")
+        if not os.path.isfile(path):
+            self.report({'ERROR'}, tr("Could not create the base materials: {}").format(
+                (result.stderr or result.stdout)[-300:]))
+            return {'CANCELLED'}
+        p = studio_runner.prefs()
+        if p is not None:
+            p.material_library = path
+        tab_material._base_loaded.clear()
+        context.preferences.is_dirty = True
+        core._setup_cache["state"] = None
+        self.report({'INFO'}, path)
+        return {'FINISHED'}
+
+
+class CLAUDE_OT_copy_live_connection(bpy.types.Operator):
+    bl_idname = "claude.copy_live_connection"
+    bl_label = "Copy Connection"
+    bl_description = ("Copy instructions for another Claude session (Cowork, Claude Code): how to reach this "
+                      "Blender over the Live Connection. Paste them into that session")
+
+    def execute(self, context):
+        from . import live
+        context.window_manager.clipboard = live.connection_text()
+        self.report({'INFO'}, tr("Copied: paste it into the other Claude session"))
+        return {'FINISHED'}
+
+
+class CLAUDE_OT_connect_client(bpy.types.Operator):
+    bl_idname = "claude.connect_client"
+    bl_label = "Connect"
+    bl_description = ("Give this Claude app the 'ai-studio' tools (an MCP server of this add-on), so its chats "
+                      "can see and change the open Blender over the Live Connection")
+
+    target: EnumProperty(items=[('CODE', "Claude Code", ""), ('DESKTOP', "Claude Desktop", "")],
+                         options={'SKIP_SAVE'})
+
+    def execute(self, context):
+        from . import live_clients
+        try:
+            if self.target == 'DESKTOP':
+                live_clients.connect_desktop()
+                self.report({'INFO'}, tr("Connected: quit and reopen the Claude app once"))
+            else:
+                prefs = get_prefs()
+                path = claude_cli.find_claude(prefs.claude_path if prefs else "")
+                if not path:
+                    self.report({'ERROR'}, tr("Claude Code missing"))
+                    return {'CANCELLED'}
+                live_clients.connect_code(path)
+                self.report({'INFO'}, tr("Connected: new Claude Code sessions have the ai-studio tools"))
+        except (OSError, RuntimeError, ValueError) as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        core._setup_cache["state"] = None
+        return {'FINISHED'}
+
+
+class CLAUDE_OT_setup_done(bpy.types.Operator):
+    bl_idname = "claude.setup_done"
+    bl_label = "Done"
+    bl_description = "Hide the setup card (the ? at the top shows it again)"
+
+    def execute(self, context):
+        prefs = get_prefs()
+        if prefs is not None:
+            prefs.setup_done = True
+            context.preferences.is_dirty = True
+        context.window_manager.claude_show_setup = False
+        return {'FINISHED'}
+
+
+class CLAUDE_OT_example(bpy.types.Operator):
+    bl_idname = "claude.example"
+    bl_label = "Example"
+    bl_description = "Put this example into the message field"
+
+    text: StringProperty(options={'SKIP_SAVE'})
+
+    def execute(self, context):
+        context.window_manager.claude_prompt = self.text
+        return {'FINISHED'}
+
+
+EXAMPLES = (
+    "Sort the scene into collections and give the parts clear names",
+    "Make a soft studio light from the front left and render a preview",
+    "Give the housing the base material 'Aluminium anodized' and show me three colors",
+    "Import the newest GLB from Downloads and take the materials over from the old version",
+)
+
+
+class CLAUDE_PT_help(bpy.types.Panel):
+    """The ? at the top of the chat: shortcuts, clicks worth knowing, example prompts, setup."""
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'HEADER'
+    bl_label = "Help"
+    bl_ui_units_x = 16
+
+    def draw(self, context):
+        layout = self.layout
+        box = layout.box()
+        box.label(text="Try", icon='LIGHT')
+        col = box.column(align=True)
+        for text in EXAMPLES:
+            col.operator("claude.example", text=tr(text), emboss=False, icon='RIGHTARROW_THIN').text = tr(text)
+        box = layout.box()
+        box.label(text="Good to Know", icon='INFO')
+        col = box.column(align=True)
+        for line in ("⌘R: render High Quality, ⇧⌘R: Low Quality, ⇧⌘E: view the render",
+                     "Material library: click switches all objects with the current material",
+                     "Shift-click: only the selection · Ctrl-click: select its objects",
+                     "Right-click a material: favorite, rename, delete",
+                     "Replaced objects go into the archive collection (AS_archiv), you delete them",
+                     "Claude's helper objects go into 'temp' and are removed after the answer"):
+            col.label(text=tr(line))
+        layout.prop(context.window_manager, "claude_show_setup", text="Show Setup", toggle=True, icon='TOOL_SETTINGS')
 
 
 class CLAUDE_OT_open_path(bpy.types.Operator):
@@ -972,6 +1153,16 @@ class CLAUDE_PT_settings(bpy.types.Panel):
         layout.operator("preferences.addon_show", text="All Settings…", icon='PREFERENCES').module = __package__
 
 
+def _setup_visible(context, prefs):
+    """The setup card: until it was closed once, while Claude Code is missing, or from the ?."""
+    if prefs is None or prefs.backend == 'LOCAL' and prefs.setup_done:
+        return False
+    if context.window_manager.claude_show_setup or not prefs.setup_done:
+        return True
+    state = core.setup_state()
+    return not state["cli"] or (prefs.backend != 'LOCAL' and state["online"] != 'ON')
+
+
 class CLAUDE_PT_chat(bpy.types.Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -992,6 +1183,7 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         top.menu("CLAUDE_MT_history", text="", icon='RECOVER_LAST')
         top.operator("claude.new_chat", text="", icon='ADD')
         top.popover("CLAUDE_PT_settings", text="", icon='PREFERENCES')
+        top.popover("CLAUDE_PT_help", text="", icon='QUESTION')
 
         # Chat area: fills what the cards, the input and the status line leave free.
         skill_rows = len(skills.list_skills(core.workdir())) // SKILLS_PER_ROW + 1
@@ -1003,7 +1195,10 @@ class CLAUDE_PT_chat(bpy.types.Panel):
 
         self._draw_crash(layout, context)
         self._draw_timeline(layout, context)
+        self._draw_setup(layout, context, prefs)
         self._draw_login(layout)
+        self._draw_actions(layout)
+        self._draw_live(layout)
         self._draw_questions(layout, context)
         self._draw_pending(layout, context)
         self._draw_input(layout, context, prefs)
@@ -1023,6 +1218,14 @@ class CLAUDE_PT_chat(bpy.types.Panel):
             h += 2.5 if autosave.in_copy() else 1.2
         if core.versions():
             h += 1.4
+        if _setup_visible(bpy.context, get_prefs()):
+            h += 11
+        elif core.login_needed:
+            h += 2
+        if core.live_status():
+            h += 1
+        if core.update_needed or core.local_down:
+            h += 2
         for task in core.questions:
             h += 4 + len(task.options) + (1 if task.multi_select else 0)
         for task in core.pending:
@@ -1129,9 +1332,78 @@ class CLAUDE_PT_chat(bpy.types.Panel):
 
     # -- code approval ----------------------------------------------------
 
-    def _draw_login(self, layout):
-        if not core.login_needed or core.is_local():
+    def _draw_setup(self, layout, context, prefs):
+        if not _setup_visible(context, prefs):
             return
+        state = core.setup_state()
+        box = layout.box()
+        head = box.row()
+        head.label(text=tr("Setup"), icon='TOOL_SETTINGS')
+        col = box.column(align=True)
+
+        def line(ok, text, op=None, op_text=""):
+            row = col.row(align=True)
+            row.label(text=text, icon='CHECKMARK' if ok else ('TIME' if ok is None else 'ERROR'), translate=False)
+            if op and not ok:
+                row.operator(op, text=op_text)
+            return row
+
+        online = state["online"]
+        if online == 'LOCKED':
+            line(False, tr("Offline: Blender was started with --offline-mode"))
+        else:
+            line(online == 'ON', tr("Online access on") if online == 'ON' else tr("Online access off"),
+                 "claude.allow_online", tr("Allow"))
+        line(bool(state["cli"]), tr("Claude Code installed") if state["cli"] else tr("Claude Code missing"),
+             "claude.install_cli", tr("Install"))
+        if state["cli"]:
+            line(state["login"], {True: tr("Logged in"), False: tr("Not logged in"),
+                                  None: tr("Checking the login…")}[state["login"]], "claude.login", tr("Log in"))
+        line(bool(state["base"]), tr("Base materials: {}").format(os.path.basename(state["base"]))
+             if state["base"] else tr("No base materials yet"), "claude.make_base_materials", tr("Create"))
+        where = state["output"].replace(os.path.expanduser("~"), "~") if state.get("output_set") \
+            else tr("next to the .blend file")
+        row = line(True, tr("Renders: {}").format(where))
+        row.operator("preferences.addon_show", text="", icon='FILE_FOLDER').module = __package__
+        row = col.row(align=True)
+        row.prop(prefs, "live_connection", text=tr("Live Connection for Cowork / Claude Code"))
+        sub = row.row(align=True)
+        sub.enabled = prefs.live_connection
+        sub.operator("claude.copy_live_connection", text="", icon='COPYDOWN')
+        if prefs.live_connection:
+            if state["cli"]:
+                row = line(state["live_code"], tr("Claude Code connected") if state["live_code"]
+                           else tr("Claude Code: not connected"))
+                if not state["live_code"]:
+                    row.operator("claude.connect_client", text=tr("Connect")).target = 'CODE'
+            if state["live_desktop"] is not None:
+                row = line(state["live_desktop"], tr("Claude app (Cowork) connected") if state["live_desktop"]
+                           else tr("Claude app (Cowork): not connected"))
+                if not state["live_desktop"]:
+                    row.operator("claude.connect_client", text=tr("Connect")).target = 'DESKTOP'
+        box.operator("claude.setup_done", text=tr("Done"), icon='CHECKMARK')
+
+    def _draw_actions(self, layout):
+        """Errors that one click can fix."""
+        if core.update_needed and not core.is_local():
+            box = layout.box()
+            box.label(text=tr("Claude Code is too old for this add-on"), icon='ERROR')
+            box.operator("claude.update_cli", text=tr("Update"), icon='FILE_REFRESH')
+        if core.local_down and core.is_local():
+            box = layout.box()
+            box.label(text=tr("LM Studio does not answer"), icon='ERROR')
+            box.operator("claude.start_lmstudio", text=tr("Start LM Studio"), icon='PLAY')
+
+    def _draw_live(self, layout):
+        text = core.live_status()
+        if text:
+            row = layout.row()
+            row.active = False
+            row.label(text=text, icon='LINKED', translate=False)
+
+    def _draw_login(self, layout):
+        if not core.login_needed or core.is_local() or _setup_visible(bpy.context, get_prefs()):
+            return   # the setup card has its own Log in button
         box = layout.box()
         box.label(text=tr("Logged out of Claude"), icon='ERROR')
         box.operator("claude.login", text=tr("Log in"), icon='URL')
@@ -1144,7 +1416,8 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         for i, task in enumerate(core.pending):
             box = layout.box()
             col = box.column(align=True)
-            col.label(text=tr("{} wants to run code").format(core.model_label()), icon='SCRIPT', translate=False)
+            who = "Cowork" if task.live else core.model_label()
+            col.label(text=tr("{} wants to run code").format(who), icon='SCRIPT', translate=False)
             for line in chatview.wrap(task.description or tr("(no description)"), width):
                 col.label(text=line, translate=False)
             code = box.column(align=True)
@@ -1411,6 +1684,16 @@ classes = (
     CLAUDE_OT_use_skill,
     CLAUDE_OT_new_skill,
     CLAUDE_OT_login,
+    CLAUDE_OT_allow_online,
+    CLAUDE_OT_connect_client,
+    CLAUDE_OT_install_cli,
+    CLAUDE_OT_update_cli,
+    CLAUDE_OT_start_lmstudio,
+    CLAUDE_OT_make_base_materials,
+    CLAUDE_OT_copy_live_connection,
+    CLAUDE_OT_setup_done,
+    CLAUDE_OT_example,
+    CLAUDE_PT_help,
     CLAUDE_OT_open_path,
     CLAUDE_OT_set_local_model,
     CLAUDE_OT_refresh_local_models,
@@ -1449,6 +1732,8 @@ def register():
         set=lambda self, value: core.set_current_title(value),
         options={'SKIP_SAVE'},
     )
+    bpy.types.WindowManager.claude_show_setup = BoolProperty(
+        name="Show Setup", description="Show the setup card in the chat", default=False, options={'SKIP_SAVE'})
     bpy.types.WindowManager.claude_use_selection = BoolProperty(
         name="Send Selection",
         description="Send details of the selected objects (click to turn on/off)",
@@ -1470,6 +1755,7 @@ def unregister():
     _unregister_skill_operators()
     del bpy.types.WindowManager.claude_prompt
     del bpy.types.WindowManager.claude_use_selection
+    del bpy.types.WindowManager.claude_show_setup
     del bpy.types.WindowManager.claude_chat_title
     chatview.unregister()
     for cls in reversed(classes):

@@ -46,7 +46,7 @@ def prefs(context=None):
 def settings_from_prefs():
     p = prefs()
     if p is None:
-        return "~/Downloads", 50, 50
+        return "", 50, 50
     return p.output_root, p.low_resolution, p.low_samples_percent
 
 
@@ -117,6 +117,7 @@ class Worker:
         self.generation = -1
         self.camera_key = None
         self.fingerprint = None
+        self.content = None
         self.base = ""
         self.idle_since = 0.0
         self.started = 0.0
@@ -126,9 +127,10 @@ class Worker:
         return self.proc is not None and self.proc.poll() is None
 
     def fits(self, scene, generation, camera_key):
-        # The fingerprint too: settings changed from Python do not always send a depsgraph update.
+        # The fingerprint and the content too: settings changed from Python, new cameras, undo and
+        # some data changes do not always send a depsgraph update. Checked before every render.
         return (self.alive() and self.generation == generation and self.camera_key == camera_key
-                and self.fingerprint == scene_fingerprint(scene))
+                and self.fingerprint == scene_fingerprint(scene) and self.content == scene_content(scene))
 
     def launch(self):
         """Start the empty worker process (nothing to save, Blender does not wait)."""
@@ -161,6 +163,7 @@ class Worker:
         self.send({"load": base, "scripts": bool(scripts)})   # the worker deletes it once it is open
         self.generation, self.camera_key, self.base = generation, camera_key, base
         self.fingerprint = scene_fingerprint(scene)
+        self.content = scene_content(scene)
         log("worker loads the scene (state %d, camera %s)" % (generation, camera_key))
 
     def send(self, job):
@@ -268,6 +271,7 @@ _FINGERPRINT_PATHS = (
     "view_settings.exposure", "view_settings.gamma", "world", "frame_current",
     "render_studio.background_mode", "render_studio.background_color", "render_studio.background_color_top",
     "render_studio.use_gradient", "render_studio.noise_size", "render_studio.noise_intensity",
+    "render_studio.look_glow", "render_studio.look_contrast", "render_studio.look_vignette",
 )
 
 
@@ -284,6 +288,26 @@ def scene_fingerprint(scene):
             value = tuple(round(v, 5) for v in value)
         values.append(value)
     return tuple(values)
+
+
+def scene_content(scene):
+    """Hash of what the image is made of, apart from the geometry and node details (those send
+    depsgraph updates): objects with their data (a new camera must reach the worker), placement,
+    visibility, materials and modifiers, plus the material and world names. A camera's place and
+    viewport visibility don't count: every entry carries its camera."""
+    items = []
+    for obj in scene.objects:
+        camera = obj.type == 'CAMERA'
+        items.append((
+            obj.name, obj.type, obj.data.name if obj.data is not None else "",
+            obj.parent.name if obj.parent else "", obj.hide_render, False if camera else obj.hide_get(),
+            obj.visible_camera, () if camera else tuple(round(v, 5) for row in obj.matrix_world for v in row),
+            tuple(s.material.name if s.material else "" for s in obj.material_slots),
+            tuple((m.name, m.type, m.show_render) for m in obj.modifiers),
+        ))
+    items.sort()
+    return hash((tuple(items), tuple(sorted(m.name for m in bpy.data.materials)),
+                 scene.world.name if scene.world else ""))
 
 
 def _changed(reason):
@@ -318,6 +342,12 @@ def _on_depsgraph_update(scene, depsgraph):
         else:
             _changed(data.name)
             return
+
+
+@bpy.app.handlers.persistent
+def _on_undo(*_args):
+    if WORKER.alive() or RUN.busy:
+        _changed("undo/redo")
 
 
 # ---------------------------------------------------------------- durations (for "… left")
@@ -1012,6 +1042,8 @@ def _on_load_pre(*_args):
 _HANDLERS = (
     (bpy.app.handlers.load_pre, _on_load_pre),
     (bpy.app.handlers.depsgraph_update_post, _on_depsgraph_update),
+    (bpy.app.handlers.undo_post, _on_undo),
+    (bpy.app.handlers.redo_post, _on_undo),
 )
 
 

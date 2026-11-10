@@ -33,7 +33,9 @@ from .tab_light import (RS_MT_hdris, RS_MT_light_presets, RS_OT_add_light, RS_OT
                         RS_OT_lights_adjust, RS_OT_select_light, RS_OT_show_world, RS_OT_toggle_light,
                         RS_OT_world_restore, RS_PT_light_settings, RS_PT_lighting)
 from .tab_material import (RS_MT_material_new, RS_MT_material_presets_delete, RS_OT_material_assign,
-                           RS_OT_material_duplicate, RS_OT_material_group_toggle, RS_OT_material_new, RS_OT_material_to_base,
+                           RS_OT_material_clean_unused, RS_OT_material_delete, RS_OT_material_favorite,
+                           RS_OT_material_rename, RS_OT_material_select, RS_OT_material_variant,
+                           draw_tile_menu, RS_OT_material_duplicate, RS_OT_material_group_toggle, RS_OT_material_new, RS_OT_material_to_base,
                            RS_OT_material_preset, RS_OT_material_preset_delete, RS_OT_material_preset_save,
                            RS_OT_material_presets_io, RS_OT_material_slot, RS_OT_material_unlink,
                            RS_OT_material_viewport, RS_OT_open_shading, RS_OT_pick_from_object,
@@ -42,6 +44,8 @@ from .tab_queue import (RS_OT_add, RS_OT_cancel, RS_OT_clear, RS_OT_low_scale, R
                         RS_OT_preview_step, RS_OT_remove, RS_OT_render_queue, RS_OT_show_render,
                         RS_OT_view_camera, RS_PT_output, RS_PT_render_queue, draw_statusbar)
 from .runner import RUN
+from .look import RS_OT_look_preset
+from .cadswap import RS_OT_cad_import, RS_OT_cad_take_over
 
 
 class RS_OT_open_chat(Operator):
@@ -134,7 +138,16 @@ classes = (
     RS_OT_material_preset,
     RS_OT_material_preset_save,
     RS_OT_material_preset_delete,
+    RS_OT_look_preset,
+    RS_OT_cad_import,
+    RS_OT_cad_take_over,
     RS_OT_material_assign,
+    RS_OT_material_variant,
+    RS_OT_material_select,
+    RS_OT_material_favorite,
+    RS_OT_material_rename,
+    RS_OT_material_delete,
+    RS_OT_material_clean_unused,
     RS_OT_open_chat,
     RS_OT_preview_step,
     RS_OT_material_new,
@@ -154,6 +167,20 @@ classes = (
 
 
 _registered = False
+
+
+OLD_HDRI_DEFAULT = "~/Desktop/projects/+/HDRI"   # the default up to 0.23
+
+
+def _keep_old_hdri_folder():
+    """Who used the old default keeps it (it is no longer the default since 0.24)."""
+    import os
+    p = runner.prefs()
+    if p is not None and not p.is_property_set("hdri_folder") \
+            and os.path.isdir(os.path.expanduser(OLD_HDRI_DEFAULT)):
+        p.hdri_folder = OLD_HDRI_DEFAULT
+        bpy.context.preferences.is_dirty = True
+    return None
 
 
 def register_prefs():
@@ -177,10 +204,14 @@ def register():
         name="Studio Tab", items=STUDIO_TABS, default='RENDER', options={'SKIP_SAVE'})
     # Material library groups toggled from their default (one name per line)
     bpy.types.WindowManager.render_studio_mat_open = StringProperty(options={'SKIP_SAVE'})
+    bpy.types.WindowManager.render_studio_mat_search = StringProperty(
+        name="Search", description="Show only materials whose name contains this", options={'SKIP_SAVE'})
+    bpy.types.UI_MT_button_context_menu.append(draw_tile_menu)
     bpy.types.Object.render_studio_camera = PointerProperty(type=RS_CameraSettings)
     bpy.types.Object.render_studio_light = PointerProperty(type=RS_LightSettings)
     bpy.types.STATUSBAR_HT_header.append(draw_statusbar)
     register_prompts()
+    bpy.app.timers.register(_keep_old_hdri_folder, first_interval=0.2)
     lights.register()
     runner.register()
     hdri.register()
@@ -210,6 +241,8 @@ def unregister():
     cameras.unregister()
     sync.unregister()
     hdri.unregister()
+    if bpy.app.timers.is_registered(_keep_old_hdri_folder):
+        bpy.app.timers.unregister(_keep_old_hdri_folder)
     runner.unregister()
     lights.unregister()
     del bpy.types.Object.render_studio_light
@@ -217,6 +250,8 @@ def unregister():
     del bpy.types.Scene.render_studio
     del bpy.types.WindowManager.render_studio_tab
     del bpy.types.WindowManager.render_studio_mat_open
+    del bpy.types.WindowManager.render_studio_mat_search
+    bpy.types.UI_MT_button_context_menu.remove(draw_tile_menu)
     unregister_prompts()
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

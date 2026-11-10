@@ -89,28 +89,79 @@ def logged_in(claude_path):
         return None
 
 
-def open_login(claude_path):
-    """Run ``claude auth login`` in a terminal window: it opens the browser, and the
-    terminal is there if the CLI asks to paste a code."""
+INSTALL_COMMAND = {"posix": "curl -fsSL https://claude.ai/install.sh | bash",
+                   "win32": "powershell -NoProfile -Command \"irm https://claude.ai/install.ps1 | iex\""}
+
+
+_CLOSE_WINDOW = """on run argv
+\tdelay 1
+\ttell application "Terminal"
+\t\trepeat with w in windows
+\t\t\ttry
+\t\t\t\tif tty of selected tab of w is (item 1 of argv) then
+\t\t\t\t\tclose w
+\t\t\t\t\texit repeat
+\t\t\t\tend if
+\t\t\tend try
+\t\tend repeat
+\tend tell
+end run
+"""
+
+
+def terminal_script(command, note, closer):
+    """The macOS .command file: runs the command, and when it worked closes its own window
+    (a second later, after the shell is gone, so Terminal does not ask). On an error the
+    window stays open so the message can be read."""
+    return ("#!/bin/sh\n%s\nstatus=$?\necho\n"
+            "if [ $status -eq 0 ]; then\n"
+            "  echo %s\n  sleep 2\n"
+            "  nohup /usr/bin/osascript %s \"$(tty)\" >/dev/null 2>&1 &\n  exit 0\nfi\n"
+            "echo %s\n" % (command, shlex.quote(note), shlex.quote(closer),
+                             shlex.quote("Something went wrong (see above). This window can be closed.")))
+
+
+def open_terminal(command, note="Done. Back to Blender."):
+    """Run a shell command in a new terminal window (the user may have to type there).
+    The window closes by itself when the command worked."""
     import sys
     import tempfile
     if sys.platform == "darwin":
-        script = os.path.join(tempfile.gettempdir(), "ai_studio_claude_login.command")
+        folder = tempfile.gettempdir()
+        closer = os.path.join(folder, "ai_studio_close_window.applescript")
+        with open(closer, "w", encoding="utf-8") as f:
+            f.write(_CLOSE_WINDOW)
+        script = os.path.join(folder, "ai_studio_terminal.command")
         with open(script, "w", encoding="utf-8") as f:
-            f.write("#!/bin/sh\n"
-                    f"{shlex.quote(claude_path)} auth login\n"
-                    "echo\necho 'Back to Blender and send the message again. This window can be closed.'\n")
+            f.write(terminal_script(command, note, closer))
         os.chmod(script, 0o755)
         subprocess.Popen(["open", script])
     elif sys.platform == "win32":
-        subprocess.Popen(["cmd", "/c", "start", "Claude login", "cmd", "/k", claude_path, "auth", "login"])
+        # /c closes the window; pause only after an error
+        subprocess.Popen(["cmd", "/c", "start", "AI Studio", "cmd", "/c", command + " || pause"])
     else:
         terminal = shutil.which("x-terminal-emulator") or shutil.which("gnome-terminal")
-        if terminal:
-            subprocess.Popen([terminal, "--", claude_path, "auth", "login"])
-        else:
-            subprocess.Popen([claude_path, "auth", "login"], stdin=subprocess.DEVNULL,
-                             start_new_session=True)
+        if terminal is None:
+            raise OSError("No terminal found: run this yourself: " + command)
+        subprocess.Popen([terminal, "--", "sh", "-c",
+                          command + " || { echo; echo 'Something went wrong (see above).'; read x; }"])
+
+
+def open_login(claude_path):
+    """Run ``claude auth login`` in a terminal window: it opens the browser, and the
+    terminal is there if the CLI asks to paste a code."""
+    open_terminal(shlex.quote(claude_path) + " auth login",
+                  "Logged in. Back to Blender: this window closes by itself.")
+
+
+def open_update(claude_path):
+    open_terminal(shlex.quote(claude_path) + " update", "Updated. Back to Blender: this window closes by itself.")
+
+
+def open_install():
+    import sys
+    open_terminal(INSTALL_COMMAND["win32" if sys.platform == "win32" else "posix"],
+                  "Installed. Back to Blender and log in there: this window closes by itself.")
 
 
 class ClaudeRun:

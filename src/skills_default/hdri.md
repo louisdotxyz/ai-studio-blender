@@ -5,8 +5,8 @@ icon: WORLD
 studio_tab: LIGHT
 ---
 World with Render Studio. Answer in 1-2 sentences. (Building a new room: ENV skill.)
-studio_context(kind="environment") -> subject, floor, camera, HDRI folder, rooms "ENV | …", worlds.
-A) Existing room "ENV | <Name>": use the newest <HDRI folder>/Environment/<Name>_*.exr with
+studio_context(kind="environment") -> subject, floor, camera, HDRI folder, room objects (obj["as_env"]), worlds.
+A) Existing room (objects marked obj["as_env"], older files "ENV | <Name>"): use the newest <HDRI folder>/Environment/<Name>_*.exr with
    api.use_hdri(path) (api is ready in execute_python). Rotation 0 = as modelled.
 B) Generated HDRI without a room (sky, sun, softboxes): studio_context(kind="hdri"), then
    studio_hdri_setup(setup={...}); changes: the same name again.

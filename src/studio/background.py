@@ -132,6 +132,31 @@ def linear_for_display(scene, color):
 
 # ------------------------------------------------------------- Compositor
 
+def compositor_tree(scene):
+    """The scene's compositor node tree. Blender 5.3 keeps it in a stack of compositor effects
+    (scene.compositor_effects); 5.0-5.2 in scene.compositing_node_group."""
+    effects = getattr(scene, "compositor_effects", None)
+    if effects is not None:
+        active = effects.active
+        return active.node_group if active is not None else None
+    return scene.compositing_node_group
+
+
+def set_compositor_tree(scene, tree):
+    effects = getattr(scene, "compositor_effects", None)
+    if effects is None:
+        scene.compositing_node_group = tree
+    elif tree is None:
+        if effects.active is not None:
+            effects.remove(effects.active)
+    elif effects.active is not None:
+        effects.active.node_group = tree
+    else:
+        effect = effects.new(tree.name)
+        effect.node_group = tree
+        effects.active = effect
+
+
 def _output_node(tree):
     outputs = [n for n in tree.nodes if n.bl_idname == 'NodeGroupOutput']
     return next((n for n in outputs if n.is_active_output), outputs[0] if outputs else None)
@@ -158,7 +183,7 @@ def _render_layers_image(tree):
 
 def alpha_node(scene):
     """The Alpha Over that puts the color behind the image: ours, or one that feeds the output."""
-    tree = scene.compositing_node_group
+    tree = compositor_tree(scene)
     if tree is None:
         return None
     node = tree.nodes.get(N_ALPHA)
@@ -204,10 +229,10 @@ def _set(socket, value):
 def ensure_color(scene, bottom_linear, top_linear=None, grain_size=2.0, grain_amount=0.0):
     """Builds or updates the Alpha Over with the background: a color or a vertical
     gradient (bottom → top) plus monochrome grain. Returns the Alpha Over."""
-    tree = scene.compositing_node_group
+    tree = compositor_tree(scene)
     if tree is None:
         tree = _new_tree()
-        scene.compositing_node_group = tree
+        set_compositor_tree(scene, tree)
     node = alpha_node(scene)
     if node is None:
         out = _output_node(tree)
@@ -288,7 +313,7 @@ def ensure_color(scene, bottom_linear, top_linear=None, grain_size=2.0, grain_am
 
 def remove_color(scene):
     """Takes our Alpha Over out again (an Alpha Over of your own stays)."""
-    tree = scene.compositing_node_group
+    tree = compositor_tree(scene)
     if tree is None:
         return
     node = tree.nodes.get(N_ALPHA)
@@ -304,7 +329,7 @@ def remove_color(scene):
         tree.nodes.remove(extra)
     if tree.name.startswith(TREE_NAME) and {n.bl_idname for n in tree.nodes} <= {
             'CompositorNodeRLayers', 'NodeGroupOutput'}:
-        scene.compositing_node_group = None
+        set_compositor_tree(scene, None)
         if tree.users == 0:
             bpy.data.node_groups.remove(tree)
 
@@ -357,7 +382,7 @@ def world_problems(scene, space=None):
             problems.append("Material Preview shows the studio HDRI")
         elif shading.type == 'RENDERED' and not shading.use_scene_world_render:
             problems.append("Rendered view shows the studio HDRI")
-        if shading.use_compositor != 'DISABLED' and scene.compositing_node_group is not None:
+        if shading.use_compositor != 'DISABLED' and compositor_tree(scene) is not None:
             problems.append("Viewport compositor is on")
     return problems
 
@@ -417,7 +442,7 @@ def _state(scene):
     return (rs.background_mode, tuple(round(c, 5) for c in rs.background_color),
             rs.use_gradient, tuple(round(c, 5) for c in rs.background_color_top),
             round(rs.noise_size, 3), round(rs.noise_intensity, 4),
-            scene.compositing_node_group.name if scene.compositing_node_group else None,
+            compositor_tree(scene).name if compositor_tree(scene) else None,
             node.name if node else None,
             view.view_transform, view.look, round(view.exposure, 4), round(view.gamma, 4),
             view.use_curve_mapping, display.display_device)

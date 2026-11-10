@@ -163,6 +163,8 @@ def text_result(text, error=False):
 class Task:
     """A tool call waiting to be handled on Blender's main thread."""
 
+    live = False   # from the Live Connection: not tied to a chat run
+
     def __init__(self, name, arguments):
         self.name = name
         self.arguments = arguments or {}
@@ -191,6 +193,19 @@ _tasks = queue.Queue()
 _server = None
 _thread = None
 _token = None
+_live_token = None      # set while the Live Connection is on (see live.py)
+live_state = {"file": "", "version": ""}   # kept current on the main thread, read by /live
+live_seen = [0.0]       # time.time() of the last /live request (for the chat's status line)
+LIVE_OPS = ("info", "object", "python", "screenshot")
+
+
+def live_token():
+    return _live_token
+
+
+def set_live_token(value):
+    global _live_token
+    _live_token = value
 
 
 def is_running():
@@ -231,13 +246,14 @@ def start(port_number=0):
 
 
 def stop():
-    global _server, _thread, _token
+    global _server, _thread, _token, _live_token
     if _server:
         _server.shutdown()
         _server.server_close()
     _server = None
     _thread = None
     _token = None
+    _live_token = None
     # Release anything still waiting.
     while True:
         try:
@@ -377,6 +393,30 @@ def _error(msg_id, code, message):
     return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": message}}
 
 
+def _handle_live(payload):
+    """One /live request (runs in the HTTP thread); the answer is always a JSON object."""
+    import time
+    live_seen[0] = time.time()
+    if not isinstance(payload, dict):
+        return {"ok": False, "error": "Expected a JSON object with 'op'."}
+    op = payload.get("op")
+    if op == "ping":
+        return {"ok": True, **live_state}
+    if op not in LIVE_OPS:
+        return {"ok": False, "error": f"Unknown op: {op}"}
+    task = Task("live_" + op, payload)
+    task.live = True
+    _tasks.put(task)
+    if not task.event.wait(TASK_TIMEOUT):
+        task.cancelled = True
+        return {"ok": False, "error": "Timeout: the user did not respond in time.", "file": live_state["file"]}
+    result = task.result
+    if "content" in result:     # rejected, or failed before the code ran
+        text = "\n".join(c.get("text", "") for c in result["content"])
+        return {"ok": False, "error": text, "file": live_state["file"]}
+    return result
+
+
 class _Handler(BaseHTTPRequestHandler):
     server_version = "BlenderClaudeMCP/1.0"
 
@@ -406,7 +446,25 @@ class _Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass  # the CLI gave up on this request (e.g. it was stopped)
 
+    def _post_live(self):
+        given = self.headers.get("Authorization", "").encode("utf-8")
+        if not _live_token:
+            self._send(404, {"ok": False, "error": "Live Connection is off."})
+        elif not secrets.compare_digest(given, f"Bearer {_live_token}".encode("utf-8")):
+            self._send(401, {"ok": False, "error": "Invalid token."})
+        else:
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                payload = json.loads(self.rfile.read(length) or b"null")
+            except ValueError:
+                self._send(400, {"ok": False, "error": "Body is not valid JSON."})
+                return
+            self._send(200, _handle_live(payload))
+
     def do_POST(self):
+        if self.path.split("?", 1)[0].rstrip("/") == "/live":
+            self._post_live()
+            return
         if not self._authorized():
             return
         try:

@@ -14,6 +14,8 @@ import os
 
 import bpy
 
+from .studio import cameras
+
 
 def _attachments():
     from .core import workdir
@@ -102,7 +104,7 @@ class M:
             data = source.data.copy() if source else bpy.data.cameras.new("Match " + name)
             data.name = "Match " + name
             cam = bpy.data.objects.new("Match " + name, data)
-            (bpy.data.collections.get("RS_Cameras") or scene.collection).objects.link(cam)
+            (bpy.data.collections.get(cameras.camera_collection_name()) or scene.collection).objects.link(cam)
             if source:
                 cam.matrix_world = source.matrix_world.copy()
         cd = cam.data
@@ -214,7 +216,6 @@ class M:
         width, height = image.size
         name = "ENV Foto " + cam.name[6:]
         mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
-        mat.use_nodes = True
         nt = mat.node_tree
         nt.nodes.clear()
         nodes, links = nt.nodes, nt.links

@@ -196,7 +196,7 @@ class RS_OT_hdri_refresh(Operator):
     def execute(self, context):
         p = runner.prefs(context)
         folder = p.hdri_folder if p else ""
-        copied = hdri.import_blenderkit(folder, wait=True) if folder else 0
+        copied = hdri.import_blenderkit(folder, wait=True)
         hdri.scan(folder)
         if copied:
             self.report({'INFO'}, "%d HDRI(s) from BlenderKit added" % copied)

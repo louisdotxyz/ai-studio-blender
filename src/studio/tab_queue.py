@@ -349,10 +349,11 @@ class RS_PT_output(Panel):
             col = box.column(align=True)
             col.prop(cy, "samples", text="Samples")
             row = col.row(align=True)
-            row.prop(cy, "use_adaptive_sampling", text="")
-            sub = row.row(align=True)
-            sub.active = cy.use_adaptive_sampling
-            sub.prop(cy, "adaptive_threshold", text="Noise Threshold")
+            if cy.use_adaptive_sampling:
+                row.prop(cy, "use_adaptive_sampling", text="")
+                row.prop(cy, "adaptive_threshold", text="Noise Threshold")
+            else:
+                row.prop(cy, "use_adaptive_sampling", text="Noise Threshold", toggle=True)
             col.prop(cy, "time_limit", text="Time Limit")
             box.prop(cy, "use_denoising", text="Denoise", toggle=True, icon='SHADERFX')
         elif hasattr(scene, "eevee"):
@@ -432,7 +433,7 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
         if p is not None:
             row = col.row(align=True)
             row.label(text="", icon='FILE_FOLDER')
-            row.prop(p, "output_root", text="")
+            row.prop(p, "output_root", text="", placeholder="Next to the .blend file")
         # The entry that renders now (its quick draft, then the image), or the newest render,
         # ◀ ▶ through the queue's images, the magnifier opens it big in the render window.
         images = runner.queue_images(scene)

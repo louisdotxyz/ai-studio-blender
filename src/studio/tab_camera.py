@@ -5,7 +5,7 @@ import bpy
 from bpy.props import (BoolProperty, FloatProperty, IntProperty, StringProperty)
 from bpy.types import Operator, Panel
 
-from . import background, cameras, runner, sync
+from . import background, cameras, look, runner, sync
 from .props import FORMAT_PRESETS, PPI
 from .ui_common import (RENDER_TAB_ORDER, _SidebarPanel, _look_through, _unpin,
                         active_camera, draw_claude_prompt, studio_tab)
@@ -50,7 +50,7 @@ class RS_OT_camera_back(Operator):
 class RS_OT_duplicate_camera(Operator):
     bl_idname = "render_studio.duplicate_camera"
     bl_label = "Duplicate Camera"
-    bl_description = "Duplicates the active camera into the \"RS_Cameras\" collection and makes the copy active"
+    bl_description = "Duplicates the active camera into the camera collection (AS_camera) and makes the copy active"
     bl_options = {'UNDO'}
 
     @classmethod
@@ -226,6 +226,7 @@ class RS_PT_camera(_SidebarPanel, Panel):
             for mm in LENS_PRESETS:
                 row.operator(RS_OT_set_lens.bl_idname, text=str(mm),
                              depress=abs(data.lens - mm) < 0.01).lens = mm
+        draw_dof(box, cam, space)
 
         col = box.column(align=True)
         row = col.row(align=True)
@@ -274,9 +275,8 @@ class RS_PT_camera(_SidebarPanel, Panel):
             col.prop(rq, "use_gradient", toggle=True)
             row = col.row(align=True)
             row.prop(rq, "noise_intensity", text="Noise")
-            sub = row.row(align=True)
-            sub.active = rq.noise_intensity > 0
-            sub.prop(rq, "noise_size", text="Size")
+            if rq.noise_intensity > 0:
+                row.prop(rq, "noise_size", text="Size")
             shading = getattr(space, "shading", None)
             if shading is not None and shading.type in {'SOLID', 'WIREFRAME'}:
                 box.label(text="Shown in Material Preview and Rendered", icon='INFO')
@@ -288,6 +288,8 @@ class RS_PT_camera(_SidebarPanel, Panel):
                 for text in problems:
                     sub.label(text=text, icon='ERROR')
                 box.operator('render_studio.show_world', icon='WORLD')
+
+        look.draw(layout, scene)
 
 
 class RS_OT_fit_frame(Operator):
@@ -315,7 +317,7 @@ class RS_OT_reset_frame(Operator):
 
 
 class RS_PT_frame(Panel):
-    """Gear menu in the Render tab: depth of field, composition guides, clipping, camera frame."""
+    """Gear menu in the Render tab: composition guides, clipping, camera frame."""
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'HEADER'
     bl_label = "Camera Settings"
@@ -329,25 +331,6 @@ class RS_PT_frame(Panel):
             return
         cam = active_camera(context.scene)
         if cam is not None and cam.type == 'CAMERA':
-            dof = cam.data.dof
-            box = layout.box()
-            row = box.row()
-            row.label(text="Depth of Field", icon='CAMERA_DATA')
-            row.prop(dof, "use_dof", text="")
-            col = box.column(align=True)
-            col.active = dof.use_dof
-            row = col.row(align=True)
-            for fstop in FSTOPS:
-                row.operator(RS_OT_set_fstop.bl_idname, text="f/%g" % fstop,
-                             depress=dof.use_dof and abs(dof.aperture_fstop - fstop) < 0.01).fstop = fstop
-            col.prop(dof, "aperture_fstop", text="Aperture")
-            row = col.row(align=True)
-            row.prop(dof, "focus_object", text="")
-            row.operator(RS_OT_dof_focus.bl_idname, text="", icon='PIVOT_CURSOR').target = "ORBIT"
-            row.operator(RS_OT_dof_focus.bl_idname, text="", icon='RESTRICT_SELECT_OFF').target = "ACTIVE"
-            if dof.focus_object is None:
-                col.prop(dof, "focus_distance", text="Distance")
-
             box = layout.box()
             box.label(text="Composition Guides", icon='MESH_GRID')
             data = cam.data
@@ -361,25 +344,61 @@ class RS_PT_frame(Panel):
         box = layout.box()
         box.label(text="Clipping", icon='VIEW_PERSPECTIVE')
         box.prop(p, "min_clipping")
-        if cam is not None and cam.type == 'CAMERA':
+        if cam is not None and cam.type == 'CAMERA' and not p.min_clipping:
             row = box.row(align=True)
-            row.active = not p.min_clipping
             row.prop(cam.data, "clip_start", text="Start")
             row.prop(cam.data, "clip_end", text="End")
 
         layout.label(text="Camera Frame", icon='SELECT_SET')
         layout.prop(p, "frame_auto")
-        col = layout.column(align=True)
-        col.active = p.frame_auto
-        col.prop(p, "frame_size", slider=True)
-        col.prop(p, "frame_shift_x", slider=True)
-        col.prop(p, "frame_shift_y", slider=True)
+        if p.frame_auto:
+            col = layout.column(align=True)
+            col.prop(p, "frame_size", slider=True)
+            col.prop(p, "frame_shift_x", slider=True)
+            col.prop(p, "frame_shift_y", slider=True)
         row = layout.row(align=True)
         row.operator(RS_OT_fit_frame.bl_idname, icon='VIEW_CAMERA')
         row.operator(RS_OT_reset_frame.bl_idname, icon='LOOP_BACK')
 
 
 FSTOPS = (1.4, 2.8, 4, 5.6, 8, 16)
+
+
+def dof_hint(space):
+    """Why the viewport does not show the depth of field right now, or ""."""
+    if space is None or space.type != 'VIEW_3D':
+        return ""
+    if space.shading.type in {'SOLID', 'WIREFRAME'}:
+        return "Shown in Material Preview and Rendered"
+    region = space.region_3d
+    if region is not None and region.view_perspective != 'CAMERA':
+        return "Shown in the camera view (Numpad 0)"
+    return ""
+
+
+def draw_dof(layout, cam, space):
+    """Depth of field: one toggle; aperture and focus only while it is on."""
+    dof = cam.data.dof
+    col = layout.column(align=True)
+    col.prop(dof, "use_dof", text="Depth of Field", toggle=True, icon='CAMERA_DATA')
+    if not dof.use_dof:
+        return
+    row = col.row(align=True)
+    for fstop in FSTOPS:
+        row.operator(RS_OT_set_fstop.bl_idname, text="f/%g" % fstop,
+                     depress=abs(dof.aperture_fstop - fstop) < 0.01).fstop = fstop
+    col.prop(dof, "aperture_fstop", text="Aperture")
+    row = col.row(align=True)
+    row.prop(dof, "focus_object", text="", placeholder="Focus: Distance")
+    row.operator(RS_OT_dof_focus.bl_idname, text="", icon='PIVOT_CURSOR').target = "ORBIT"
+    row.operator(RS_OT_dof_focus.bl_idname, text="", icon='RESTRICT_SELECT_OFF').target = "ACTIVE"
+    if dof.focus_object is None:
+        col.prop(dof, "focus_distance", text="Distance")
+    hint = dof_hint(space)
+    if hint:
+        row = layout.row()
+        row.active = False
+        row.label(text=hint, icon='INFO')
 
 
 class RS_OT_set_fstop(Operator):

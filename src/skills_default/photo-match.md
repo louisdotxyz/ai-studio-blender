@@ -21,5 +21,5 @@ photo 1:1. Use M (photo match helper, ready in execute_python).
 5. Final: M.final(cam) -> full resolution PNG in ~/Downloads (folder="…" for another one). Back to the normal format: M.restore(cam) and the
    previous scene camera.
 Extend (wider view or another angle): build proxy geometry after the photo (floor, back wall, side walls as boxes
-in "ENV | <Name>", measured from the match camera), then M.project(cam, [objects]) projects the photo onto them.
+in AS_set, marked obj["as_env"] = True, measured from the match camera), then M.project(cam, [objects]) projects the photo onto them.
 Fill outside the photo with materials as in the ENV skill.

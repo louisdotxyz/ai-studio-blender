@@ -10,12 +10,13 @@ import math
 import os
 import sys
 import tempfile
+import time
 import traceback
 
 import bpy
 from mathutils import Vector
 
-PKG = next(n for n in sys.modules if n.startswith("bl_ext.") and n.endswith(".claude_assistant"))
+PKG = next(n for n in sys.modules if n.startswith("bl_ext.") and n.endswith(".AI_Studio"))
 mod = lambda name: sys.modules[PKG + "." + name]   # noqa: E731
 TMP = tempfile.mkdtemp(prefix="claude_studio_test_")
 results = []
@@ -63,7 +64,6 @@ def worker_queue_and_variants():
     prefs.output_root, prefs.auto_render = os.path.join(TMP, "out"), False
     scene = small_scene()
     material = bpy.data.materials.new("Holz TH")
-    material.use_nodes = True
     cube = bpy.data.objects["Cube"]
     cube.data.materials.clear()
     cube.data.materials.append(material)
@@ -377,6 +377,32 @@ def library_click_switches_everywhere():
     bpy.ops.render_studio.material_assign(name=other.name, only_selected=True)
     check("shift: only the active object", objects[0].active_material == other
           and objects[1].active_material == old)
+    # Without an active object the last material stays the current one.
+    bpy.context.view_layer.objects.active = None
+    bpy.ops.object.select_all(action='DESELECT')
+    tab = mod("studio").tab_material
+    tab.remember(old)
+    bpy.ops.render_studio.material_assign(name=new.name)
+    check("switch without selecting an object", objects[1].active_material == new
+          and tab.current_material(bpy.context) == new)
+    bpy.ops.render_studio.material_variant()
+    variant = objects[1].active_material
+    check("color variant replaces it everywhere", variant.name == "Holz B V2"
+          and [s.material for s in objects[1].material_slots] == [variant, variant] and new.use_fake_user,
+          variant.name)
+    bpy.ops.render_studio.material_select(name=variant.name)
+    check("select the objects of a material", {o.name for o in bpy.context.selected_objects} == {"sw1"}
+          and bpy.context.active_object == objects[1],
+          ([o.name for o in bpy.context.selected_objects], bpy.context.active_object, bpy.context.mode))
+    tab.toggle_favorite("Holz A")
+    groups = dict(tab._library_groups("holz"))
+    check("search and favorites", [m.name for m, _s in groups.get(tab.FAVORITES_GROUP, [])] == ["Holz A"]
+          and "Alu" not in {m.name for items in groups.values() for m, _s in items}, list(groups))
+    unused = {m.name for m in tab.unused_materials()}
+    bpy.ops.render_studio.material_clean_unused()
+    check("remove unused keeps favorites", "Holz B" in unused and "Holz A" not in unused
+          and "Holz B" not in bpy.data.materials and "Holz A" in bpy.data.materials, unused)
+    tab.toggle_favorite("Holz A")
     for obj in objects:
         bpy.data.objects.remove(obj)
 
@@ -446,6 +472,382 @@ def expired_login():
         core._login_check.update(thread=thread, result=answer)
         core._poll_login()
         check("auth status %s -> button %s" % (answer, needed), core.login_needed == needed)
+
+
+@section
+def onboarding():
+    """Online access off (a new Blender), the login button going away, terminals closing."""
+    core, ui, cli = mod("core"), mod("ui"), mod("claude_cli")
+    system = bpy.context.preferences.system
+    was = system.use_online_access
+    prefs = core.get_prefs()
+    backend = prefs.backend
+    prefs.backend = 'CLOUD'
+    system.use_online_access = False
+    core._setup_cache["state"] = None
+    check("online access off is seen", core.online_state() == 'OFF' and core.setup_state()["online"] == 'OFF')
+    prefs.setup_done = True
+    check("setup card comes back while offline", ui._setup_visible(bpy.context, prefs))
+    count = len(core.messages)
+    core._start_run([("hi", "u1")], prefs)
+    text = " ".join(m["text"] for m in core.messages[count:])
+    check("offline: no run, says what to click", core.current_run is None and "'Allow'" in text, text)
+    del core.messages[count:]
+    check("Allow button turns it on", core.allow_online() and bpy.app.online_access
+          and core.setup_state()["online"] == 'ON')
+    check("setup card hides again once online", not ui._setup_visible(bpy.context, prefs) or
+          not core.setup_state()["cli"])
+    system.use_online_access = was
+    prefs.backend = backend
+
+    # Log in: checks every few seconds right away (not only after the next 30 s check)
+    core._login_check.update(next=core.time.monotonic() + 30)
+    core.open_login()
+    check("login button starts fast checks", core._login_check["next"] == 0.0)
+    core._set_login_needed(True)
+    thread = core.threading.Thread(target=lambda: None)
+    thread.start()
+    thread.join()
+    count = len(core.messages)
+    core._login_check.update(thread=thread, result=True)
+    core._poll_login()
+    said = [m["text"] for m in core.messages[count:]]
+    check("logged in: button gone, info shown, next check soon",
+          not core.login_needed and said and core._login_check["next"] - core.time.monotonic() <= core.LOGIN_POLL + 0.5,
+          said)
+    del core.messages[count:]
+
+    # The terminal window closes itself when the command worked, and stays on an error.
+    script = cli.terminal_script("claude auth login", "Logged in.", "/tmp/close.applescript")
+    ok_part, error_part = script.split("fi\n", 1)
+    check("terminal closes only after success", "osascript /tmp/close.applescript" in ok_part
+          and "$status -eq 0" in ok_part and "osascript" not in error_part, script)
+    import subprocess, tempfile
+    with tempfile.TemporaryDirectory() as folder:
+        closer = os.path.join(folder, "closer")
+        with open(closer, "w") as f:
+            f.write("#!/bin/sh\necho closed > %s/closed\n" % folder)
+        os.chmod(closer, 0o755)
+        for command, closes in (("true", True), ("false", False)):
+            path = os.path.join(folder, "t.sh")
+            with open(path, "w") as f:
+                f.write(cli.terminal_script(command, "ok", closer).replace("/usr/bin/osascript ", "")
+                        .replace("sleep 2", "true").replace(" >/dev/null 2>&1 &", ""))
+            subprocess.run(["sh", path], capture_output=True, timeout=10)
+            for _ in range(50):
+                if os.path.exists(os.path.join(folder, "closed")):
+                    break
+                core.time.sleep(0.05)
+            closed = os.path.exists(os.path.join(folder, "closed"))
+            check("terminal script with %s: closes %s" % (command, closes), closed == closes)
+            if closed:
+                os.remove(os.path.join(folder, "closed"))
+
+
+@section
+def render_defaults():
+    """HQ samples 512 instead of Blender's 4096; depth of field shown while it is on."""
+    cameras, tab_camera = mod("studio.cameras"), mod("studio.tab_camera")
+    scene = bpy.data.scenes.new("Samples Test")
+    check("a new scene has Blender's 4096", scene.cycles.samples == cameras.BLENDER_SAMPLES)
+    cameras.default_samples(scene)
+    check("becomes 512", scene.cycles.samples == 512, scene.cycles.samples)
+    scene.cycles.samples = 4096
+    cameras.default_samples(scene)
+    check("a 4096 set by hand stays", scene.cycles.samples == 4096)
+    other = bpy.data.scenes.new("Own Samples")
+    other.cycles.samples = 300
+    cameras.default_samples(other)
+    check("own sample counts stay", other.cycles.samples == 300)
+    bpy.data.scenes.remove(scene)
+    bpy.data.scenes.remove(other)
+    hdri = mod("studio.hdri")
+    check("no HDRI folder set: one in the add-on's data folder",
+          hdri.folder_path("") == os.path.join(mod("studio.paths").data_dir(), "HDRI"),
+          hdri.folder_path(""))
+
+    class Region:
+        view_perspective = 'PERSP'
+
+    class Shading:
+        type = 'SOLID'
+
+    class Space:
+        type = 'VIEW_3D'
+        shading = Shading()
+        region_3d = Region()
+
+    space = Space()
+    solid = tab_camera.dof_hint(space)
+    Shading.type = 'MATERIAL'
+    outside = tab_camera.dof_hint(space)
+    Region.view_perspective = 'CAMERA'
+    check("depth of field hint: solid / outside the camera / none",
+          "Material Preview" in solid and "camera view" in outside and tab_camera.dof_hint(space) == "",
+          (solid, outside))
+
+
+
+@section
+def live_connection():
+    import json, stat, subprocess
+    core, live = mod("core"), mod("live")
+    live.LIVE_FILE = os.path.join(TMP, "config", "live.json")   # not the real one of an open Blender
+    prefs = core.get_prefs()
+    auto = prefs.auto_approve
+    check("no live server in a background Blender", not live.is_running())
+    prefs.live_connection = True
+    with open(live.LIVE_FILE) as f:
+        info = json.load(f)
+    mode = stat.S_IMODE(os.stat(live.LIVE_FILE).st_mode)
+    check("live.json written, private", mode == 0o600 and info["pid"] == os.getpid() and info["port"]
+          and info["version"] == bpy.app.version_string, (oct(mode), list(info)))
+
+    def post(body, token=info["token"], on_wait=None):
+        run = subprocess.Popen(["curl", "-s", "-X", "POST", "http://127.0.0.1:%d/live" % info["port"],
+                                "-H", "Authorization: Bearer " + token, "-d", json.dumps(body)],
+                               stdout=subprocess.PIPE, text=True)
+        waited = False
+        while run.poll() is None:
+            core._tick()
+            if on_wait and core.pending and not waited:
+                waited = True
+                on_wait()
+            time.sleep(0.02)
+        return json.loads(run.stdout.read())
+
+    check("wrong token refused", post({"op": "ping"}, token="nope")["ok"] is False)
+    answer = post({"op": "ping"})
+    check("ping", answer["ok"] and answer["version"] == bpy.app.version_string, answer)
+    check("info", "Objects" in post({"op": "info"}).get("text", "") or post({"op": "info"})["ok"])
+    check("unknown object", post({"op": "object", "name": "nope"})["ok"] is False)
+    prefs.auto_approve = True
+    count = len(core.messages)
+    answer = post({"op": "python", "code": "kept = 41\nprint(bpy.app.version[0] > 0, math.pi > 3)", "description": "Test"})
+    check("python runs, output back", answer["ok"] and answer["output"] == "True True", answer)
+    check("description in the chat", core.messages[-1]["text"] == "Cowork: Test" and len(core.messages) == count + 1)
+    answer = post({"op": "python", "code": "print(kept + 1)", "description": ""})
+    check("values stay between calls", answer["ok"] and answer["output"] == "42", answer)
+    answer = post({"op": "python", "code": "1/0", "description": ""})
+    check("exception comes back", answer["ok"] is False and "ZeroDivisionError" in answer["error"], answer)
+    prefs.auto_approve = False
+    answer = post({"op": "python", "code": "print('asked')", "description": ""},
+                  on_wait=lambda: core.approve(0, True))
+    check("waits for the OK in the chat", answer.get("output") == "asked" and not core.pending, answer)
+    answer = post({"op": "python", "code": "print('no')", "description": ""},
+                  on_wait=lambda: core.approve(0, False))
+    check("rejected code", answer["ok"] is False and "rejected" in answer["error"], answer)
+    check("screenshot answers JSON", "ok" in post({"op": "screenshot", "max_size": 256}))
+    prefs.auto_approve = True
+
+    class Busy:
+        cancelled = False
+    core.current_run = Busy()
+    seen = []
+
+    def chat_done():
+        seen.append(core.live_status())
+        core.current_run = None
+    run = subprocess.Popen(["curl", "-s", "-X", "POST", "http://127.0.0.1:%d/live" % info["port"],
+                            "-H", "Authorization: Bearer " + info["token"],
+                            "-d", json.dumps({"op": "python", "code": "print('after')", "description": ""})],
+                           stdout=subprocess.PIPE, text=True)
+    while run.poll() is None:
+        core._tick()
+        if core._live_waiting and not seen:
+            chat_done()
+        time.sleep(0.02)
+    answer = json.loads(run.stdout.read())
+    check("live code waits for the chat's answer", answer.get("output") == "after"
+          and seen and "waits" in seen[0], (answer, seen))
+    check("connection text for other sessions", "live.json" in live.connection_text())
+    state = core.setup_state()
+    check("setup state", state["cli"] and state["live"] is False or state["live"] is True, state)
+    prefs.auto_approve = auto
+    del core.messages[count:]
+    prefs.live_connection = False
+    check("switched off: server closed, file gone", not live.is_running() and not os.path.exists(live.LIVE_FILE))
+
+
+
+@section
+def feedback_tools():
+    studio = mod("studio")
+    api, cadswap, runner, lights, look = studio.api, studio.cadswap, studio.runner, studio.lights, studio.look
+    scene = bpy.context.scene
+    # CAD version: names with importer endings, materials over, old parts archived
+    mat = bpy.data.materials.new("Alu test")
+    old = bpy.data.objects.new("Gabel", bpy.data.meshes.new("Gabel"))
+    old.data.materials.append(mat)
+    keep_coll = bpy.data.collections.new("Produkt")
+    scene.collection.children.link(keep_coll)
+    keep_coll.objects.link(old)
+    new = bpy.data.objects.new("Gabel <1>", bpy.data.meshes.new("Gabel2"))
+    scene.collection.objects.link(new)
+    info = api.cad_take_over([new])
+    archived = bpy.data.collections.get("AS_archiv")
+    check("new CAD version takes materials and collections", info["pairs"] == [["Gabel <1>", "Gabel"]]
+          and new.active_material == mat and keep_coll in new.users_collection, info)
+    check("old part archived, hidden", archived is not None and old.name in archived.objects
+          and archived.hide_render and old.get(cadswap.ARCHIVED_FROM) == "Produkt")
+    # temp collection is emptied after an answer
+    helper = bpy.data.objects.new("cutter", bpy.data.meshes.new("cutter"))
+    api.temp_collection().objects.link(helper)
+    mod("core")._empty_temp()
+    check("temp collection emptied after the answer", "cutter" not in bpy.data.objects
+          and "temp" not in bpy.data.collections)
+    # section through two boxes 2 mm apart
+    import bmesh
+    boxes = []
+    for name, size in (("Scan", 0.1), ("CAD", 0.104)):
+        me = bpy.data.meshes.new(name)
+        bm = bmesh.new()
+        bmesh.ops.create_cube(bm, size=size)
+        bm.to_mesh(me)
+        bm.free()
+        obj = bpy.data.objects.new(name, me)
+        scene.collection.objects.link(obj)
+        boxes.append(obj)
+    result = api.section(["Scan", "CAD"], axis="X", offset=0.0)
+    check("section measures width and distance", result["Scan"]["width_mm"] == 100.0
+          and abs(result["CAD"]["to_Scan_mm"]["max"] - 2.83) < 0.1 and "Section Scan" in bpy.data.objects, result)
+    mod("core")._empty_temp()
+    # light preset keeps the names of your lights
+    created = lights.apply_setup(scene, None, {"name": "A", "lights": [{"name": "Key"}, {"name": "Fill"}]})
+    created[0].name = "AS_lights Key"
+    again = lights.apply_setup(scene, None, {"name": "B", "lights": [{"name": "Area.Default"}]})
+    check("preset keeps your light names", [o.name for o in again] == ["AS_lights Key"]
+          and "Fill" not in bpy.data.objects and again[0].users_collection[0].name == "AS_lights",
+          [o.name for o in again])
+    # a new camera changes what the worker must load
+    before = runner.scene_content(scene)
+    cam = bpy.data.objects.new("New cam", bpy.data.cameras.new("New cam"))
+    scene.collection.objects.link(cam)
+    check("new camera reaches the render worker", runner.scene_content(scene) != before)
+    moved = runner.scene_content(scene)
+    cam.location.x += 1
+    check("moving a camera does not reload", runner.scene_content(scene) == moved)
+    # compositor look
+    rq = scene.render_studio
+    rq.look_glow, rq.look_vignette = 0.4, 0.5
+    tree = studio.background.compositor_tree(scene)
+    names = {n.name for n in tree.nodes}
+    check("look nodes in the compositor", look.GLOW in names and look.VIGNETTE + " Mix" in names, names)
+    rq.look_glow = rq.look_vignette = 0.0
+    check("look off: nodes gone", not any(n.name.startswith(look.PREFIX) for n in tree.nodes))
+    # room bake takes the as_env objects
+    boxes[0]["as_env"] = True
+    check("room objects by marker", api.room_objects(scene) == [boxes[0]])
+    # reference folders
+    root = os.path.join(TMP, "S2N")
+    os.makedirs(os.path.join(root, "DATA", "2.2", "FORK"))
+    os.makedirs(os.path.join(root, "refrence", "CMF", "holz"))
+    open(os.path.join(root, "refrence", "CMF", "holz", "a.jpg"), "w").close()
+    check("project root found", api.project_root(os.path.join(root, "DATA", "2.2", "FORK", "FORK_now.blend")) == root)
+    # render folders only when needed
+    core_mod = studio.core
+    out = os.path.join(TMP, "renders_lazy")
+    path = core_mod.job_path(out, "Cam", 'HIGH', "Lazy")
+    check("render folders not made up front", not os.path.exists(os.path.dirname(path)), path)
+    for obj in boxes + [new, cam] + list(again):
+        bpy.data.objects.remove(obj)
+
+
+
+@section
+def release_1_0():
+    """New id with migration, render folders next to the file, connecting other Claude apps."""
+    import json, subprocess
+    migrate, studio, api = mod("migrate"), mod("studio"), mod("studio.api")
+    # data of the old id is copied once, paths inside point at the new folder
+    user = os.path.join(TMP, "dotuser")
+    old_dir = os.path.join(user, "user_default", "claude_assistant")
+    new_dir = os.path.join(user, "ai_studio_repo", "AI_Studio")
+    os.makedirs(os.path.join(old_dir, "studio"))
+    os.makedirs(new_dir)
+    with open(os.path.join(old_dir, "chats.json"), "w") as f:
+        json.dump([{"image": os.path.join(old_dir, "attachments", "a.png")}], f)
+    with open(os.path.join(old_dir, "studio", "light_presets.json"), "w") as f:
+        f.write("{}")
+    with open(os.path.join(new_dir, "usage.json"), "w") as f:
+        f.write('{"new": 1}')
+    found = migrate.copy_data(new_dir, user)
+    with open(os.path.join(new_dir, "chats.json")) as f:
+        chats = f.read()
+    with open(os.path.join(new_dir, "usage.json")) as f:
+        usage = f.read()
+    check("old data copied, paths moved, new files kept",
+          found == old_dir and new_dir in chats and old_dir not in chats and usage == '{"new": 1}'
+          and os.path.exists(os.path.join(new_dir, "studio", "light_presets.json")), chats)
+    check("copied only once", migrate.copy_data(new_dir, user) is None)
+    prefs = mod("core").get_prefs()
+    was = prefs.studio.low_resolution
+    prefs.studio.low_resolution = 37
+    saved = migrate.values(prefs)
+    prefs.studio.low_resolution = 50
+    migrate.apply(prefs, saved)
+    check("preferences carried over (nested)", prefs.studio.low_resolution == 37 and "studio" in saved)
+    prefs.studio.low_resolution = was
+
+    # renders: right next to the .blend file when no output folder is set
+    score = studio.core
+    folder = score.quality_dir("", "Chair", 'HIGH')
+    expected = (mod("autosave").main_folder(bpy.data.filepath) if bpy.data.filepath
+                else os.path.expanduser(score.UNSAVED_ROOT))
+    check("renders next to the file", folder.startswith(os.path.join(expected, "Chair" + score.folder_names()['SUFFIX'])), folder)
+    check("an output folder set still wins", score.quality_dir("/tmp/x", "Chair", 'HIGH').startswith("/tmp/x"))
+
+    # references: any reference folder next to or above the file
+    root = os.path.join(TMP, "Chair project")
+    os.makedirs(os.path.join(root, "Reference", "CMF"))
+    os.makedirs(os.path.join(root, "files", "v2"))
+    open(os.path.join(root, "Reference", "CMF", "oak.jpg"), "w").close()
+    check("reference folder without DATA", api.project_root(os.path.join(root, "files", "v2", "Chair.blend")) == root)
+    check("no reference folder: none", api.project_root(os.path.join(TMP, "lonely", "x.blend")) is None)
+
+    # connecting Claude Code and the Claude app (temporary files, a fake claude)
+    clients = mod("live_clients")
+    clients.STATE_FILE = os.path.join(TMP, "cfg", "clients.json")
+    clients.DESKTOP_CONFIG = os.path.join(TMP, "Claude", "claude_desktop_config.json")
+    os.makedirs(os.path.dirname(clients.DESKTOP_CONFIG))
+    with open(clients.DESKTOP_CONFIG, "w") as f:
+        json.dump({"mcpServers": {"other": {"command": "x"}}, "keep": True}, f)
+    clients.connect_desktop()
+    with open(clients.DESKTOP_CONFIG) as f:
+        config = json.load(f)
+    entry = config["mcpServers"].get("ai-studio", {})
+    check("Claude app: own entry added, the rest kept",
+          config["keep"] and "other" in config["mcpServers"] and entry.get("args", [""])[-1].endswith("live_mcp.py")
+          and clients.desktop_connected(), config)
+    fake = os.path.join(TMP, "fake_claude")
+    log = os.path.join(TMP, "fake_claude.log")
+    with open(fake, "w") as f:
+        f.write('#!/bin/sh\necho "$@" >> %s\n' % log)
+    os.chmod(fake, 0o755)
+    clients.connect_code(fake)
+    with open(log) as f:
+        calls = f.read()
+    check("Claude Code: claude mcp add in the user scope", "mcp add -s user ai-studio -- " in calls
+          and clients.code_connected(), calls)
+
+    # the MCP bridge talks to the Live Connection
+    live = mod("live")
+    on = prefs.live_connection
+    prefs.live_connection = True
+    lines = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
+             {"jsonrpc": "2.0", "method": "notifications/initialized"},
+             {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+             {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "blender_status"}}]
+    result = subprocess.run(clients.bridge_command(), input="\n".join(json.dumps(m) for m in lines) + "\n",
+                            capture_output=True, text=True, timeout=30,
+                            env=dict(os.environ, AI_STUDIO_LIVE_FILE=live.LIVE_FILE))
+    answers = [json.loads(x) for x in result.stdout.splitlines() if x.strip()]
+    status = answers[2]["result"]["content"][0]["text"] if len(answers) == 3 else ""
+    check("MCP bridge: initialize, 5 tools, status from Blender",
+          len(answers) == 3 and answers[0]["result"]["serverInfo"]["name"] == "ai-studio"
+          and len(answers[1]["result"]["tools"]) == 5 and status.startswith("Blender " + bpy.app.version_string[:3]),
+          (result.stdout[-500:], result.stderr[-500:]))
+    prefs.live_connection = on
 
 
 ok = all(results)

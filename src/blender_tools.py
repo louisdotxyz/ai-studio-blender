@@ -244,6 +244,7 @@ UNDO_MARKER = "_claude_step"  # scene ID property; "_" hides it in the UI
 
 # Values the model's code keeps between execute_python calls of one chat (see _keep).
 _kept = {"chat": None, "values": {}}
+_kept_live = {"values": {}}     # the same for the Live Connection, independent of the chat
 
 
 def forget_values():
@@ -274,7 +275,7 @@ def _plain(value, depth=0):
     return False, None
 
 
-def _keep(namespace, base):
+def _keep(namespace, base, store=None):
     """After a call: keep the model's plain values and functions for the next call."""
     import types
     kept, dropped = {}, []
@@ -289,7 +290,7 @@ def _keep(namespace, base):
             kept[name] = copy
         else:
             dropped.append(name)
-    _kept["values"] = kept
+    (_kept if store is None else store)["values"] = kept
     return dropped
 
 
@@ -317,12 +318,13 @@ def _base_namespace():
     return namespace
 
 
-def execute_python(code, undo_message="Claude", step=None, max_output=6000, chat=None):
+def execute_python(code, undo_message="Claude", step=None, max_output=6000, chat=None, live=False):
     """Run code, return (output_text, ok).
 
     ``step`` is written to the scene as an undo marker before the undo push, so
     the step can later be undone safely (see ``undo_claude_steps``). Plain values and
-    functions the code defines stay for the next call of the same ``chat``.
+    functions the code defines stay for the next call of the same ``chat``
+    (``live``: for the next call over the Live Connection).
     """
     namespace = _base_namespace()
     try:   # skill helpers: T (checks), M (photo match), V (variants), api (Render Studio)
@@ -334,7 +336,7 @@ def execute_python(code, undo_message="Claude", step=None, max_output=6000, chat
     if chat is not None and _kept["chat"] != chat:
         forget_values()
         _kept["chat"] = chat
-    namespace.update(_kept["values"])
+    namespace.update((_kept_live if live else _kept)["values"])
     buffer = io.StringIO()
     ok = True
     wm = bpy.context.window_manager
@@ -371,7 +373,9 @@ def execute_python(code, undo_message="Claude", step=None, max_output=6000, chat
             for area in window.screen.areas:
                 area.tag_redraw()
 
-    if chat is not None:
+    if live:
+        _keep(namespace, base, _kept_live)
+    elif chat is not None:
         _keep(namespace, base)
     output = buffer.getvalue().strip()
     if len(output) > max_output:  # long prints eat context; keep the end, where errors are
