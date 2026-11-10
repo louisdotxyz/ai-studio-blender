@@ -143,6 +143,45 @@ def _queue(args):
     return "\n".join(lines)
 
 
+def _cad_import(args):
+    from . import cadimport
+    report = cadimport.cad_import(str(args["path"]), take_over=args.get("take_over", True) is not False,
+                                  materials=args.get("materials", True) is not False,
+                                  setup=args.get("setup", True) is not False,
+                                  delete_old=bool(args.get("delete_old")),
+                                  tolerance_mm=float(args.get("tolerance_mm") or 0.5))
+    text = cadimport.summary(report)
+    if args.get("details"):
+        text += "\n\n" + cadimport.report_json(report)
+    return text
+
+
+def _cad_check(args):
+    from . import cadimport
+    views = args.get("views") or ["Iso", "Front"]
+    cams = cadimport.check_views(args.get("objects") or None, tuple(views), int(args.get("size") or 900),
+                                 int(args.get("samples") or 16))
+
+    def done():
+        result = cadimport.check_result()
+        if result is None:
+            return None
+        lines = ["%s: %s" % (view, path) for view, path in sorted(result["images"].items())]
+        lines += ["failed: " + e for e in result["errors"]]
+        return "Check images (look at them with Read):\n" + "\n".join(lines)
+    return done() or {"wait": done, "label": "rendering CAD check images (%s)" % ", ".join(cams)}
+
+
+def _cad_feedback(args):
+    from . import cadfiles, cadimport
+    if args.get("problem"):
+        path = cadimport.feedback(args.get("part") or "", str(args["problem"]), args.get("folder") or None)
+        return "Noted for the CAD side in " + path
+    folder = args.get("folder") or cadimport.feedback_folder(args.get("part") or None)
+    points = cadfiles.open_feedback(folder)
+    return "Open CAD feedback:\n" + ("\n".join("- " + p for p in points) if points else "none")
+
+
 _SETUP = {"type": "object", "description": "The setup as described by studio_context"}
 
 
@@ -217,6 +256,40 @@ def get_tools():
              "add_to_queue": {"type": "boolean"}},
              "required": ["action"]},
          "handler": _camera},
+        {"name": "studio_cad_import", "label": "Render Studio: CAD import",
+         "description": "Import a CAD export (GLB/glTF incl. Onshape's, STEP, OBJ, STL …) with its sidecar "
+                        "<name>.cad.json and take it over from the old version in the scene: part ids, base "
+                        "materials for new parts, materials/collections/modifiers/settings of old parts kept, "
+                        "old parts archived by version, mounting empties, sizes checked against the CAD. "
+                        "Use it for every CAD model instead of importing by hand.",
+         "inputSchema": {"type": "object", "properties": {
+             "path": {"type": "string", "description": "The export file"},
+             "take_over": {"type": "boolean", "description": "Take over from the old version (default true)"},
+             "materials": {"type": "boolean"}, "setup": {"type": "boolean"},
+             "delete_old": {"type": "boolean", "description": "Only when the user asked to delete the old parts"},
+             "tolerance_mm": {"type": "number"},
+             "details": {"type": "boolean", "description": "Also the full report as JSON"}},
+             "required": ["path"]},
+         "handler": _cad_import},
+        {"name": "studio_cad_check", "label": "Render Studio: CAD check images",
+         "description": "Check images of the CAD parts (default: the last CAD import) from fixed views "
+                        "(Iso, Front, Right, Top), rendered in the background; answers with the image paths "
+                        "when they are done.",
+         "inputSchema": {"type": "object", "properties": {
+             "objects": {"type": "array", "items": {"type": "string"}},
+             "views": {"type": "array", "items": {"type": "string", "enum": ["Iso", "Front", "Right", "Top"]}},
+             "size": {"type": "integer"}, "samples": {"type": "integer"}}},
+         "handler": _cad_check},
+        {"name": "studio_cad_feedback", "label": "Render Studio: CAD feedback",
+         "description": "Feedback for the CAD side: with 'problem', note an open point (collision, size, "
+                        "a look that needs a geometry change) in CAD-Feedback.md next to the part's CAD "
+                        "export; without, list the open points. Geometry problems go here, not into a "
+                        "Blender fix of the CAD mesh.",
+         "inputSchema": {"type": "object", "properties": {
+             "part": {"type": "string", "description": "Object name of the part (or empty for the whole model)"},
+             "problem": {"type": "string", "description": "One sentence with numbers, in the user's language"},
+             "folder": {"type": "string", "description": "Folder of the CAD export, if no part is given"}}},
+         "handler": _cad_feedback},
         {"name": "studio_render_queue", "label": "Render Studio: render queue",
          "description": "Render Studio's render queue: 'status' (entries, cameras, progress), 'add' a camera "
                         "(LOW = quick test, HIGH = final), 'start', 'wait' (answers when everything is "

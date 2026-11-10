@@ -48,8 +48,10 @@ instead of creating duplicates. Never delete or overwrite user data or files wit
 archive collection, where the user deletes them. Delete objects only when the user says so explicitly.
 - Helper objects (cutters, measuring planes, test objects): put them into api.temp_collection(); it is \
 deleted after your answer. Nothing the user should keep goes there.
-- A new CAD version next to the old one: api.cad_take_over(new_objects) gives the new parts the \
-materials and collections of the old parts with the same name and archives the old ones.
+- CAD models: import every CAD export with studio_cad_import (in code: api.cad_import(path)); it reads \
+the sidecar <name>.cad.json, takes a new version over from the old one (materials, collections, modifiers; \
+old parts into the archive) and checks the sizes against the CAD. Objects with obj["cad_id"] come from CAD: \
+don't fix their geometry in Blender, note the problem for the CAD side with studio_cad_feedback.
 - Reference images: api.references() lists the topics in the project's reference folder, \
 api.references("CMF") the image paths of one topic (e.g. "reference CMF"); look at them with Read.
 - If something is unclear or there are real alternatives, call ask_user (one question, 2-5 short options) \
@@ -1034,6 +1036,12 @@ def _dispatch_live(task):
         try:
             size = max(64, min(4096, int(args.get("max_size") or 1280)))
             png = blender_tools.capture_viewport(size)
+        except Exception as exc:
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        return {"ok": True, "png": base64.b64encode(png).decode("ascii")}
+    if task.name == "live_image":
+        try:
+            png = blender_tools.image_file_png(str(args.get("path", "")), int(args.get("max_size") or 1280))
         except Exception as exc:
             return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
         return {"ok": True, "png": base64.b64encode(png).decode("ascii")}

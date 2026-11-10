@@ -491,6 +491,29 @@ def capture_viewport(max_size=1280):
     return data
 
 
+def image_file_png(path, max_size=1280):
+    """An image file (PNG/JPEG) as PNG bytes, scaled down to max_size (longest side)."""
+    path = os.path.abspath(os.path.expanduser(path))
+    if not path.lower().endswith((".png", ".jpg", ".jpeg")) or not os.path.isfile(path):
+        raise ValueError("No PNG or JPEG file: " + path)
+    image = bpy.data.images.load(path, check_existing=False)
+    out = os.path.join(tempfile.gettempdir(), f"claude_image_{os.getpid()}.png")
+    try:
+        width, height = image.size
+        longest = max(width, height, 1)
+        if longest > max_size:
+            image.scale(max(1, round(width * max_size / longest)), max(1, round(height * max_size / longest)))
+        image.filepath_raw = out
+        image.file_format = 'PNG'
+        image.save()
+    finally:
+        bpy.data.images.remove(image)
+    with open(out, "rb") as f:
+        data = f.read()
+    os.remove(out)
+    return data
+
+
 def _crop_and_scale(path, area, max_size):
     import numpy as np
 

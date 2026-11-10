@@ -843,9 +843,9 @@ def release_1_0():
                             env=dict(os.environ, AI_STUDIO_LIVE_FILE=live.LIVE_FILE))
     answers = [json.loads(x) for x in result.stdout.splitlines() if x.strip()]
     status = answers[2]["result"]["content"][0]["text"] if len(answers) == 3 else ""
-    check("MCP bridge: initialize, 5 tools, status from Blender",
+    check("MCP bridge: initialize, 6 tools, status from Blender",
           len(answers) == 3 and answers[0]["result"]["serverInfo"]["name"] == "ai-studio"
-          and len(answers[1]["result"]["tools"]) == 5 and status.startswith("Blender " + bpy.app.version_string[:3]),
+          and len(answers[1]["result"]["tools"]) == 6 and status.startswith("Blender " + bpy.app.version_string[:3]),
           (result.stdout[-500:], result.stderr[-500:]))
     prefs.live_connection = on
 

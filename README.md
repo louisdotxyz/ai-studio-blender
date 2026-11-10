@@ -39,9 +39,16 @@ render studio for product shots, all in the sidebar of the 3D viewport.
   presets, eyedroppers for material and color (objects picked together share changes).
   A click in the library switches every object with the current material (compare colors
   fast), color variants, favorites, search, usage counts and removing unused materials.
-- **CAD:** *Import CAD* (GLB, OBJ, STL, FBX …) checks size, floor, names and triangles.
-  *New Version* gives a re-exported model the materials and collections of the old parts
-  with the same name ("Fork", "Fork.001", "Fork <1>") and archives the old ones.
+- **CAD:** *Import CAD* (GLB incl. Onshape's glTF, STEP through a Python with OCP/build123d, OBJ, STL,
+  FBX …) checks size, floor, names and triangles. *New Version* gives a re-exported model the
+  materials, collections, modifiers and settings of the old parts with the same id or name ("Fork",
+  "Fork.001", "Fork <1>") and archives the old ones by version (`AS_archiv V2`). A sidecar
+  `<name>.cad.json` next to the export (written by the CAD side, see `src/studio/cadfiles.py`) adds part
+  ids, CAD materials (mapped to base materials), mounting points (`MOUNT | …` empties that move with
+  every version), sizes to check and variants. Claude: `studio_cad_import`, `studio_cad_check` (check
+  images), `studio_cad_feedback` (`CAD-Feedback.md` next to the export for the CAD side), skill */cad*.
+  Onshape sends the package straight into Blender with `tools/onshape/onshape-helpers.js`
+  (`POST /cad` on the Live Connection, see below).
 - **For Claude:** sections through a scan and the CAD part with measurements
   (`studio_section`), reference images of the project (a `reference` folder next to or above the
   .blend file, one subfolder per topic, e.g. `reference/CMF`).
@@ -101,12 +108,15 @@ with `--offline-mode`). Terminal windows it opens (install, log in) close by the
 **Live Connection** (Chat section, on by default): other Claude sessions on this computer (Cowork,
 blender-mcp) can work in the open Blender without a click. Blender listens on 127.0.0.1 and writes port and
 token to `~/.config/ai-studio/live.json` (only your user can read it; the Blender opened last owns it). Send
-`POST /live` with `Authorization: Bearer <token>` and `{"op": "ping" | "info" | "object" | "python" | "screenshot"}`.
+`POST /live` with `Authorization: Bearer <token>` and `{"op": "ping" | "info" | "object" | "python" | "screenshot" | "image"}`.
+`POST /cad?name=<file>[&folder=<folder>]` with the same token takes a CAD export as the body (also from
+Onshape pages: CORS for `*.onshape.com`) and writes it to `CAD/` next to the open .blend file (or the folder,
+inside your home folder).
 "Run Code Without Asking" applies: when it is off, the code waits for your OK in the chat. The file is never saved.
 While the chat is answering, code from another session waits until the answer is done; the chat shows
 "Cowork connected / waits". The setup card connects **Claude Code** and the **Claude app** (Cowork) with
 one click each: they get the `ai-studio` tools (blender_scene, blender_object, blender_python,
-blender_screenshot), an MCP server that comes with the add-on and runs with Blender's own Python. The Claude
+blender_screenshot, blender_image), an MCP server that comes with the add-on and runs with Blender's own Python. The Claude
 app reads it at its next start. Set a fixed **Port** if a client needs one; the copy button puts
 instructions for any other session into the clipboard.
 
@@ -131,6 +141,8 @@ stays on your computer.
 - `python3 tests/lint.py` runs a static check (needs `pip install pyflakes`).
 - `Blender -b --python tests/ui_check.py` draws every panel headless.
 - `Blender -b --python tests/functional.py` runs the functional checks headless.
+- `python3 tests/cad_unit.py` checks the CAD hand-over without Blender; `Blender -b --factory-startup --python
+  tests/cad_blender.py` checks import, take-over, archive and mounts (loads `src/` directly).
 
 Up to 0.24 the extension id was `claude_assistant`. Version 1.0 (`AI_Studio`) takes over its settings,
 chats and Studio data, turns it off and asks you to remove it in *Preferences › Get Extensions*.

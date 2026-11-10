@@ -10,10 +10,13 @@ This module does not import ``bpy`` so it can be tested outside Blender.
 """
 
 import json
+import os
 import queue
 import secrets
+import tempfile
 import threading
 import traceback
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 SERVER_NAME = "blender"
@@ -196,7 +199,39 @@ _token = None
 _live_token = None      # set while the Live Connection is on (see live.py)
 live_state = {"file": "", "version": ""}   # kept current on the main thread, read by /live
 live_seen = [0.0]       # time.time() of the last /live request (for the chat's status line)
-LIVE_OPS = ("info", "object", "python", "screenshot")
+LIVE_OPS = ("info", "object", "python", "screenshot", "image")
+
+# POST /cad?name=<file>[&folder=<folder>]: a CAD export straight from the browser (Onshape) into a
+# folder, with the Live Connection's token. Default folder: "CAD" next to the open .blend file.
+CAD_EXTS = (".glb", ".gltf", ".json", ".step", ".stp", ".stl", ".3mf", ".obj", ".png", ".jpg", ".jpeg")
+CAD_MAX_BYTES = 1 << 30
+
+
+def cad_origin_allowed(origin):
+    """Browser pages that may send CAD files (Onshape, also company domains of it)."""
+    host = urllib.parse.urlparse(origin or "").hostname or ""
+    return (origin or "").startswith("https://") and (host == "onshape.com" or host.endswith(".onshape.com"))
+
+
+def cad_upload_target(name, folder=""):
+    """The path an uploaded CAD file is written to. Raises ValueError for names and folders that
+    are not allowed (only a file name with a CAD extension, only inside the home folder)."""
+    base = str(name or "").strip()
+    if not base or "/" in base or "\\" in base or base.startswith("."):
+        raise ValueError("name must be a plain file name")
+    if not base.lower().endswith(CAD_EXTS):
+        raise ValueError("Not a CAD file: %s (allowed: %s)" % (base, ", ".join(CAD_EXTS)))
+    if folder:
+        target = os.path.abspath(os.path.expanduser(folder))
+    elif live_state.get("file"):
+        target = os.path.join(os.path.dirname(live_state["file"]), "CAD")
+    else:
+        target = os.path.expanduser("~/Downloads/CAD")
+    home = os.path.realpath(os.path.expanduser("~"))
+    real = os.path.realpath(target)
+    if not (real == home or real.startswith(home + os.sep)):
+        raise ValueError("The folder must be inside your home folder")
+    return os.path.join(target, base)
 
 
 def live_token():
@@ -433,10 +468,22 @@ class _Handler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _cors(self):
+        """CORS headers for /cad when the request comes from an allowed page (else none)."""
+        origin = self.headers.get("Origin", "")
+        if not self.path.startswith("/cad") or not cad_origin_allowed(origin):
+            return {}
+        return {"Access-Control-Allow-Origin": origin, "Vary": "Origin",
+                "Access-Control-Allow-Methods": "POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Authorization, Content-Type",
+                "Access-Control-Allow-Private-Network": "true", "Access-Control-Max-Age": "600"}
+
     def _send(self, status, body=None):
         data = b"" if body is None else json.dumps(body).encode("utf-8")
         try:
             self.send_response(status)
+            for key, value in self._cors().items():
+                self.send_header(key, value)
             if body is not None:
                 self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(data)))
@@ -461,9 +508,56 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             self._send(200, _handle_live(payload))
 
+    def _post_cad(self):
+        given = self.headers.get("Authorization", "").encode("utf-8")
+        if not _live_token:
+            self._send(404, {"ok": False, "error": "Live Connection is off."})
+            return
+        if not secrets.compare_digest(given, f"Bearer {_live_token}".encode("utf-8")):
+            self._send(401, {"ok": False, "error": "Invalid token."})
+            return
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        try:
+            target = cad_upload_target((query.get("name") or [""])[0], (query.get("folder") or [""])[0])
+            length = int(self.headers.get("Content-Length") or 0)
+            if length <= 0 or length > CAD_MAX_BYTES:
+                raise ValueError("Body missing or larger than 1 GB")
+        except ValueError as exc:
+            self._send(400, {"ok": False, "error": str(exc)})
+            return
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(target), prefix=".upload_")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                left = length
+                while left > 0:
+                    chunk = self.rfile.read(min(left, 1 << 20))
+                    if not chunk:
+                        raise ValueError("Upload ended early")
+                    f.write(chunk)
+                    left -= len(chunk)
+            os.replace(tmp, target)
+        except (OSError, ValueError) as exc:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+            self._send(400, {"ok": False, "error": str(exc)})
+            return
+        live_seen[0] = __import__("time").time()
+        self._send(200, {"ok": True, "path": target, "bytes": length})
+
+    def do_OPTIONS(self):
+        if self.path.split("?", 1)[0].rstrip("/") == "/cad" and self._cors():
+            self._send(204)
+        else:
+            self._send(404)
+
     def do_POST(self):
-        if self.path.split("?", 1)[0].rstrip("/") == "/live":
+        route = self.path.split("?", 1)[0].rstrip("/")
+        if route == "/live":
             self._post_live()
+            return
+        if route == "/cad":
+            self._post_cad()
             return
         if not self._authorized():
             return

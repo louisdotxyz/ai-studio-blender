@@ -294,18 +294,75 @@ def temp_collection():
     return cadswap.temp_collection()
 
 
-def cad_take_over(new_objects, materials=True, collections=True, delete=False):
-    """A new CAD version takes over from the old one: by part name ("Gabel", "Gabel.001",
-    "Gabel <1>" are the same part) the new objects get the materials and collections of the old
-    ones, the old ones go into the archive (delete=True only when the user asked for it).
+def cad_take_over(new_objects, materials=True, collections=True, delete=False, setup=True):
+    """A new CAD version takes over from the old one: by CAD id or part name ("Gabel", "Gabel.001",
+    "Gabel <1>" are the same part) the new objects get the materials, collections and (setup)
+    modifiers, smooth shading, parent, visibility and custom properties of the old ones; the old
+    ones go into the archive, by CAD version (delete=True only when the user asked for it).
     Returns {"pairs": [[new, old], …], "new_without_partner": […], "old_without_partner": […]}."""
     from . import cadswap
     objects = [bpy.data.objects[o] if isinstance(o, str) else o for o in new_objects]
     pairs, lonely_new, lonely_old = cadswap.match(objects)
-    cadswap.take_over(pairs, materials, collections, 'DELETE' if delete else 'ARCHIVE')
+    cadswap.take_over(pairs, materials, collections, 'DELETE' if delete else 'ARCHIVE', setup=setup)
     return {"pairs": [[n.name, o.name] for n, o in pairs],
             "new_without_partner": [o.name for o in lonely_new],
             "old_without_partner": [o.name for o in lonely_old]}
+
+
+def cad_import(path, take_over=True, materials=True, setup=True, delete_old=False, tolerance_mm=0.5):
+    """The whole CAD hand-over in one call. Imports a CAD export (GLB/glTF incl. Onshape's glTF
+    text, STEP through OCP, OBJ, STL …) with its sidecar <name>.cad.json (see cadfiles): turns a
+    Z-up glTF upright, tags parts (obj["cad_id"], "cad_material", "cad_version", "cad_file"), takes
+    over from the old version (materials, collections, modifiers, settings; old parts into
+    "AS_archiv <version>"), gives new parts the base material their CAD material maps to, places
+    the mounting empties "MOUNT | …", checks the sizes against the CAD (tolerance_mm) and writes the
+    sidecar's variants into Varianten.json. Returns a report dict; print(api.cad_summary(report))."""
+    from . import cadimport
+    return cadimport.cad_import(path, take_over=take_over, materials=materials, setup=setup,
+                                delete_old=delete_old, tolerance_mm=tolerance_mm)
+
+
+def cad_summary(report):
+    """Short text of a cad_import report."""
+    from . import cadimport
+    return cadimport.summary(report)
+
+
+def cad_material_map(cad_material=None, base=None):
+    """Without arguments: the mapping CAD material -> base material (all projects). With both:
+    remember one ("PETG milchig" -> "PETG translucent") for the next imports."""
+    from . import cadfiles, cadimport
+    if cad_material and base:
+        return cadimport.map_material(cad_material, base)
+    return cadfiles.load_material_map(cadimport._map_folder())
+
+
+def cad_check_views(objects=None, views=("Iso", "Front"), size=900, samples=16):
+    """Check images of the CAD parts (default: the last import) from fixed views, rendered by the
+    worker into <name>_renders/cad-check/<view>.png. Views: Iso, Front, Right, Top. Poll
+    api.cad_check_result() until it is not None, then look at the images (Read)."""
+    from . import cadimport
+    return cadimport.check_views(objects, tuple(views), size, samples)
+
+
+def cad_check_result():
+    """None while the check images render, else {"images": {view: path}, "errors", "folder"}."""
+    from . import cadimport
+    return cadimport.check_result()
+
+
+def cad_feedback(part, problem, folder=None):
+    """An open point for the CAD side (collision, wrong size, a render problem) in
+    CAD-Feedback.md next to the part's CAD export; the CAD side reads it before its next change.
+    Returns the file's path. Open points: api.cad_feedback_open()."""
+    from . import cadimport
+    return cadimport.feedback(part, problem, folder)
+
+
+def cad_feedback_open(folder=None):
+    """The open points of CAD-Feedback.md (next to the last CAD import, or in `folder`)."""
+    from . import cadfiles, cadimport
+    return cadfiles.open_feedback(folder or cadimport.feedback_folder())
 
 
 REFERENCE_DIRS = ("refrence", "reference", "references", "Referenz")

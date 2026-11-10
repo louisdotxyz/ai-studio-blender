@@ -42,10 +42,17 @@ TOOLS = [
      "description": "Picture of the 3D viewport as the user sees it.",
      "inputSchema": {"type": "object", "properties": {
          "max_size": {"type": "integer", "description": "Longest side in pixels (default 1280)"}}}},
+    {"name": "blender_image",
+     "description": "An image file on this computer (e.g. a render or CAD check image from api.cad_check_views) "
+                    "as a picture, scaled to max_size.",
+     "inputSchema": {"type": "object", "properties": {
+         "path": {"type": "string", "description": "PNG or JPEG file"},
+         "max_size": {"type": "integer", "description": "Longest side in pixels (default 1280)"}},
+         "required": ["path"]}},
 ]
 
 OPS = {"blender_status": "ping", "blender_scene": "info", "blender_object": "object",
-       "blender_python": "python", "blender_screenshot": "screenshot"}
+       "blender_python": "python", "blender_screenshot": "screenshot", "blender_image": "image"}
 
 
 def call_blender(payload, timeout=7200):
@@ -79,7 +86,7 @@ def run_tool(name, arguments):
         answer = call_blender(payload, timeout=10 if name == "blender_status" else 7200)
     except RuntimeError as exc:
         return {"content": [{"type": "text", "text": str(exc)}], "isError": True}
-    if name == "blender_screenshot" and answer.get("png"):
+    if name in ("blender_screenshot", "blender_image") and answer.get("png"):
         return {"content": [{"type": "image", "data": answer["png"], "mimeType": "image/png"}]}
     text = answer.get("text") or answer.get("output") or answer.get("error") or ""
     if name == "blender_status" and answer.get("ok"):

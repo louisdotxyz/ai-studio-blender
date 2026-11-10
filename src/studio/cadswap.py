@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """CAD versions: import a model with checks, take a new version over from the old one
-(materials and collections by part name), keep replaced objects in the archive collection,
-and the temporary collection for helper objects.
+(materials, collections, modifiers and settings by part), keep replaced objects in the archive
+collection (one child collection per CAD version), and the temporary collection for helper objects.
 
-Names are compared without the endings importers add: "Gabel.001", "Gabel <1>", "Gabel (2)".
-Replaced objects are never deleted unless asked: they go into the archive collection
-(Preferences › Studio, default "AS_archiv"), hidden in viewport and render.
+Parts are paired by their CAD id (obj["cad_id"], from the sidecar, see cadfiles) or else by name,
+compared without the endings importers add: "Gabel.001", "Gabel <1>", "Gabel (2)". Older exports
+that had the material in the name ("Leuchte | Front PETG milchig") still pair with the id
+"Leuchte | Front". Replaced objects are never deleted unless asked: they go into the archive
+collection (Preferences › Studio, default "AS_archiv"), hidden in viewport and render.
+The whole import with the sidecar is in cadimport.
 """
 
 import os
@@ -14,11 +17,18 @@ import re
 import bpy
 from bpy.props import BoolProperty, EnumProperty, StringProperty
 
+from . import cadfiles
+from .cadfiles import part_name   # noqa: F401  (kept here for older callers)
 from .cameras import archive_collection_name, temp_collection_name
 
 ARCHIVED_FROM = "as_archived_from"   # collections the object was in before it was archived
 TEMP_KEY = "as_temp"                 # marks the temporary collection the add-on empties
-_ENDINGS = re.compile(r"(\.\d{3}|\s*<\d+>|\s*\(\d+\))$")
+CAD_ID = "cad_id"                    # the part's stable id from the CAD side
+CAD_VERSION = "cad_version"          # "V3": the CAD version the object came with
+# What the user set on a part that a new version keeps (besides materials and collections).
+VISIBILITY = ("hide_render", "visible_camera", "visible_diffuse", "visible_glossy", "visible_transmission",
+              "visible_volume_scatter", "visible_shadow", "is_shadow_catcher", "is_holdout", "pass_index",
+              "display_type", "show_wire")
 
 IMPORTERS = {
     ".glb": lambda p: bpy.ops.import_scene.gltf(filepath=p),
@@ -34,19 +44,14 @@ IMPORTERS = {
 }
 
 
-def part_name(name):
-    """The name without the endings importers and Blender add (lower case)."""
-    name = name.strip()
-    while True:
-        stripped = _ENDINGS.sub("", name)
-        if stripped == name or not stripped:
-            return name.lower()
-        name = stripped
+def part_key(obj):
+    """What a part is paired by: its CAD id, else its name (both without importer endings)."""
+    return part_name(obj.get(CAD_ID) or obj.name)
 
 
 def _archived(obj):
     coll = bpy.data.collections.get(archive_collection_name())
-    return coll is not None and obj.name in coll.objects
+    return coll is not None and obj.name in coll.all_objects
 
 
 def match(new_objects, old_objects=None, scene=None):
@@ -60,10 +65,10 @@ def match(new_objects, old_objects=None, scene=None):
         old_objects = [o for o in scene.objects if o.type == 'MESH' and o not in new_set and not _archived(o)]
     old_by_part = {}
     for obj in sorted(old_objects, key=lambda o: o.name):
-        old_by_part.setdefault(part_name(obj.name), []).append(obj)
+        old_by_part.setdefault(part_key(obj), []).append(obj)
     pairs, lonely_new = [], []
     for obj in new_objects:
-        olds = old_by_part.get(part_name(obj.name))
+        olds = old_by_part.get(part_key(obj))
         if olds:
             # Same name apart from Blender's ".001" first ("Gabel <2>" keeps to "Gabel <2>").
             plain = re.sub(r"\.\d{3}$", "", obj.name)
@@ -72,6 +77,20 @@ def match(new_objects, old_objects=None, scene=None):
             pairs.append((obj, previous))
         else:
             lonely_new.append(obj)
+    # Older exports had the material in the name: "Leuchte | Front PETG milchig" is the part with
+    # the id "Leuchte | Front" when it is the only such old part. Longer ids pick first.
+    still = []
+    for obj in sorted(lonely_new, key=lambda o: -len(part_key(o))):
+        key = part_key(obj) + " "
+        hits = [(k, o) for k, olds in old_by_part.items() if k.startswith(key)
+                for o in olds if not o.get(CAD_ID)] if obj.get(CAD_ID) else []
+        if len(hits) == 1:
+            k, previous = hits[0]
+            old_by_part[k].remove(previous)
+            pairs.append((obj, previous))
+        else:
+            still.append(obj)
+    lonely_new = sorted(still, key=lambda o: o.name)
     lonely_old = [o for olds in old_by_part.values() for o in olds]
     return pairs, lonely_new, lonely_old
 
@@ -90,6 +109,62 @@ def copy_materials(source, target):
     return True
 
 
+def copy_modifier(source, target):
+    """A copy of the modifier `source` on the object `target` (settings and node inputs)."""
+    new = target.modifiers.new(source.name, source.type)
+    for prop in source.bl_rna.properties:
+        if prop.is_readonly or prop.identifier in ("name", "type"):
+            continue
+        try:
+            setattr(new, prop.identifier, getattr(source, prop.identifier))
+        except (AttributeError, TypeError, ValueError, RuntimeError):
+            pass
+    if source.type == 'NODES':   # the group's inputs are ID properties of the modifier
+        for key in source.keys():
+            try:
+                new[key] = source[key]
+            except (TypeError, ValueError):
+                pass
+    return new
+
+
+def copy_setup(source, target, skip_parents=()):
+    """What the user set on the old part besides materials: modifiers (when the new part has
+    none), smooth shading, the parent, render visibility and custom properties.
+    Returns the names of what was copied."""
+    done = []
+    if source.modifiers and not target.modifiers:
+        for mod in source.modifiers:
+            copy_modifier(mod, target)
+        done.append("modifiers")
+    src_mesh, dst_mesh = getattr(source, "data", None), getattr(target, "data", None)
+    if (isinstance(src_mesh, bpy.types.Mesh) and isinstance(dst_mesh, bpy.types.Mesh) and src_mesh.polygons
+            and dst_mesh.polygons and not dst_mesh.has_custom_normals):
+        smooth = sum(p.use_smooth for p in src_mesh.polygons) / len(src_mesh.polygons)
+        if smooth > 0.5 and not any(p.use_smooth for p in dst_mesh.polygons):
+            dst_mesh.shade_smooth()
+            done.append("smooth")
+    parent = source.parent
+    if parent is not None and target.parent is None and parent not in skip_parents and not _archived(parent):
+        world = target.matrix_world.copy()
+        target.parent = parent
+        target.matrix_world = world
+        done.append("parent")
+    changed = False
+    for attr in VISIBILITY:
+        if hasattr(source, attr) and getattr(source, attr) != getattr(target, attr):
+            setattr(target, attr, getattr(source, attr))
+            changed = True
+    if changed:
+        done.append("visibility")
+    keys = [k for k in source.keys() if not k.startswith(("cad_", "_")) and k != ARCHIVED_FROM and k not in target]
+    for key in keys:
+        target[key] = source[key]
+    if keys:
+        done.append("properties")
+    return done
+
+
 def archive_collection(scene=None):
     scene = scene or bpy.context.scene
     name = archive_collection_name()
@@ -102,30 +177,40 @@ def archive_collection(scene=None):
     return coll
 
 
-def archive(objects, scene=None):
-    """Move objects into the archive collection (hidden; delete them there yourself).
-    Returns how many were moved."""
+def archive(objects, scene=None, version=""):
+    """Move objects into the archive collection (hidden; delete them there yourself), with a
+    version ("V2") into its child collection "AS_archiv V2". Returns how many were moved."""
     coll = archive_collection(scene)
+    target = coll
+    if version:
+        name = "%s %s" % (coll.name, version)
+        target = bpy.data.collections.get(name) or bpy.data.collections.new(name)
+        if target.name not in coll.children:
+            coll.children.link(target)
     count = 0
     for obj in objects:
-        if obj.name in coll.objects:
+        if obj.name in coll.all_objects:
             continue
         obj[ARCHIVED_FROM] = ", ".join(c.name for c in obj.users_collection)
         for other in list(obj.users_collection):
             other.objects.unlink(obj)
-        coll.objects.link(obj)
+        target.objects.link(obj)
         count += 1
     return count
 
 
-def take_over(pairs, materials=True, collections=True, old="ARCHIVE", scene=None):
-    """New version takes over from the old one: materials, collections; the old objects go into
-    the archive (old='ARCHIVE'), are deleted (old='DELETE') or stay ('KEEP')."""
+def take_over(pairs, materials=True, collections=True, old="ARCHIVE", scene=None, setup=True):
+    """New version takes over from the old one: materials, collections and (setup) modifiers,
+    smooth shading, parent, visibility, custom properties; the old objects go into the archive
+    (old='ARCHIVE', by their CAD version), are deleted (old='DELETE') or stay ('KEEP')."""
     scene = scene or bpy.context.scene
     done = 0
+    olds = [previous for _new, previous in pairs]
     for new, previous in pairs:
         if materials:
             copy_materials(previous, new)
+        if setup:
+            copy_setup(previous, new, skip_parents=olds)
         if collections:
             targets = [c for c in previous.users_collection if c.name != archive_collection_name()]
             if targets:
@@ -134,9 +219,12 @@ def take_over(pairs, materials=True, collections=True, old="ARCHIVE", scene=None
                 for coll in targets:
                     coll.objects.link(new)
         done += 1
-    olds = [previous for _new, previous in pairs]
     if old == 'ARCHIVE':
-        archive(olds, scene)
+        by_version = {}
+        for obj in olds:
+            by_version.setdefault(str(obj.get(CAD_VERSION, "")), []).append(obj)
+        for version, objects in sorted(by_version.items()):
+            archive(objects, scene, version)
     elif old == 'DELETE':
         for obj in olds:
             bpy.data.objects.remove(obj)
@@ -144,20 +232,29 @@ def take_over(pairs, materials=True, collections=True, old="ARCHIVE", scene=None
 
 
 def import_model(path):
-    """Import a CAD export by its extension. Returns the new objects (selected)."""
+    """Import a CAD export by its extension (STEP through OCP, see cadfiles.step_to_glb; Onshape's
+    glTF text saved as .glb works too). Returns the new objects."""
     ext = os.path.splitext(path)[1].lower()
-    if ext in (".step", ".stp", ".iges", ".igs"):
-        raise ValueError("Blender cannot import STEP/IGES: export GLB from the CAD program, or convert "
-                         "with build123d (see the CAD workflow note)")
+    if ext in (".iges", ".igs"):
+        raise ValueError("Blender cannot import IGES: export STEP or GLB from the CAD program")
+    if ext in cadfiles.STEP_EXTS:
+        try:
+            path = cadfiles.step_to_glb(path)
+        except RuntimeError as ex:
+            raise ValueError(str(ex))
+        ext = ".glb"
     if ext not in IMPORTERS:
         raise ValueError("Unknown format %s" % ext)
+    path = cadfiles.importable_copy(path)
+    ext = os.path.splitext(path)[1].lower()
     before = set(bpy.data.objects)
     IMPORTERS[ext](path)
     return [o for o in bpy.data.objects if o not in before]
 
 
-def check(objects):
-    """Short report: size, floor, triangles, generic names."""
+def check(objects, floor=True):
+    """Short report: size, floor (floor=False: the model is not meant to stand on Z = 0),
+    triangles, generic names."""
     meshes = [o for o in objects if o.type == 'MESH']
     if not meshes:
         return ["No meshes imported"]
@@ -173,7 +270,7 @@ def check(objects):
         lines.append("Very large: was it exported in mm? (scale 0.001)")
     elif max(size) < 0.005:
         lines.append("Very small: check the unit")
-    if abs(low.z) > 0.001:
+    if floor and abs(low.z) > 0.001:
         lines.append("Lowest point at Z = %.3f m (not on the floor)" % low.z)
     generic = [o.name for o in meshes if re.match(r"^(mesh|object|body|part|solid|körper)\b", o.name, re.I)]
     if generic:
@@ -221,12 +318,13 @@ def empty_temp():
 class RS_OT_cad_import(bpy.types.Operator):
     bl_idname = "render_studio.cad_import"
     bl_label = "Import CAD"
-    bl_description = ("Import a CAD export (GLB, OBJ, STL, FBX …) and check size, floor, names and triangles. "
-                      "If parts of an older version are in the scene, take their materials over")
+    bl_description = ("Import a CAD export (GLB, STEP, OBJ, STL, FBX …) and check size, floor, names and triangles. "
+                      "A sidecar <name>.cad.json next to it adds part ids, materials, mounting points and "
+                      "sizes to check. If parts of an older version are in the scene, take their materials over")
     bl_options = {'UNDO'}
 
     filepath: StringProperty(subtype='FILE_PATH', options={'SKIP_SAVE'})
-    filter_glob: StringProperty(default="*.glb;*.gltf;*.obj;*.stl;*.fbx;*.ply;*.usd;*.usdc;*.usdz;*.abc",
+    filter_glob: StringProperty(default="*.glb;*.gltf;*.obj;*.stl;*.fbx;*.ply;*.usd;*.usdc;*.usdz;*.abc;*.step;*.stp",
                                           options={'HIDDEN'})
 
     def invoke(self, context, event):
@@ -236,8 +334,9 @@ class RS_OT_cad_import(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
     def execute(self, context):
+        from . import cadimport
         try:
-            objects = import_model(self.filepath)
+            objects, sidecar = cadimport.import_tagged(self.filepath)
         except Exception as ex:
             self.report({'ERROR'}, str(ex))
             return {'CANCELLED'}
@@ -246,7 +345,11 @@ class RS_OT_cad_import(bpy.types.Operator):
         meshes = [o for o in objects if o.type == 'MESH']
         if meshes:
             context.view_layer.objects.active = meshes[0]
-        lines = check(objects)
+        lines = check(objects, floor=bool((sidecar or {}).get("floor", sidecar is None)))
+        off, missing = cadimport.size_check(objects, sidecar)
+        lines += ["%s off by %.2f mm" % (o["part"], o["max_mm"]) for o in off[:3]]
+        if missing:
+            lines.append("%d parts of the sidecar missing" % len(missing))
         self.report({'INFO'}, " · ".join(lines))
         pairs, _new, _old = match(objects, scene=context.scene)
         if pairs:
@@ -264,6 +367,9 @@ class RS_OT_cad_take_over(bpy.types.Operator):
     materials: BoolProperty(name="Materials", default=True)
     collections: BoolProperty(name="Collections", description="Into the collections of the old parts",
                                         default=True)
+    setup: BoolProperty(name="Modifiers and Settings",
+                        description="Modifiers, smooth shading, parent, render visibility and custom properties "
+                                    "of the old parts", default=True)
     old: EnumProperty(name="Old Parts", items=[
         ('ARCHIVE', "Archive", "Into the archive collection (hidden); you delete them yourself"),
         ('KEEP', "Keep", "Leave them where they are"),
@@ -293,14 +399,18 @@ class RS_OT_cad_take_over(bpy.types.Operator):
         col.separator()
         col.prop(self, "materials")
         col.prop(self, "collections")
+        col.prop(self, "setup")
         col.row().prop(self, "old", expand=True)
 
     def execute(self, context):
-        pairs, _new, _old = match(context.selected_objects, scene=context.scene)
+        from . import cadimport
+        pairs, lonely_new, _old = match(context.selected_objects, scene=context.scene)
         if not pairs:
             self.report({'WARNING'}, "No parts with the same name in the scene")
             return {'CANCELLED'}
-        take_over(pairs, self.materials, self.collections, self.old, context.scene)
+        take_over(pairs, self.materials, self.collections, self.old, context.scene, setup=self.setup)
+        if self.materials:
+            cadimport.assign_materials(lonely_new)   # new parts: base material from the sidecar
         where = {"ARCHIVE": "old parts in %s" % archive_collection_name(), "KEEP": "old parts kept",
                  "DELETE": "old parts deleted"}[self.old]
         self.report({'INFO'}, "%d parts taken over, %s" % (len(pairs), where))
