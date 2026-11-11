@@ -98,7 +98,7 @@ with `--offline-mode`). Terminal windows it opens (install, log in) close by the
 
 | Section | What you set |
 |---|---|
-| Chat | Claude CLI path, what goes with every message, attach folder, auto summarizing |
+| Chat | Claude CLI path, what goes with every message, attach folder, **default model and effort** for new chats (also in the chat's gear menu), auto summarizing |
 | Files | Project folder per file, folder names (backups, assets, archive), main file suffix, backup interval and count |
 | Renders | Output folder (empty: next to the .blend file) and its subfolders (low, high, animation, archive), High Quality samples for new files (512 instead of Blender's 4096), Low Quality size and samples, GPU only |
 | Studio | HDRI folder, base materials file, material presets folder, shortcuts |

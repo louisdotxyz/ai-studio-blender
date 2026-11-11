@@ -29,6 +29,15 @@ BACKENDS = [
 MODEL_DEFAULT_EFFORT = {'sonnet': 'medium', 'opus': 'high', 'fable': 'high', 'haiku': 'low'}
 
 
+DEFAULT_MODELS = MODELS + [('LOCAL', "Local (LM Studio)", "The local model chosen in the chat (LM Studio)")]
+
+
+def _default_model_changed(self, context):
+    effort = MODEL_DEFAULT_EFFORT.get(self.default_model)
+    if effort and self.default_effort != effort:
+        self.default_effort = effort
+
+
 def _model_changed(self, context):
     effort = MODEL_DEFAULT_EFFORT.get(self.model)
     if effort and self.effort != effort:
@@ -129,6 +138,12 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
     )
     backend: EnumProperty(name="Cloud / Local", items=BACKENDS, default='CLOUD', update=_backend_changed)
     model: EnumProperty(name="Model", items=MODELS, default='sonnet', update=_model_changed)
+    default_model: EnumProperty(
+        name="Default Model", items=DEFAULT_MODELS, default='sonnet', update=_default_model_changed,
+        description="The model every new chat starts with (also after starting Blender)")
+    default_effort: EnumProperty(
+        name="Default Effort", items=EFFORTS, default='medium',
+        description="The effort every new chat starts with (set to the model's usual one when the model changes)")
     local_model: StringProperty(
         name="Local Model",
         description="LM Studio model key, e.g. qwen/qwen3.8-27b",
@@ -277,6 +292,11 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
         sub.prop(self, "auto_screenshot", text="Viewport Screenshot")
         col.prop(self, "screenshot_max_size")
         col.prop(self, "attach_folder")
+        col.separator()
+        col.prop(self, "default_model")
+        sub = col.row()
+        sub.enabled = self.default_model != 'LOCAL'
+        sub.prop(self, "default_effort")
         col.separator()
         col.prop(self, "auto_approve")
         col.prop(self, "live_connection")

@@ -575,6 +575,13 @@ DE = {
     "AI Studio has a new name inside Blender (AI_Studio). Settings and chats were taken over and the old version 'claude_assistant' is off: remove it in Preferences › Get Extensions.": 'AI Studio hat in Blender einen neuen Namen (AI_Studio). Einstellungen und Chats wurden übernommen und die alte Version «claude_assistant» ist aus: in Einstellungen › Get Extensions entfernen.',
     'Where the renders go: a folder per file (<name> + suffix) with subfolders for Low, High, Animation and one archive folder for sorting by hand. Empty: right next to the .blend file (unsaved files: Documents/AI Studio)': 'Wohin die Renders gehen: ein Ordner pro Datei (<Name> + Endung) mit Unterordnern für Low, High, Animation und einem Archiv zum Sortieren von Hand. Leer: direkt neben der .blend-Datei (ungespeicherte Dateien: Dokumente/AI Studio)',
     "HDRI files (.hdr, .exr) in this folder and its subfolders appear in the Light tab (empty: an 'HDRI' folder in the add-on's data folder)": 'HDRI-Dateien (.hdr, .exr) in diesem Ordner und seinen Unterordnern erscheinen im Licht-Tab (leer: ein Ordner «HDRI» im Datenordner des Add-ons)',
+    # -- 1.1: default model ----------------------------------------------
+    'Default Model': 'Standardmodell',
+    'Default Effort': 'Standard-Aufwand',
+    'New Chats Start With': 'Neue Chats starten mit',
+    'The model every new chat starts with (also after starting Blender)': 'Das Modell, mit dem jeder neue Chat startet (auch nach dem Start von Blender)',
+    "The effort every new chat starts with (set to the model's usual one when the model changes)": 'Der Aufwand, mit dem jeder neue Chat startet (wechselt beim Modellwechsel auf den üblichen Wert des Modells)',
+    'The local model chosen in the chat (LM Studio)': 'Das im Chat gewählte lokale Modell (LM Studio)',
 }
 
 # Blender looks up operator names in the "Operator" context and everything else

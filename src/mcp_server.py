@@ -221,6 +221,8 @@ def cad_upload_target(name, folder=""):
         raise ValueError("name must be a plain file name")
     if not base.lower().endswith(CAD_EXTS):
         raise ValueError("Not a CAD file: %s (allowed: %s)" % (base, ", ".join(CAD_EXTS)))
+    if base.lower().endswith(".json") and not base.lower().endswith(".cad.json"):
+        raise ValueError("Only sidecars (<name>.cad.json) may be sent as JSON")
     if folder:
         target = os.path.abspath(os.path.expanduser(folder))
     elif live_state.get("file"):
@@ -231,6 +233,10 @@ def cad_upload_target(name, folder=""):
     real = os.path.realpath(target)
     if not (real == home or real.startswith(home + os.sep)):
         raise ValueError("The folder must be inside your home folder")
+    # Not into settings: hidden folders (~/.config, ~/.claude …) and ~/Library (app settings).
+    inside = os.path.relpath(real, home).split(os.sep)
+    if any(part.startswith(".") and part != "." for part in inside) or inside[0] == "Library":
+        raise ValueError("Not into hidden folders or ~/Library")
     return os.path.join(target, base)
 
 

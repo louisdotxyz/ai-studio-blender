@@ -704,7 +704,7 @@ def new_chat():
     _last_sent.clear()
     _skills_sent.clear()
     context.update(used=0, window=0)
-    _restore_model(DEFAULT_MODEL)  # every new chat starts with the standard model
+    _restore_model(default_model())  # every new chat starts with the default model (preferences)
     mark_dirty()
 
 
@@ -743,7 +743,15 @@ def set_current_title(title):
 
 
 MODEL_KEYS = ("backend", "model", "effort", "local_model", "local_effort")
-DEFAULT_MODEL = {"backend": 'CLOUD', "model": 'sonnet', "effort": 'medium'}
+
+
+def default_model():
+    """What a new chat starts with: Preferences › Chat › Default Model and Effort."""
+    prefs = get_prefs()
+    choice = getattr(prefs, "default_model", 'sonnet')
+    if choice == 'LOCAL':
+        return {"backend": 'LOCAL'}
+    return {"backend": 'CLOUD', "model": choice, "effort": getattr(prefs, "default_effort", 'medium')}
 
 
 def _restore_model(saved):
@@ -1716,6 +1724,8 @@ def register():
         lmstudio.preload(prefs.local_model, prefs.local_context)
     if not bpy.app.timers.is_registered(_tick):
         bpy.app.timers.register(_tick, first_interval=0.5, persistent=True)
+    if not bpy.app.background:
+        _restore_model(default_model())   # Blender starts with a new chat: the default model
     check_login()   # show the Log in button before the first message if Claude is logged out
 
 

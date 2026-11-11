@@ -114,19 +114,26 @@ home = os.path.expanduser("~")
 ms.live_state["file"] = os.path.join(home, "Projekt", "Velo.blend")
 check("upload: default folder CAD next to the .blend",
       ms.cad_upload_target("Leuchte V3.glb") == os.path.join(home, "Projekt", "CAD", "Leuchte V3.glb"))
-for name, folder in (("../x.glb", ""), ("a/b.glb", ""), (".hidden.glb", ""), ("x.exe", ""), ("x.glb", "/etc")):
+for name, folder in (("../x.glb", ""), ("a/b.glb", ""), (".hidden.glb", ""), ("x.exe", ""), ("x.glb", "/etc"),
+                     ("claude_desktop_config.json", "~/Library/Application Support/Claude"),
+                     ("x.cad.json", "~/Library/Application Support/Claude"), ("clients.json", ""),
+                     ("x.glb", "~/.config/ai-studio"), ("x.glb", "~/Projekt/.git")):
     try:
         ms.cad_upload_target(name, folder)
         check("upload refused: %s %s" % (name, folder), False)
     except ValueError:
         check("upload refused: %s %s" % (name, folder), True)
+check("upload: sidecar and folders in the home folder still work",
+      ms.cad_upload_target("Leuchte V3.cad.json", "~/Projekt/CAD").endswith("Projekt/CAD/Leuchte V3.cad.json"))
 check("origins", ms.cad_origin_allowed("https://cad.onshape.com") and ms.cad_origin_allowed("https://acme.onshape.com")
       and not ms.cad_origin_allowed("https://evil.com") and not ms.cad_origin_allowed("http://cad.onshape.com")
       and not ms.cad_origin_allowed("https://onshape.com.evil.com"))
 
 ms.start(0)
 ms.set_live_token("tok")
-target_dir = os.path.join(home, ".cache", "ai_studio_cad_unit")
+real_home = os.environ.get("HOME", "")
+os.environ["HOME"] = os.path.realpath(TMP)     # the upload test writes nothing into the real home
+target_dir = os.path.join(os.path.realpath(TMP), "Projekt", "CAD")
 url = "http://127.0.0.1:%d/cad?name=%s&folder=%s" % (ms.port(), "Leuchte%20V3.glb", urllib.parse.quote(target_dir))
 body = b"glTF" + os.urandom(3000)
 request = urllib.request.Request(url, data=body, method="POST",
@@ -149,6 +156,7 @@ try:
 except urllib.error.HTTPError as exc:
     check("wrong token refused", exc.code == 401)
 ms.stop()
+os.environ["HOME"] = real_home
 os.remove(saved)
 os.rmdir(target_dir)
 

@@ -1132,6 +1132,14 @@ class CLAUDE_PT_settings(bpy.types.Panel):
         col.prop(prefs, "send_selection", toggle=True, icon='RESTRICT_SELECT_OFF')
 
         box = layout.box()
+        box.label(text="New Chats Start With", icon='OUTLINER_DATA_LIGHTPROBE')
+        row = box.row(align=True)
+        row.prop(prefs, "default_model", text="")
+        sub = row.row(align=True)
+        sub.enabled = prefs.default_model != 'LOCAL'
+        sub.prop(prefs, "default_effort", text="")
+
+        box = layout.box()
         box.label(text="Chat", icon='TEXT')
         col = box.column(align=True)
         col.prop(prefs, "show_stats", toggle=True, icon='INFO')

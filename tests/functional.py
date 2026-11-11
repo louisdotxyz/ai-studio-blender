@@ -850,5 +850,26 @@ def release_1_0():
     prefs.live_connection = on
 
 
+
+@section
+def default_model():
+    """New chats start with the model and effort from the preferences."""
+    core = mod("core")
+    prefs = core.get_prefs()
+    keep = (prefs.default_model, prefs.default_effort, prefs.backend, prefs.model, prefs.effort)
+    prefs.default_model = 'opus'
+    check("default model sets its usual effort", prefs.default_effort == 'high')
+    prefs.default_effort = 'max'
+    prefs.model, prefs.effort = 'haiku', 'low'
+    core.new_chat()
+    check("new chat: default model and effort", (prefs.backend, prefs.model, prefs.effort) == ('CLOUD', 'opus', 'max'),
+          (prefs.backend, prefs.model, prefs.effort))
+    prefs.default_model = 'LOCAL'
+    core.new_chat()
+    check("default Local: new chat on LM Studio", prefs.backend == 'LOCAL')
+    prefs.default_model, prefs.default_effort = keep[0], keep[1]
+    prefs.backend, prefs.model, prefs.effort = keep[2], keep[3], keep[4]
+
+
 ok = all(results)
 print("FUNCTIONAL_OK" if ok else "FUNCTIONAL_FAIL", "%d/%d" % (sum(results), len(results)))
