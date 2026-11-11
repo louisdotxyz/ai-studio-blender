@@ -159,6 +159,25 @@ for view in ('COMPACT', 'FULL'):
             cube.data.materials.append(bpy.data.materials.new("Test"))
         wm.render_studio_tab = 'MATERIAL'
         run(bpy.types.RS_PT_material, ctx)
+# the setup card while "Set Up Everything" runs (progress bar, then a text line)
+import threading
+flow, cli = sys.modules[PKG + ".setup_flow"], sys.modules[PKG + ".claude_cli"]
+gate = threading.Event()
+prefs = bpy.context.preferences.addons[PKG].preferences
+prefs.setup_done = False
+flow.flow["thread"] = threading.Thread(target=gate.wait)
+flow.flow["thread"].start()
+installer = cli.Installer(command="true", download_dir="/nonexistent")
+installer.size = 300e6
+for step in ("install", "login", "materials", "connect"):
+    flow.flow.update(step=step, installer=installer)
+    if flow.status() is None or (step == "install" and flow.status()[1] is None):
+        errors.append("setup progress missing for " + step)
+    run(bpy.types.CLAUDE_PT_chat, ctx)
+gate.set()
+flow.flow["thread"].join()
+flow.flow.update(step="", installer=None)
+run(bpy.types.CLAUDE_PT_chat, ctx)
 print("UI_CHECKED", len(classes), "classes")
 for e in sorted(set(errors)):
     print("UI_ERROR", e)

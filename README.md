@@ -21,7 +21,8 @@ render studio for product shots, all in the sidebar of the 3D viewport.
   down what worked and gets it again in later chats.
 - Usage, context and auto summarizing of long chats.
 - A **setup card** on first start checks Claude Code, the login, base materials, the render
-  folder and the Live Connection, with one button each (install, log in, create …). The **?**
+  folder and the Live Connection. **Set Up Everything** does all open steps in one go (install with
+  progress, log in, base materials, connect the Claude apps); each step also has its own button. The **?**
   at the top shows shortcuts, clicks worth knowing and example prompts.
 - Replaced objects are never deleted unless you say so: they go into a hidden archive
   collection (`AS_archiv`). Claude's helper objects go into `temp`, removed after the answer.
@@ -72,8 +73,8 @@ render studio for product shots, all in the sidebar of the 3D viewport.
 - **macOS** (Apple Silicon or Intel). Windows and Linux are not supported.
 - Blender **5.0 to 5.3** (tested with 5.0, 5.1, 5.2 and 5.3). Older versions (4.x) are not supported:
   the compositor works differently there.
-- For Claude: [Claude Code](https://claude.com/claude-code). The setup card installs it and
-  logs you in (a terminal opens; you type your login there).
+- For Claude: [Claude Code](https://claude.com/claude-code). The setup card installs it in the
+  background (about 300 MB, with a progress bar) and then opens the login in the browser.
 - For local models (optional): [LM Studio](https://lmstudio.ai) with a model downloaded.
 
 ## Install
@@ -87,10 +88,11 @@ Repository* with `https://louisdotxyz.github.io/ai-studio-blender/index.json`.
 **Without online access:** download the zip from [Releases](../../releases) and drag it into Blender (or
 *Preferences › Get Extensions › ⌄ › Install from Disk…*). Blender then does not look for updates.
 
-Then open the sidebar in the 3D viewport (N): tabs **Claude** and **Studio**. The setup card checks online
-access, Claude Code and the login and has a button for each. Claude Code needs online access even when the
-add-on was installed from a zip; the card turns it on with one click (not possible when Blender was started
-with `--offline-mode`). Terminal windows it opens (install, log in) close by themselves when done.
+Then open the sidebar in the 3D viewport (N): tabs **Claude** and **Studio**, and click **Set Up Everything**
+in the setup card. It allows online access, installs Claude Code (official installer, in the background with
+a progress bar), opens the login, creates the base materials and connects Claude Code and the Claude app to
+the Live Connection. Claude Code needs online access even when the add-on was installed from a zip (not
+possible when Blender was started with `--offline-mode`). The login terminal closes by itself when done.
 
 ## Settings
 

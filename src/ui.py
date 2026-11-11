@@ -10,7 +10,7 @@ import bpy.utils.previews
 from bpy.props import BoolProperty, CollectionProperty, EnumProperty, IntProperty, StringProperty
 
 from . import attachments as att_mod
-from . import autosave, chatview, claude_cli, core, lmstudio, memory, skills
+from . import autosave, chatview, claude_cli, core, lmstudio, memory, setup_flow, skills
 from .i18n import tip, tr
 from .preferences import get_prefs
 
@@ -508,14 +508,30 @@ class CLAUDE_OT_allow_online(bpy.types.Operator):
 class CLAUDE_OT_install_cli(bpy.types.Operator):
     bl_idname = "claude.install_cli"
     bl_label = "Install Claude Code"
-    bl_description = "Opens a terminal with Claude Code's official installer (claude.ai/install.sh)"
+    bl_description = ("Installs Claude Code with its official installer (claude.ai/install.sh) in the background, "
+                      "then opens the login")
 
     def execute(self, context):
-        try:
-            claude_cli.open_install()
-        except OSError as exc:
-            self.report({'ERROR'}, str(exc))
-            return {'CANCELLED'}
+        return {'FINISHED'} if setup_flow.start(("online", "install", "login")) else {'CANCELLED'}
+
+
+class CLAUDE_OT_setup_all(bpy.types.Operator):
+    bl_idname = "claude.setup_all"
+    bl_label = "Set Up Everything"
+    bl_description = ("Does every open step of the setup: allows online access, installs Claude Code, opens the "
+                      "login, creates the base materials and connects Claude Code and the Claude app to this Blender")
+
+    def execute(self, context):
+        return {'FINISHED'} if setup_flow.start() else {'CANCELLED'}
+
+
+class CLAUDE_OT_setup_cancel(bpy.types.Operator):
+    bl_idname = "claude.setup_cancel"
+    bl_label = "Cancel Setup"
+    bl_description = "Stop the setup (a download that was started is thrown away)"
+
+    def execute(self, context):
+        setup_flow.cancel()
         return {'FINISHED'}
 
 
@@ -546,26 +562,7 @@ class CLAUDE_OT_make_base_materials(bpy.types.Operator):
                       "first asset library (or the add-on's folder) and uses it in the Material tab")
 
     def execute(self, context):
-        import subprocess
-        from .studio import paths, runner as studio_runner, tab_material
-        libraries = context.preferences.filepaths.asset_libraries
-        folder = bpy.path.abspath(libraries[0].path) if len(libraries) else paths.data_dir()
-        script = os.path.join(os.path.dirname(__file__), "studio", "make_base_materials.py")
-        result = subprocess.run([bpy.app.binary_path, "-b", "--factory-startup", "-noaudio", "--python", script,
-                                 "--", folder], capture_output=True, text=True, timeout=300)
-        path = os.path.join(folder, "Base Materials.blend")
-        if not os.path.isfile(path):
-            self.report({'ERROR'}, tr("Could not create the base materials: {}").format(
-                (result.stderr or result.stdout)[-300:]))
-            return {'CANCELLED'}
-        p = studio_runner.prefs()
-        if p is not None:
-            p.material_library = path
-        tab_material._base_loaded.clear()
-        context.preferences.is_dirty = True
-        core._setup_cache["state"] = None
-        self.report({'INFO'}, path)
-        return {'FINISHED'}
+        return {'FINISHED'} if setup_flow.start(("materials",)) else {'CANCELLED'}
 
 
 class CLAUDE_OT_copy_live_connection(bpy.types.Operator):
@@ -1165,6 +1162,8 @@ def _setup_visible(context, prefs):
     """The setup card: until it was closed once, while Claude Code is missing, or from the ?."""
     if prefs is None or prefs.backend == 'LOCAL' and prefs.setup_done:
         return False
+    if setup_flow.running():
+        return True
     if context.window_manager.claude_show_setup or not prefs.setup_done:
         return True
     state = core.setup_state()
@@ -1227,7 +1226,7 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         if core.versions():
             h += 1.4
         if _setup_visible(bpy.context, get_prefs()):
-            h += 11
+            h += 12.5
         elif core.login_needed:
             h += 2
         if core.live_status():
@@ -1347,7 +1346,21 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         box = layout.box()
         head = box.row()
         head.label(text=tr("Setup"), icon='TOOL_SETTINGS')
+        progress = setup_flow.status()
+        if progress:
+            text, factor = progress
+            row = box.row(align=True)
+            if factor is not None:
+                row.progress(factor=factor, type='BAR', text=text)
+            else:
+                row.label(text=text, icon='TIME', translate=False)
+            row.operator("claude.setup_cancel", text="", icon='X')
+        elif setup_flow.missing():
+            row = box.row()
+            row.scale_y = 1.4
+            row.operator("claude.setup_all", text=tr("Set Up Everything"), icon='PLAY')
         col = box.column(align=True)
+        col.enabled = not progress
 
         def line(ok, text, op=None, op_text=""):
             row = col.row(align=True)
@@ -1699,6 +1712,8 @@ classes = (
     CLAUDE_OT_start_lmstudio,
     CLAUDE_OT_make_base_materials,
     CLAUDE_OT_copy_live_connection,
+    CLAUDE_OT_setup_all,
+    CLAUDE_OT_setup_cancel,
     CLAUDE_OT_setup_done,
     CLAUDE_OT_example,
     CLAUDE_PT_help,

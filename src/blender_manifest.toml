@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "AI_Studio"
-version = "1.1.0"
+version = "1.1.1"
 name = "AI Studio"
 tagline = "Claude chat, local models and a render studio for Blender"
 maintainer = "louisdotxyz"

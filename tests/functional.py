@@ -871,5 +871,74 @@ def default_model():
     prefs.backend, prefs.model, prefs.effort = keep[2], keep[3], keep[4]
 
 
+@section
+def setup_in_one_click():
+    """Install in the background with progress, then the login, without a terminal for the install."""
+    core, cli, flow = mod("core"), mod("claude_cli"), mod("setup_flow")
+    folder = tempfile.mkdtemp(prefix="install_", dir=TMP)
+    with open(os.path.join(folder, "claude-x"), "wb") as f:
+        f.write(b"x" * 500)
+    inst = cli.Installer(command="echo hi", download_dir=folder)
+    inst.size = 1000
+    check("install progress from the growing download", inst.progress() == (0.5, 'DOWNLOAD'), inst.progress())
+    inst = cli.Installer(command="echo 'Setting up Claude Code...'; echo done", download_dir=folder).start()
+    inst._thread.join(20)
+    check("installer ok, then the setup phase", inst.ok and inst.progress()[1] == 'SETUP', inst.lines)
+    inst = cli.Installer(command="echo 'Download failed' >&2; exit 1", download_dir=folder).start()
+    inst._thread.join(20)
+    check("failed installer: not ok, message kept", not inst.ok and "Download failed" in inst.error(), inst.lines)
+    inst = cli.Installer(command="curl -fsSL http://127.0.0.1:9/x | bash", download_dir=folder)
+    inst.command = "set -o pipefail; " + inst.command
+    inst.start()._thread.join(30)
+    check("no internet: the pipe does not hide the error", not inst.ok, inst.lines)
+
+    # the whole flow with a stand-in installer and login
+    real = (cli.Installer, cli.find_claude, cli.logged_in, core.open_login)
+    found = []
+    logins = iter([False, False, True])
+    opened = []
+
+    class FakeInstaller(cli.Installer):
+        def __init__(self):
+            super().__init__(command="echo 'Setting up Claude Code...'", download_dir=folder)
+
+        def _run(self):
+            super()._run()
+            found.append("/fake/claude")
+
+    cli.Installer = FakeInstaller
+    cli.find_claude = lambda configured="": found[0] if found else None
+    cli.logged_in = lambda path: next(logins, True)
+    core.open_login = lambda: opened.append(1) or True
+    keep_poll = flow.LOGIN_POLL
+    flow.LOGIN_POLL = 0.05
+    count = len(core.messages)
+    try:
+        core._set_login_needed(True)
+        started = flow.start(("install", "login"))
+        flow.flow["thread"].join(30)
+        flow.tick()
+        said = " ".join(m["text"] for m in core.messages[count:])
+        check("one click: installs, opens the login once, waits for it", started and opened == [1]
+              and not core.login_needed and core.login_ok and "installed" in said and "Logged in" in said, said)
+        del core.messages[count:]
+        found.clear()
+
+        class Broken(real[0]):
+            def __init__(self):
+                super().__init__(command="echo 'Failed to fetch version'; exit 1", download_dir=folder)
+
+        cli.Installer = Broken
+        flow.start(("install", "login"))
+        flow.flow["thread"].join(30)
+        flow.tick()
+        said = " ".join(m["text"] for m in core.messages[count:])
+        check("install error goes into the chat", "Failed to fetch version" in said and not flow.running(), said)
+    finally:
+        cli.Installer, cli.find_claude, cli.logged_in, core.open_login = real
+        flow.LOGIN_POLL = keep_poll
+        del core.messages[count:]
+
+
 ok = all(results)
 print("FUNCTIONAL_OK" if ok else "FUNCTIONAL_FAIL", "%d/%d" % (sum(results), len(results)))

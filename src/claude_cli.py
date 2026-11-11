@@ -9,10 +9,12 @@ drains. This module does not import ``bpy``.
 import glob
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import threading
+import time
 
 # Blender started from the macOS Dock does not inherit the shell's PATH.
 _EXTRA_PATHS = [
@@ -158,10 +160,100 @@ def open_update(claude_path):
     open_terminal(shlex.quote(claude_path) + " update", "Updated. Back to Blender: this window closes by itself.")
 
 
-def open_install():
-    import sys
-    open_terminal(INSTALL_COMMAND["win32" if sys.platform == "win32" else "posix"],
-                  "Installed. Back to Blender and log in there: this window closes by itself.")
+DOWNLOADS_URL = "https://downloads.claude.ai/claude-code-releases"
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def _platform():
+    import platform
+    arch = "arm64" if platform.machine() in ("arm64", "aarch64") else "x64"
+    if arch == "x64":   # an Intel Blender under Rosetta still gets the native binary (like install.sh)
+        try:
+            if subprocess.run(["sysctl", "-n", "sysctl.proc_translated"], capture_output=True, text=True,
+                              timeout=5).stdout.strip() == "1":
+                arch = "arm64"
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return "darwin-" + arch
+
+
+class Installer:
+    """Claude Code's official installer (claude.ai/install.sh) in the background, without a
+    terminal: it needs no input. It downloads about 200 MB without printing anything, so the
+    progress comes from the size of the file in ~/.claude/downloads."""
+
+    def __init__(self, command=None, download_dir=None):
+        self.command = command or "set -o pipefail; " + INSTALL_COMMAND["posix"]
+        self.download_dir = download_dir or os.path.expanduser("~/.claude/downloads")
+        self.lines = []
+        self.size = 0          # expected bytes of the download, 0 when unknown
+        self.done = False
+        self.ok = False
+        self.cancelled = False
+        self.proc = None
+        self.started = time.monotonic()
+        self._thread = threading.Thread(target=self._run, name="claude-install", daemon=True)
+
+    def start(self):
+        self._thread.start()
+        return self
+
+    @property
+    def running(self):
+        return self._thread.is_alive()
+
+    def _expected_size(self):
+        import urllib.request
+        with urllib.request.urlopen(DOWNLOADS_URL + "/latest", timeout=10) as r:
+            version = r.read(64).decode().strip()
+        with urllib.request.urlopen("%s/%s/manifest.json" % (DOWNLOADS_URL, version), timeout=10) as r:
+            return int(json.loads(r.read())["platforms"][_platform()]["size"])
+
+    def _run(self):
+        try:
+            self.size = self._expected_size()
+        except Exception:
+            self.size = 0
+        env = dict(os.environ, PATH=search_path())
+        for name in ("CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION"):
+            env.pop(name, None)
+        try:
+            self.proc = subprocess.Popen(["/bin/bash", "-c", self.command], stdin=subprocess.DEVNULL,
+                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                         env=env, cwd=os.path.expanduser("~"))
+            for line in self.proc.stdout:
+                line = _ANSI.sub("", line).strip()
+                if line:
+                    self.lines.append(line)
+            code = self.proc.wait()
+        except OSError as exc:
+            self.lines.append(str(exc))
+            code = -1
+        self.ok = code == 0 and not self.cancelled
+        self.done = True
+
+    def cancel(self):
+        self.cancelled = True
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()
+
+    def downloaded(self):
+        try:
+            return max((os.path.getsize(os.path.join(self.download_dir, n)) for n in os.listdir(self.download_dir)),
+                       default=0)
+        except OSError:
+            return 0
+
+    def progress(self):
+        """(factor 0..1 or None, phase): 'DOWNLOAD' while the file grows, then 'SETUP'."""
+        if any(line.startswith("Setting up") for line in self.lines):
+            return None, 'SETUP'
+        if self.size:
+            return min(1.0, self.downloaded() / self.size), 'DOWNLOAD'
+        return None, 'DOWNLOAD'
+
+    def error(self):
+        return "\n".join(self.lines[-6:]) or "The installer stopped without a message"
 
 
 class ClaudeRun:
