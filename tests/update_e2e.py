@@ -84,8 +84,8 @@ fresh = importlib.import_module("bl_ext.studio.AI_Studio.updates")
 print("AFTER", fresh.installed_version())
 fresh.announce()
 core = importlib.import_module("bl_ext.studio.AI_Studio.core")
-print("ANNOUNCE", any("1.2" in m["text"] for m in core.messages))
-''')
+print("ANNOUNCE", any("%s" in m["text"] for m in core.messages))
+''' % current)
 out = blender("--online-mode", "--python", script, env=env, check=False)
 lines = {line.split(" ", 1)[0]: line for line in out.splitlines() if line.split(" ", 1)[0] in
          ("BEFORE", "AVAILABLE", "INSTALLED", "AFTER", "ANNOUNCE")}

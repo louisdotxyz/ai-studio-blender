@@ -144,6 +144,12 @@ def _on_load_post(*_args):
         runner.remove_temp_cameras()
     except Exception as ex:
         print("Render Studio: temporary cameras:", ex)
+    try:
+        renamed = tidy_names()
+        if renamed:
+            print("AI Studio: short names:", ", ".join("%s → %s" % kv for kv in renamed.items()))
+    except Exception as ex:
+        print("AI Studio: names:", ex)
     for scene in bpy.data.scenes:
         try:
             hide_by_default(scene)
@@ -157,6 +163,28 @@ def _on_load_post(*_args):
         apply_min_clipping()
     except Exception as ex:
         print("Render Studio: clipping:", ex)
+
+
+def tidy_names():
+    """Cameras and lights with names of older versions or Blender's ".001" get short ones:
+    "AS_camera View.001" → "View_02", "AS_1" → "Camera_01". Returns {old: new}."""
+    from ..naming import tidy
+    prefixes = (camera_collection_name(), light_collection_name(), "AS", "RS") + OLD_CAMERAS + OLD_LIGHTS
+    done = {}
+    for kind, fallback in (('CAMERA', "Camera"), ('LIGHT', "Light")):
+        objects = [o for o in bpy.data.objects if o.type == kind and o.library is None
+                   and "render_studio_temp_camera" not in o]
+        names = tidy([o.name for o in objects], prefixes, fallback)
+        for obj in objects:
+            new = names.get(obj.name)
+            if not new:
+                continue
+            old = obj.name
+            obj.name = new
+            if obj.data is not None and obj.data.users == 1 and obj.data.library is None:
+                obj.data.name = new
+            done[old] = obj.name
+    return done
 
 
 def _hide_later():

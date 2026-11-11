@@ -61,8 +61,11 @@ class RS_OT_duplicate_camera(Operator):
     def execute(self, context):
         scene = context.scene
         src = active_camera(scene)   # the user's camera, also while the queue renders a copy
+        from ..naming import numbered
+        name = numbered(src.name, bpy.data.objects.keys())   # "View_02", never ".001" (before the copy exists)
         new = src.copy()
         new.data = src.data.copy()
+        new.name = new.data.name = name
         for key in (runner.TEMP_KEY, cameras.HISTORY_KEY):
             if key in new:
                 del new[key]

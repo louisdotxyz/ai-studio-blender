@@ -76,6 +76,7 @@ class RS_OT_onshape_sync(Operator):
         except (ValueError, onshape.OnshapeError) as exc:
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
+        _refresh()
         self.report({'INFO'}, text)
         return {'FINISHED'}
 
@@ -102,4 +103,148 @@ def draw_prefs(layout, studio):
     sub.operator(RS_OT_onshape_sync.bl_idname, icon='FILE_REFRESH')
 
 
-classes = (RS_OT_onshape_keys, RS_OT_onshape_forget, RS_OT_onshape_sync)
+# ---------------------------------------------------------------- CAD comments (Material tab › CAD)
+
+_points = {"time": -10.0, "folder": None, "open": [], "sent": {}}   # read from disk at most every 2 s
+
+
+def comment_state(context, force=False):
+    """{"folder", "open", "sent"} of the last CAD import's CAD-Feedback.md (folder None: no import)."""
+    import time
+    if force or time.monotonic() - _points["time"] > 2.0:
+        from . import cadfiles, cadimport
+        try:
+            folder = cadimport.feedback_folder()
+        except (ValueError, AttributeError):
+            folder = None
+        _points.update(time=time.monotonic(), folder=folder,
+                       open=cadfiles.open_feedback(folder) if folder else [],
+                       sent=cadfiles.feedback_comments(folder) if folder else {})
+    return _points
+
+
+def _refresh():
+    _points["time"] = -10.0
+
+
+class RS_OT_cad_comment(Operator):
+    bl_idname = "render_studio.cad_comment"
+    bl_label = "Add CAD Comment"
+    bl_description = ("Note a change for the CAD side: into CAD-Feedback.md next to the export and, when the "
+                      "part came from Onshape, as a comment there")
+
+    part: StringProperty(name="Part", options={'SKIP_SAVE'})
+    text: StringProperty(name="Comment", options={'SKIP_SAVE'})
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        if obj is not None and obj.select_get():
+            from . import cadswap
+            self.part = obj.get(cadswap.CAD_ID) or obj.name
+        return context.window_manager.invoke_props_dialog(self, width=460)
+
+    def draw(self, context):
+        col = self.layout.column()
+        col.prop(self, "part")
+        col.prop(self, "text")
+        from . import cadimport
+        source = cadimport.onshape_source(context.active_object) if comment_state(context)["folder"] else ""
+        if source and onshape.parse_source(source):
+            sub = col.row()
+            sub.active = False
+            sub.label(text="Also goes to Onshape as a comment" if cached_keys() else
+                      "Onshape: add API keys in Preferences › Studio to send it there", icon='INFO')
+
+    def execute(self, context):
+        from . import cadimport
+        text = " ".join(self.text.split())
+        if not text:
+            self.report({'WARNING'}, "Write the comment first")
+            return {'CANCELLED'}
+        part = self.part.strip()
+        obj = bpy.data.objects.get(part)
+        try:
+            folder = cadimport.feedback_folder(obj)
+        except ValueError as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        _path, note = cadimport.feedback(obj if obj is not None else part, text, folder=folder)
+        _refresh()
+        self.report({'WARNING'} if note.startswith("not in") else {'INFO'},
+                    "CAD comment noted" + (": " + note if note else ""))
+        return {'FINISHED'}
+
+
+class RS_OT_cad_comment_done(Operator):
+    bl_idname = "render_studio.cad_comment_done"
+    bl_label = "Done"
+    bl_description = "Tick this point off (and resolve its comment in Onshape)"
+    bl_options = {'INTERNAL'}
+
+    point: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    def execute(self, context):
+        from . import cadfiles
+        state = comment_state(context, force=True)
+        folder = state["folder"]
+        if not folder or not cadfiles.tick_feedback(folder, self.point, note="done in Blender"):
+            return {'CANCELLED'}
+        known = state["sent"].get(self.point)
+        if known:
+            try:
+                onshape.resolve_comment(known["base"], known["cid"])
+            except onshape.OnshapeError as exc:
+                self.report({'WARNING'}, "Ticked off; Onshape: %s" % exc)
+        _refresh()
+        return {'FINISHED'}
+
+
+class RS_OT_cad_comments_open(Operator):
+    bl_idname = "render_studio.cad_comments_open"
+    bl_label = "Open CAD-Feedback.md"
+    bl_description = "Open the list of CAD comments next to the export"
+    bl_options = {'INTERNAL'}
+
+    def execute(self, context):
+        import os
+        from . import cadfiles
+        folder = comment_state(context, force=True)["folder"]
+        path = os.path.join(folder or "", cadfiles.FEEDBACK_FILE)
+        if not folder or not os.path.isfile(path):
+            return {'CANCELLED'}
+        bpy.ops.wm.path_open(filepath=path)
+        return {'FINISHED'}
+
+
+SHOWN = 5
+
+
+def draw_comments(layout, context):
+    """The CAD comments under Import CAD (only once a CAD export is known)."""
+    state = comment_state(context)
+    if not state["folder"]:
+        return
+    box = layout.box()
+    row = box.row(align=True)
+    points = state["open"]
+    row.label(text="CAD Comments · %d open" % len(points) if points else "CAD Comments", icon='WORDWRAP_ON')
+    row.operator(RS_OT_cad_comments_open.bl_idname, text="", icon='TEXT')
+    from . import cadimport
+    if cached_keys() and onshape.parse_source(cadimport.onshape_source(None, state["folder"])):
+        row.operator(RS_OT_onshape_sync.bl_idname, text="", icon='FILE_REFRESH')
+    col = box.column(align=True)
+    for point in points[-SHOWN:]:
+        _day, _sep, rest = point.partition(" · ")
+        line = col.row(align=True)
+        line.label(text=rest or point, translate=False,
+                   icon='URL' if point in state["sent"] else 'DOT')
+        line.operator(RS_OT_cad_comment_done.bl_idname, text="", icon='CHECKMARK').point = point
+    if len(points) > SHOWN:
+        sub = col.row()
+        sub.active = False
+        sub.label(text="… and %d earlier ones" % (len(points) - SHOWN))
+    box.operator(RS_OT_cad_comment.bl_idname, icon='ADD')
+
+
+classes = (RS_OT_onshape_keys, RS_OT_onshape_forget, RS_OT_onshape_sync,
+           RS_OT_cad_comment, RS_OT_cad_comment_done, RS_OT_cad_comments_open)

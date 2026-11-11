@@ -459,6 +459,29 @@ def short_names():
     folder = tempfile.mkdtemp(dir=TMP)
     check("render files with _01", studio_core.next_path(folder, "Stuhl_Front").endswith("Stuhl_Front_01.png"))
 
+    # Names of older versions and Blender's ".001" are made short (on load and after Claude's answers).
+    check("tidy: prefix and .001 go", naming.tidy(["Ortho Front", "AS_camera View", "AS_camera View.001", "AS_1",
+                                                  "AS_camera View Alt"], ["AS_camera", "AS"], "Camera")
+          == {"AS_camera View": "View_01", "AS_camera View.001": "View_02", "AS_1": "Camera_01",
+              "AS_camera View Alt": "View Alt_01"})
+    made = []
+    for name in ("AS_camera View", "AS_camera View.001", "Ortho Front"):
+        data = bpy.data.cameras.new(name)
+        made.append(bpy.data.objects.new(name, data))
+        scene.collection.objects.link(made[-1])
+    renamed = cams.tidy_names()
+    check("tidy in the file: cameras and their data", made[0].name == "View_01" and made[1].name == "View_02"
+          and made[1].data.name == "View_02" and made[2].name == "Ortho Front", renamed)
+    scene.camera = made[2]
+    bpy.ops.render_studio.duplicate_camera()
+    copy = scene.camera
+    check("duplicate camera: _01, not .001", copy.name == "Ortho Front_01" and copy.data.name == "Ortho Front_01",
+          copy.name)
+    light = mod("studio").lights.duplicate_light(scene, bpy.data.objects.new("Key", bpy.data.lights.new("Key", 'AREA')))
+    check("duplicate light: _01, not .001", light.name == "Key_01", light.name)
+    for obj in made + [copy, light]:
+        bpy.data.objects.remove(obj)
+
 
 @section
 def worker_reloads_the_file():

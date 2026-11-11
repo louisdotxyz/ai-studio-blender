@@ -114,8 +114,11 @@ def add_light(scene, target):
 
 
 def duplicate_light(scene, src):
+    from ..naming import numbered
+    name = numbered(src.name, bpy.data.objects.keys())   # "Key_02", never ".001" (before the copy exists)
     new = src.copy()
     new.data = src.data.copy()
+    new.name = new.data.name = name
     collections = [c for c in src.users_collection
                    if c in scene.collection.children_recursive or c == scene.collection]
     for coll in collections or [light_collection(scene)]:

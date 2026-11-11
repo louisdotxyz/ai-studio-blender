@@ -421,3 +421,5 @@ def draw(layout):
     row = layout.row(align=True)
     row.operator(RS_OT_cad_import.bl_idname, text="Import CAD", icon='IMPORT')
     row.operator(RS_OT_cad_take_over.bl_idname, text="New Version", icon='FILE_REFRESH')
+    from . import onshape_ops
+    onshape_ops.draw_comments(layout, bpy.context)

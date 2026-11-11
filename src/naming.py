@@ -28,3 +28,33 @@ def numbered(name, taken):
 def number_suffix(n):
     """1 → "01", 100 → "100"."""
     return "%02d" % n
+
+
+def tidy(names, prefixes=(), fallback="Untitled"):
+    """{old: new} for names an older version or Blender made badly: a collection prefix
+    ("AS_camera View" → "View_01"), Blender's ".001" ("View.001" → "View_02") or nothing but
+    a number after the prefix ("AS_1" → "<fallback>_01"). Other names stay as they are."""
+    prefixes = sorted({p for p in prefixes if p}, key=len, reverse=True)
+    names = list(names)
+    broken = []
+    for name in names:
+        rest, cut = name, False
+        for prefix in prefixes:
+            if name.startswith(prefix) and name[len(prefix):len(prefix) + 1] in (" ", "_", "|"):
+                rest, cut = name[len(prefix) + 1:].strip(" _|"), True
+                break
+        dotted = re.search(r"\.\d{3}$", rest) is not None
+        if not cut and not dotted:
+            continue
+        base = base_of(rest)
+        if not rest or base.isdigit() or base == "Untitled":
+            base = fallback
+        number = re.search(r"(?:_(\d{2,})|\.(\d{3}))$", rest)
+        broken.append((base.lower(), int(number.group(1) or number.group(2)) if number else 0, name, base))
+    taken = [n for n in names if n not in {b[2] for b in broken}]
+    result = {}
+    for _key, _n, name, base in sorted(broken):
+        new = numbered(base, taken)
+        taken.append(new)
+        result[name] = new
+    return result

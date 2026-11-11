@@ -4,6 +4,7 @@ layout that validates property names, enum values and operator idnames.
     Blender -b --python tests/ui_check.py
 (the extension must be installed and enabled in the profile Blender uses)
 """
+import importlib
 import sys
 import traceback
 
@@ -13,11 +14,25 @@ PKG = next(n for n in bpy.context.preferences.addons.keys() if n.endswith(".AI_S
 errors = []
 
 
+ICONS = {i.identifier for i in bpy.types.UILayout.bl_rna.functions["label"].parameters["icon"].enum_items}
+
+
 class Fake:
-    """Accepts any layout call; checks the ones that reference data or operators."""
+    """Accepts any layout call; checks the ones that reference data, operators or icons."""
 
     def __init__(self, where):
         self._where = where
+
+    def __getattribute__(self, name):
+        attr = object.__getattribute__(self, name)
+        if name.startswith("_") and name not in ("_any", "_prop", "_operator", "_menu"):
+            return attr
+        def checked(*args, **kwargs):
+            icon = kwargs.get("icon")
+            if isinstance(icon, str) and icon not in ICONS:
+                errors.append(f"{object.__getattribute__(self, '_where')}: unknown icon {icon!r}")
+            return attr(*args, **kwargs)
+        return checked if callable(attr) else attr
 
     def __getattr__(self, name):
         if name in ("prop", "prop_enum", "prop_menu_enum", "props_enum"):
@@ -193,6 +208,17 @@ class PrefsProxy:
             return attr.__get__(self)
         return getattr(addon_prefs, name)
 
+
+# the CAD Comments box of the Material tab (with open points, one of them sent to Onshape)
+onshape_ops = importlib.import_module(PKG + ".studio.onshape_ops")
+onshape_ops._points.update(time=1e12, folder="/nowhere", open=["2026-11-11 · Deckel · Wand 2.4 mm (Blender)"] * 7,
+                           sent={"2026-11-11 · Deckel · Wand 2.4 mm (Blender)": {"cid": "c1", "base": "x"}})
+onshape_ops._found.update(time=1e12, keys=("AKEY", "SECRET"))
+try:
+    onshape_ops.draw_comments(Fake("CAD Comments"), ctx)
+except Exception:
+    errors.append("CAD Comments: " + traceback.format_exc(limit=3).strip().splitlines()[-1])
+onshape_ops._points["time"] = onshape_ops._found["time"] = -10.0
 
 keep_tab = addon_prefs.prefs_tab
 for tab in [i.identifier for i in addon_prefs.bl_rna.properties["prefs_tab"].enum_items]:

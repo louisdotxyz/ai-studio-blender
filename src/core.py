@@ -1398,6 +1398,7 @@ def _handle_done(rc, stderr):
         _set_flag("update_needed", False)
     if rc == 0:
         _chat_works()
+    _tidy_names()
     if rc == -1 and (stderr or "").startswith("LM Studio"):
         _set_flag("local_down", True)
     elif rc == 0:
@@ -1474,6 +1475,16 @@ def setup_state():
     state["live_desktop"] = live_clients.desktop_connected() if live_clients.desktop_installed() else None
     _setup_cache.update(time=now, state=state)
     return state
+
+
+def _tidy_names():
+    """After Claude worked in the scene: cameras and lights it named "….001" or with a
+    collection prefix get short names ("View_02")."""
+    try:
+        from .studio import cameras
+        cameras.tidy_names()
+    except Exception as exc:   # never in the way of the answer
+        print("AI Studio: names:", exc)
 
 
 def _chat_works():

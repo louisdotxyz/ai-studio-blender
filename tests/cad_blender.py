@@ -192,6 +192,7 @@ def feedback_to_onshape():
     import threading
     onshape = mod("studio.onshape")
     comments = {}
+    posts = []
 
     class Fake(http.server.BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -206,6 +207,10 @@ def feedback_to_onshape():
 
         def do_POST(self):
             data = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+            posts.append(self.path)
+            if self.path.endswith("/resolve"):
+                comments[self.path.split("/")[-2]]["resolvedAt"] = "2026-11-12T08:00:00Z"
+                return self._json({})
             cid = "c%d" % (len(comments) + 1)
             comments[cid] = dict(data, id=cid)
             self._json({"id": cid})
@@ -238,6 +243,41 @@ def feedback_to_onshape():
         onshape.keys = lambda: None
         path, note = cadimport.feedback(part, "noch etwas", send=True)
         check("no keys: only the file, says why", "no API keys" in note, note)
+
+        # The CAD Comments box (Material tab › CAD): add, list, tick off.
+        onshape.keys = lambda: ("AKEY", "SECRET")
+        ops = mod("studio.onshape_ops")
+        ops._found.update(time=1e12, keys=("AKEY", "SECRET"))
+        for cls in ops.classes:   # the add-on is loaded, not enabled
+            bpy.utils.register_class(cls)
+        before = cadimport._last["file"]
+        cadimport._last["file"] = part["cad_file"]
+        try:
+            result = bpy.ops.render_studio.cad_comment(part="Deckel_01", text="  Fase   0.5 mm  ")
+            state = ops.comment_state(bpy.context, force=True)
+            mine = [p for p in state["open"] if "Fase 0.5 mm" in p]
+            check("CAD comment from the box: file and Onshape", result == {'FINISHED'} and mine
+                  and mine[0] in state["sent"], (result, state["open"]))
+
+            class Layout:   # takes every drawing call
+                def __getattr__(self, name):
+                    return lambda *a, **k: self
+                def __setattr__(self, name, value):
+                    pass
+            ops.draw_comments(Layout(), bpy.context)
+            check("box lists the open points", len(state["open"]) == 2, state["open"])
+            result = bpy.ops.render_studio.cad_comment_done(point=mine[0])
+            state = ops.comment_state(bpy.context, force=True)
+            check("done: ticked off and resolved in Onshape", result == {'FINISHED'}
+                  and not any("Fase" in p for p in state["open"]) and posts[-1].endswith("/resolve"),
+                  (state["open"], posts[-1:]))
+            check("done in Blender noted in the file", "Fase 0.5 mm (Blender) · done in Blender" in
+                  open(os.path.join(folder, cadfiles.FEEDBACK_FILE), encoding="utf-8").read())
+        finally:
+            cadimport._last["file"] = before
+            ops._found["time"] = -10.0
+            for cls in ops.classes:
+                bpy.utils.unregister_class(cls)
     finally:
         onshape.keys = real_keys
         server.shutdown()

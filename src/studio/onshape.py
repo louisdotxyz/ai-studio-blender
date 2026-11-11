@@ -156,3 +156,8 @@ def comment_resolved(base, cid, credentials=None):
         raise
     resolved, reopened = comment.get("resolvedAt") or "", comment.get("reopenedAt") or ""
     return bool(resolved) and reopened < resolved   # ISO times: a later reopen counts
+
+
+def resolve_comment(base, cid, credentials=None):
+    """Mark the comment resolved in Onshape (the point was done in Blender)."""
+    return request(base, "POST", "/comments/%s/resolve" % urllib.parse.quote(cid), {}, credentials=credentials)

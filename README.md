@@ -27,7 +27,9 @@ render studio for product shots, all in the sidebar of the 3D viewport.
   the model for new chats): nothing is decided for you until you choose. The **?** at the top shows
   shortcuts, clicks worth knowing, example prompts and the setup again.
 - **Short names**: new cameras, lights and render files get a two-digit number ("Ortho Top_01",
-  "Stuhl_Front_01.png"; three digits only past 99), no collection prefix and no ".001". Chats are
+  "Stuhl_Front_01.png"; three digits only past 99), no collection prefix and no ".001", also when
+  duplicated. Cameras and lights named by older versions or with Blender's ".001" ("AS_camera
+  View.001") get short names when a file is opened and after each Claude answer ("View_02"). Chats are
   named after the first words of their first message.
 - **Updates** (installed from the install page): once a day the add-on looks for a new version and
   installs it by itself when Blender is idle; the chat says so. Or only a notice with an Install
@@ -64,6 +66,9 @@ render studio for product shots, all in the sidebar of the 3D viewport.
   CAD Feedback* and at every import of a new version). Needs Onshape API keys once
   (dev-portal.onshape.com/keys, read and write): *Preferences › Studio › Onshape › Add Keys…*; they are
   kept in the macOS keychain, not in the preferences.
+  **CAD Comments** (Material tab, under *Import CAD*, once a CAD export is known): the open points,
+  *Add CAD Comment* (part = the selected object), ✓ ticks a point off (and resolves its comment in
+  Onshape), sync and open `CAD-Feedback.md`.
   Onshape sends the package straight into Blender with `tools/onshape/onshape-helpers.js`
   (`POST /cad` on the Live Connection, see below).
 - **For Claude:** sections through a scan and the CAD part with measurements
