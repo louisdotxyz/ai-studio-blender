@@ -32,6 +32,14 @@ MODEL_DEFAULT_EFFORT = {'sonnet': 'medium', 'opus': 'high', 'fable': 'high', 'ha
 DEFAULT_MODELS = MODELS + [('LOCAL', "Local (LM Studio)", "The local model chosen in the chat (LM Studio)")]
 
 
+I18N_CONTEXT = "AI_Studio"   # Blender's own catalog has nothing here ("Renders" would become "Ausführungen")
+
+
+def _german_changed(self):
+    from . import i18n
+    i18n.apply(self.german_interface)
+
+
 def _default_model_changed(self, context):
     effort = MODEL_DEFAULT_EFFORT.get(self.default_model)
     if effort and self.default_effort != effort:
@@ -124,7 +132,7 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
                ('STUDIO', "Studio", "HDRIs, base materials, shortcuts", 'SCENE', 3),
                ('LOCAL', "Local", "Local models with LM Studio", 'DESKTOP', 4),
                ('LEARN', "Learning", "Lessons and memory", 'LIGHT', 5)],
-        default='CHAT', options={'SKIP_SAVE'})
+        default='CHAT', options={'SKIP_SAVE'}, translation_context=I18N_CONTEXT)
     autosave_before_risky: BoolProperty(
         name="Before Code and Renders",
         description="Also save right before the model runs code and before renders "
@@ -138,6 +146,12 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
     )
     backend: EnumProperty(name="Cloud / Local", items=BACKENDS, default='CLOUD', update=_backend_changed)
     model: EnumProperty(name="Model", items=MODELS, default='sonnet', update=_model_changed)
+    german_interface: BoolProperty(
+        name="German Interface",
+        description="Show the add-on in German when Blender's interface is German (off: always English)",
+        default=False,
+        update=lambda self, _context: _german_changed(self),
+    )
     updates: EnumProperty(
         name="Updates",
         description="New versions of AI Studio (when it was installed from its install page, not from a zip)",
@@ -181,7 +195,7 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
                                    "but often 1-2 minutes slower", 'LIGHT', 1),
                ('high', "Think More", "Like Think, asks for more effort (LM Studio hardly makes a difference)",
                 'LIGHT_SUN', 2)],
-        default='off',
+        default='off', translation_context=I18N_CONTEXT,
     )
     learn_from_errors: BoolProperty(
         name="Learn From Errors",
@@ -306,6 +320,7 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
         col.prop(self, "attach_folder")
         col.separator()
         col.prop(self, "updates")
+        col.prop(self, "german_interface")
         col.prop(self, "default_model")
         sub = col.row()
         sub.enabled = self.default_model != 'LOCAL'

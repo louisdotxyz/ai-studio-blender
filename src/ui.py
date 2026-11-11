@@ -1477,7 +1477,6 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         from .studio import runner as studio_runner
         studio = studio_runner.prefs(context)
         box.separator(factor=0.5)
-        box.label(text=tr("How would you like it?"), icon='QUESTION')
         col = box.column(align=True)
 
         def choice(label, options):
@@ -1485,8 +1484,8 @@ class CLAUDE_PT_chat(bpy.types.Panel):
             split = row.split(factor=0.34, align=True)
             split.label(text=label, translate=False)
             buttons = split.row(align=True)
-            for text, key, value, active in options:
-                op = buttons.operator("claude.setup_choice", text=text, depress=active)
+            for text, key, value, active in options:   # tr() already translated (or not)
+                op = buttons.operator("claude.setup_choice", text=text, depress=active, translate=False)
                 op.key, op.value = key, value
 
         if studio is not None:
@@ -1503,7 +1502,7 @@ class CLAUDE_PT_chat(bpy.types.Panel):
                                (tr("Ask"), "updates", "ASK", prefs.updates == 'ASK')])
         row = col.row(align=True)
         split = row.split(factor=0.34, align=True)
-        split.label(text=tr("Model"))
+        split.label(text=tr("Model"), translate=False)
         split.prop(prefs, "default_model", text="")
 
     def _draw_actions(self, layout):

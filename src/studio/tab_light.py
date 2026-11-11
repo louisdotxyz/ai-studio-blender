@@ -405,7 +405,8 @@ class RS_PT_light_settings(Panel):
         current = _bounce_preset(cy)
         row = box.row(align=True)
         for name in BOUNCE_PRESETS:
-            row.operator(RS_OT_bounces_preset.bl_idname, text=name, depress=name == current).name = name
+            row.operator(RS_OT_bounces_preset.bl_idname, text=name, depress=name == current,
+                         translate=False).name = name   # Blender's own catalog: "Fast" → "Einfügen"
         col = box.column(align=True)
         col.prop(cy, "max_bounces", text="Total")
         row = col.row(align=True)

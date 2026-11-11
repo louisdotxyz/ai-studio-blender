@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Translations.
 
-The add-on is written in English. Blender shows the German strings below when
-its interface language is German (Preferences › Interface › Translation).
+The add-on is written in English and shows English by default. With Preferences › Chat ›
+German Interface on, Blender shows the German strings below when its interface language is
+German (Preferences › Interface › Translation).
 Labels, operator names, properties and tooltips are translated by Blender
 automatically; strings built at runtime go through ``tr()`` / ``tip()``.
 
@@ -162,6 +163,8 @@ DE = {
     "Logged out of Claude": "Bei Claude abgemeldet",
     "Removed {} helper objects (temp)": "{} Hilfsobjekte entfernt (temp)",
     'Setup': 'Einrichtung',
+    'German Interface': 'Deutsche Oberfläche',
+    "Show the add-on in German when Blender's interface is German (off: always English)": 'Das Add-on auf Deutsch zeigen, wenn Blenders Oberfläche Deutsch ist (aus: immer Englisch)',
     'Updates': 'Updates',
     'Automatic': 'Automatisch',
     'Ask': 'Fragen',
@@ -174,7 +177,6 @@ DE = {
     'Install Update': 'Update installieren',
     'Install the new version of AI Studio now (Blender loads it again right away)': 'Die neue Version von AI Studio jetzt installieren (Blender lädt sie gleich neu)',
     'Wait until the answer or the render is done': 'Warte, bis die Antwort oder der Render fertig ist',
-    'How would you like it?': 'Wie hättest du es gern?',
     'Renders': 'Renders',
     'Next to the file': 'Neben der Datei',
     'One folder': 'Ein Ordner',
@@ -635,7 +637,7 @@ DE = {
 
 # Blender looks up operator names in the "Operator" context and everything else
 # in the default context "*": register every string for both.
-_CONTEXTS = ("*", "Operator")
+_CONTEXTS = ("*", "Operator", "AI_Studio")   # AI_Studio: see preferences.I18N_CONTEXT
 
 
 def _build():
@@ -646,19 +648,33 @@ def _build():
     return {"de_DE": de}
 
 
+_active = [False]   # the German strings are registered (Preferences › Chat › German Interface)
+
+
 def tr(msgid):
-    """Translate a UI string built at runtime (labels, messages)."""
-    return bpy.app.translations.pgettext_iface(msgid)
+    """Translate a UI string built at runtime (labels, messages). English unless the German
+    interface is on (Blender's own catalog would otherwise translate common words)."""
+    return bpy.app.translations.pgettext_iface(msgid) if _active[0] else msgid
 
 
 def tip(msgid):
     """Translate a tooltip built at runtime."""
-    return bpy.app.translations.pgettext_tip(msgid)
+    return bpy.app.translations.pgettext_tip(msgid) if _active[0] else msgid
+
+
+def apply(german):
+    """The add-on in English (default) or, with German on, in German when Blender is."""
+    if german and not _active[0]:
+        bpy.app.translations.register(__package__, _build())
+        _active[0] = True
+    elif not german and _active[0]:
+        bpy.app.translations.unregister(__package__)
+        _active[0] = False
 
 
 def register():
-    bpy.app.translations.register(__package__, _build())
+    pass   # see apply(): called once the preferences are there
 
 
 def unregister():
-    bpy.app.translations.unregister(__package__)
+    apply(False)

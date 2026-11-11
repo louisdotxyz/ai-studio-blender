@@ -2,8 +2,8 @@
 """Updates of AI Studio itself (Preferences › Chat › Updates).
 
 Installed from the add-on's repository (the install page on GitHub), Blender knows where new
-versions come from. A few seconds after Blender starts (at most every 6 hours) the add-on
-reads the repository's index.json in a thread. A newer version is then
+versions come from. A few seconds after Blender starts the add-on
+reads the repository's index.json in a thread, at most once a day. A newer version is then
 - AUTO: installed right away, once Blender is idle (no chat answer, no render running): the
   extension's own "Update" (extensions.package_install), after which Blender loads it again;
   the chat says so;
@@ -21,7 +21,7 @@ import urllib.request
 import bpy
 
 PKG_ID = "AI_Studio"
-CHECK_EVERY = 6 * 3600
+CHECK_EVERY = 24 * 3600
 START_DELAY = 8.0
 
 state = {"available": "", "thread": None, "error": "", "installing": False}

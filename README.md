@@ -29,8 +29,11 @@ render studio for product shots, all in the sidebar of the 3D viewport.
 - **Short names**: new cameras, lights and render files get a two-digit number ("Ortho Top_01",
   "Stuhl_Front_01.png"; three digits only past 99), no collection prefix and no ".001". Chats are
   named after the first words of their first message.
-- **Updates** (installed from the install page): new versions install by themselves when Blender
-  is idle, and the chat says so. Or only a notice with an Install button, or off (Preferences › Chat).
+- **Updates** (installed from the install page): once a day the add-on looks for a new version and
+  installs it by itself when Blender is idle; the chat says so. Or only a notice with an Install
+  button, or off (Preferences › Chat).
+- **English** throughout, also in a German Blender; *Preferences › Chat › German Interface* shows
+  the add-on in German.
 - Replaced objects are never deleted unless you say so: they go into a hidden archive
   collection (`AS_archiv`). Claude's helper objects go into `temp`, removed after the answer.
 
@@ -111,7 +114,7 @@ possible when Blender was started with `--offline-mode`). The login terminal clo
 
 | Section | What you set |
 |---|---|
-| Chat | Claude CLI path, what goes with every message, attach folder, **updates** (automatic, ask, off), **default model and effort** for new chats (also in the chat's gear menu), auto summarizing |
+| Chat | Claude CLI path, what goes with every message, attach folder, **updates** (automatic, ask, off), German interface, **default model and effort** for new chats (also in the chat's gear menu), auto summarizing |
 | Files | Project folder per file and backups (both off until you choose them in the setup card), folder names (backups, assets, archive), main file suffix, backup interval and count |
 | Renders | Output folder (empty: next to the .blend file) and its subfolders (low, high, animation, archive), High Quality samples for new files (512 instead of Blender's 4096), Low Quality size and samples, GPU only |
 | Studio | HDRI folder, base materials file, material presets folder, shortcuts |

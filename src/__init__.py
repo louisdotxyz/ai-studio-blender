@@ -30,6 +30,8 @@ def register():
     i18n.register()
     studio.register_prefs()   # the extension's preferences hold Studio's settings
     preferences.register()
+    prefs = preferences.get_prefs()
+    i18n.apply(bool(prefs and prefs.german_interface))
     ui.register()
     core.register()
     setup_flow.register()
