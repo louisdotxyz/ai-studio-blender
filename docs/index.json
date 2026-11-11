@@ -8,7 +8,7 @@
       "id": "AI_Studio",
       "name": "AI Studio",
       "tagline": "Claude chat, local models and a render studio for Blender",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "type": "add-on",
       "maintainer": "louisdotxyz",
       "license": [
@@ -30,9 +30,9 @@
         "macos-arm64",
         "macos-x64"
       ],
-      "archive_url": "./AI_Studio-1.0.0.zip",
-      "archive_size": 249694,
-      "archive_hash": "sha256:2fe77dbed5c208f89ce7e9c06fee3bd18bc60aa6d5218e03bf722505df28e67a"
+      "archive_url": "./AI_Studio-1.1.0.zip",
+      "archive_size": 268928,
+      "archive_hash": "sha256:87bd38ec8f27d42d324fcad55bb31dec240814d69a6b4189d961eba82bac74f4"
     }
   ]
 }
