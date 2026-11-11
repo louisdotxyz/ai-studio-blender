@@ -240,6 +240,8 @@ def apply_min_clipping(scene=None, force=False):
 
 
 def _new_camera(scene, view_layer, name):
+    from ..naming import numbered
+    name = numbered(name, bpy.data.objects.keys())   # "Ortho Top_01", never "….001"
     data = bpy.data.cameras.new(name)
     cam = bpy.data.objects.new(name, data)
     from .runner import prefs

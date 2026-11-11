@@ -72,7 +72,7 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
     autosave: BoolProperty(
         name="Auto Save",
         description="Save regularly and right before risky moments (model code, renders, low memory)",
-        default=True,
+        default=False,
     )
     autosave_mode: EnumProperty(
         name="Auto Save Mode",
@@ -96,7 +96,7 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
         name="Project Folder per File",
         description="A new file gets its own folder <name>/ with the backup, assets and archive folders "
                     "when it is saved the first time",
-        default=True,
+        default=False,
     )
     backup_dir: StringProperty(name="Backups", description="Folder for the backup copies", default="backups")
     assets_dir: StringProperty(name="Assets", description="Folder for textures, HDRIs … of the project",
@@ -138,6 +138,14 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
     )
     backend: EnumProperty(name="Cloud / Local", items=BACKENDS, default='CLOUD', update=_backend_changed)
     model: EnumProperty(name="Model", items=MODELS, default='sonnet', update=_model_changed)
+    updates: EnumProperty(
+        name="Updates",
+        description="New versions of AI Studio (when it was installed from its install page, not from a zip)",
+        items=[('AUTO', "Automatic", "Install new versions on their own when Blender is idle; the chat says so"),
+               ('ASK', "Ask", "Show new versions in the chat with an Install button"),
+               ('OFF', "Off", "Don't look for new versions")],
+        default='AUTO',
+    )
     default_model: EnumProperty(
         name="Default Model", items=DEFAULT_MODELS, default='sonnet', update=_default_model_changed,
         description="The model every new chat starts with (also after starting Blender)")
@@ -219,8 +227,12 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
         name="Port", description="Fixed port for the Live Connection (0 = a free one each start). "
         "Takes effect when Blender starts", default=0, min=0, max=65535,
     )
+    setup_asked: BoolProperty(
+        name="Setup Questions Answered", description="The questions of the setup card were answered once",
+        default=False,
+    )
     setup_done: BoolProperty(
-        name="Setup Done", description="The setup card in the chat was closed", default=False,
+        name="Setup Done", description="The chat worked once (the setup card's steps are done)", default=False,
     )
     send_scene_context: BoolProperty(
         name="Send Scene Info",
@@ -293,6 +305,7 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
         col.prop(self, "screenshot_max_size")
         col.prop(self, "attach_folder")
         col.separator()
+        col.prop(self, "updates")
         col.prop(self, "default_model")
         sub = col.row()
         sub.enabled = self.default_model != 'LOCAL'

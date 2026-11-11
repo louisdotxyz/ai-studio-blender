@@ -22,7 +22,7 @@ Architecture:
 - ``i18n``         : German translation of the UI.
 """
 
-from . import autosave, core, i18n, live, migrate, preferences, settings, setup_flow, studio, ui
+from . import autosave, core, i18n, live, migrate, preferences, settings, setup_flow, studio, ui, updates
 
 
 def register():
@@ -33,6 +33,7 @@ def register():
     ui.register()
     core.register()
     setup_flow.register()
+    updates.register()
     live.register()
     autosave.register()
     studio.register()
@@ -45,6 +46,7 @@ def unregister():
     studio.unregister()
     autosave.unregister()
     live.unregister()
+    updates.unregister()
     setup_flow.unregister()
     core.unregister()
     ui.unregister()

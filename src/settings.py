@@ -7,7 +7,10 @@ import os
 
 import bpy
 
-VERSION = 1
+VERSION = 2
+# Defaults that became neutral in 1.2 (new users are asked in the setup card): people who used
+# the add-on before keep what they had.
+OLD_DEFAULTS = {"project_folders": True, "autosave": True}
 # Names used before they were settings
 LEGACY = {"backup_dir": "autosave", "archive_dir": "archiv", "main_suffix": "_now", "backup_stamp": 'HMD'}
 LEGACY_STUDIO = {"output_suffix": "_output", "low_dir": "preview", "high_dir": "HQ",
@@ -20,7 +23,12 @@ def apply_once():
     prefs = get_prefs()
     if prefs is None or prefs.settings_version >= VERSION:
         return None
-    if os.path.exists(os.path.join(core.workdir(), "chats.json")):   # used before: keep its names
+    used_before = os.path.exists(os.path.join(core.workdir(), "chats.json"))
+    if used_before and prefs.settings_version < 2:
+        for key, value in OLD_DEFAULTS.items():
+            if not prefs.is_property_set(key):   # never changed: the old default stays
+                setattr(prefs, key, value)
+    if used_before and prefs.settings_version < 1:   # used before 0.19: keep its names
         for key, value in LEGACY.items():
             setattr(prefs, key, value)
         for key, value in LEGACY_STUDIO.items():

@@ -36,6 +36,18 @@ def section(func):
     return func
 
 
+def log_mark(runner):
+    """A line in queue.log to read from (the log shortens itself, offsets don't hold)."""
+    mark = "TEST MARK %f" % time.time()
+    runner.log(mark)
+    return mark
+
+
+def log_since(path, mark):
+    text = open(path, encoding="utf-8").read()
+    return text[text.rfind(mark):]
+
+
 def small_scene():
     scene = bpy.context.scene
     scene.render.engine = 'CYCLES'
@@ -72,9 +84,9 @@ def worker_queue_and_variants():
             "variants": {"rot": {"SUB": {"color": "#FF0000"}}, "blau": {"SUB": {"color": "#0000FF"}}}})
     before = tuple(node.inputs["Base Color"].default_value)
     log_path = os.path.join(runner.jobs_dir(), "..", "queue.log")
-    mark = os.path.getsize(log_path) if os.path.exists(log_path) else 0
+    mark = log_mark(runner)
     V.queue(["rot", "blau"], camera="Camera", quality="LOW")
-    log = open(log_path, encoding="utf-8").read()[mark:]
+    log = log_since(log_path, mark)
     check("queue rendered both", runner.RUN.message == "2 of 2 saved", runner.RUN.message)
     check("one worker for the series", log.count("worker launched") == 1 and log.count("(same worker)") == 1, log)
     check("scene unchanged by the queue", tuple(node.inputs["Base Color"].default_value) == before)
@@ -176,6 +188,8 @@ def skills_and_buttons():
 @section
 def project_folder():
     autosave = mod("autosave")
+    prefs = mod("preferences").get_prefs()
+    prefs.project_folders = prefs.autosave = True   # off for new users until they choose it
     timers = bpy.app.timers.register
     bpy.app.timers.register = lambda fn, first_interval=0, **k: fn()   # no timers in background mode
     try:
@@ -247,6 +261,15 @@ def settings_for_earlier_users():
         settings.apply_once()
         check("earlier users keep their folder names", (prefs.backup_dir, prefs.main_suffix, prefs.studio.low_dir)
               == ("autosave", "_now", "preview") and prefs.settings_version == settings.VERSION)
+        prefs.property_unset("project_folders")
+        prefs.autosave = False   # chosen by the user: stays
+        prefs.settings_version = 1
+        settings.apply_once()
+        check("earlier users keep project folders, a choice stays", prefs.project_folders and not prefs.autosave,
+              (prefs.project_folders, prefs.autosave))
+        prefs.property_unset("project_folders")
+        prefs.property_unset("autosave")
+        check("new users: neutral (no project folders, no backups)", not prefs.project_folders and not prefs.autosave)
     finally:
         prefs.settings_version, prefs.backup_dir, prefs.main_suffix, prefs.studio.low_dir = keep
         if made:
@@ -293,20 +316,130 @@ def draft_before_the_render():
     scene = small_scene()
     scene.render.resolution_x, scene.render.resolution_y, scene.cycles.samples = 1280, 960, 40
     log_path = os.path.join(runner.jobs_dir(), "..", "queue.log")
-    mark = os.path.getsize(log_path)
+    mark = log_mark(runner)
     rq = scene.render_studio
     rq.items.clear()
     rq.quality = 'HIGH'
     bpy.ops.render_studio.add()
-    seen = []
+    seen, live = [], []
     runner.on_render_saved.append(lambda path, *_a: seen.append(path))
-    runner.RUN.start(scene)
-    runner.on_render_saved.clear()
-    log = open(log_path, encoding="utf-8").read()[mark:]
-    check("draft first, then the image", "draft after" in log and seen and os.path.exists(seen[0])
+    runner.on_live_image.append(live.append)
+    try:
+        runner.RUN.start(scene)
+    finally:
+        runner.on_render_saved.clear()
+        runner.on_live_image.remove(live.append)
+    log = log_since(log_path, mark)
+    check("draft first, then the image", "draft 0 after" in log and seen and os.path.exists(seen[0])
           and not [n for n in os.listdir(runner.jobs_dir()) if n.startswith("draft_")], log[-600:])
+    check("live preview: the draft, then the image", len(live) >= 2 and "draft_" in live[0]
+          and live[-1] == seen[0], live)
+    worker_log = open(runner.worker_log_path(), encoding="utf-8").read()
+    check("worker on the GPU without set-up devices", "RS devices: METAL" in worker_log, worker_log[:300])
+    image = runner.show_in_preview(seen[0])
+    size = tuple(image.preview.image_size)
+    check("sharp preview, not Blender's 256 px", 256 < max(size) <= runner.PREVIEW_SIZE and size[0] * 3 == size[1] * 4,
+          size)
     rq.quality = 'LOW'
     small_scene()
+
+
+@section
+def worker_matches_blender():
+    """The queue's image is Blender's own render: color management (view transform, look,
+    exposure), Cycles settings and the file format come through the worker unchanged."""
+    import numpy as np
+    runner = mod("studio").runner
+    scene = small_scene()
+    scene.cycles.samples, scene.cycles.use_denoising = 64, True
+    scene.render.film_transparent = False
+    rq = scene.render_studio
+    keep = (scene.view_settings.view_transform, scene.view_settings.look, scene.view_settings.exposure,
+            rq.still_format, rq.quality)
+    rq.quality, rq.background_mode = 'HIGH', 'NORMAL'
+
+    def mean(path):
+        image = bpy.data.images.load(path)
+        pixels = np.empty(len(image.pixels), dtype=np.float32)
+        image.pixels.foreach_get(pixels)
+        bpy.data.images.remove(image)
+        return pixels.reshape(-1, 4)[:, :3].mean(axis=0)
+
+    try:
+        for view, look, exposure, fmt in (("Standard", "None", 0.0, 'PNG'), ("AgX", "AgX - Punchy", 0.7, 'PNG'),
+                                          ("AgX", "None", 0.0, 'EXR')):
+            scene.view_settings.view_transform, scene.view_settings.look = view, look
+            scene.view_settings.exposure = exposure
+            rq.still_format = fmt
+            ext = ".exr" if fmt == 'EXR' else ".png"
+            local = os.path.join(TMP, "blender_%s_%s%s" % (view, fmt, ext))
+            image_settings = scene.render.image_settings
+            image_settings.file_format = 'OPEN_EXR' if fmt == 'EXR' else 'PNG'
+            image_settings.color_mode = 'RGB'
+            scene.render.filepath = local
+            bpy.ops.render.render(write_still=True)
+            rq.items.clear()
+            bpy.ops.render_studio.add()
+            seen = []
+            runner.on_render_saved.append(lambda path, *_a: seen.append(path))
+            try:
+                runner.RUN.start(scene)
+            finally:
+                runner.on_render_saved.clear()
+            ok = seen and seen[0].endswith(ext)
+            diff = float(np.abs(mean(local) - mean(seen[0])).max()) if ok else 1.0
+            check("queue = Blender's render: %s %s %s %s" % (view, look, exposure, fmt), ok and diff < 0.01,
+                  (diff, seen))
+    finally:
+        (scene.view_settings.view_transform, scene.view_settings.look, scene.view_settings.exposure,
+         rq.still_format, rq.quality) = keep
+        small_scene()
+
+
+@section
+def smooth_progress():
+    """Cycles reports only every 30-80 s in the background: the bar moves on in between."""
+    runner = mod("studio").runner
+    run = runner.Runner()
+    now = time.monotonic()
+    run.current = {"uid": 1, "camera": "x", "path": "", "frames": 1, "started": now - 20, "sampling": now - 10}
+    run.sample_factor = 0.2
+    run.current["est"] = (now - 10, 0.2, 20.0)     # 20 % ten seconds ago, Cycles said 20 s left
+    first = run.render_progress
+    check("bar moves on between reports", 0.45 < first < 0.65, first)
+    run.current["est"] = (time.monotonic(), 0.3, 40.0)   # a slower report: never back
+    run.sample_factor = 0.3
+    check("bar never goes back", run.render_progress >= first, run.render_progress)
+    run.current["est"] = (now - 1000, 0.3, 5.0)
+    check("bar waits short of the end", run.render_progress <= 0.99)
+    run.sample_factor = 1.0
+    check("done: full", run.render_progress == 1.0)
+    run.current.update(est=(time.monotonic(), 0.5, 1.0), shown=0.0)
+    run.sample_factor = 0.5
+    left = run.current_left()
+    check("time left from Cycles' estimate", abs(left - 3.0) < 0.5, left)
+
+
+@section
+def short_names():
+    import importlib
+    naming, core = importlib.import_module(PKG + ".naming"), mod("core")
+    check("first one gets _01", naming.numbered("Ortho Top", ["Cube"]) == "Ortho Top_01")
+    check("next free after the highest", naming.numbered("Ortho Top", ["Ortho Top_01", "Ortho Top_03"])
+          == "Ortho Top_04")
+    check("Blender's .001 and our own number count", naming.numbered("Key_02", ["Key", "Key.004"]) == "Key_05")
+    check("three digits only past 99", naming.numbered("A", ["A_99"]) == "A_100")
+    cams = mod("studio").cameras
+    scene = bpy.context.scene
+    cam = cams._new_camera(scene, bpy.context.view_layer, "Ortho Top")
+    check("new camera: short name with _01", cam.name == "Ortho Top_01" and cam.data.name == "Ortho Top_01", cam.name)
+    bpy.data.objects.remove(cam)
+    check("chat title: a few words", core.short_title("Mach bitte die Kamera frontal und rendere eine Vorschau")
+          == "Mach bitte die Kamera frontal", core.short_title("Mach bitte die Kamera frontal und rendere"))
+    check("chat title: a number when taken", core.short_title("Licht weich", {"Licht weich"}) == "Licht weich_02")
+    studio_core = mod("studio").core
+    folder = tempfile.mkdtemp(dir=TMP)
+    check("render files with _01", studio_core.next_path(folder, "Stuhl_Front").endswith("Stuhl_Front_01.png"))
 
 
 @section
@@ -495,8 +628,24 @@ def onboarding():
     del core.messages[count:]
     check("Allow button turns it on", core.allow_online() and bpy.app.online_access
           and core.setup_state()["online"] == 'ON')
+    prefs.setup_asked = True
     check("setup card hides again once online", not ui._setup_visible(bpy.context, prefs) or
           not core.setup_state()["cli"])
+    prefs.setup_done, prefs.setup_asked = False, False
+    check("new user: steps and questions", ui._setup_steps_open(bpy.context, prefs)
+          and ui._setup_questions_open(bpy.context, prefs))
+    core._chat_works()
+    state = core.setup_state()
+    check("chat works: the steps go, the questions stay", prefs.setup_done
+          and (not ui._setup_steps_open(bpy.context, prefs) or not state["cli"] or state["login"] is False)
+          and ui._setup_questions_open(bpy.context, prefs))
+    bpy.ops.claude.setup_choice(key="code", value="auto")
+    bpy.ops.claude.setup_choice(key="backups", value="on")
+    check("questions set the preferences", prefs.auto_approve and prefs.autosave)
+    bpy.ops.claude.setup_choice(key="code", value="ask")
+    bpy.ops.claude.setup_choice(key="backups", value="off")
+    bpy.ops.claude.setup_done()
+    check("Done: questions answered", prefs.setup_asked and not ui._setup_questions_open(bpy.context, prefs))
     system.use_online_access = was
     prefs.backend = backend
 

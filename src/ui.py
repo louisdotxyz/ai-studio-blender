@@ -515,6 +515,19 @@ class CLAUDE_OT_install_cli(bpy.types.Operator):
         return {'FINISHED'} if setup_flow.start(("online", "install", "login")) else {'CANCELLED'}
 
 
+class CLAUDE_OT_install_update(bpy.types.Operator):
+    bl_idname = "claude.install_update"
+    bl_label = "Install Update"
+    bl_description = "Install the new version of AI Studio now (Blender loads it again right away)"
+
+    def execute(self, context):
+        from . import updates
+        if updates.busy():
+            self.report({'WARNING'}, tr("Wait until the answer or the render is done"))
+            return {'CANCELLED'}
+        return {'FINISHED'} if updates.install() else {'CANCELLED'}
+
+
 class CLAUDE_OT_setup_all(bpy.types.Operator):
     bl_idname = "claude.setup_all"
     bl_label = "Set Up Everything"
@@ -616,9 +629,42 @@ class CLAUDE_OT_setup_done(bpy.types.Operator):
     def execute(self, context):
         prefs = get_prefs()
         if prefs is not None:
-            prefs.setup_done = True
+            prefs.setup_asked = True
+            state = core.setup_state()
+            if state["cli"] and state["online"] == 'ON' and state["login"] is not False:
+                prefs.setup_done = True
             context.preferences.is_dirty = True
         context.window_manager.claude_show_setup = False
+        return {'FINISHED'}
+
+
+class CLAUDE_OT_setup_choice(bpy.types.Operator):
+    bl_idname = "claude.setup_choice"
+    bl_label = "Choose"
+    bl_description = "How you would like it (all of it can be changed later in the preferences)"
+    bl_options = {'INTERNAL'}
+
+    key: StringProperty(options={'SKIP_SAVE'})
+    value: StringProperty(options={'SKIP_SAVE'})
+
+    def execute(self, context):
+        from .studio import core as studio_core, runner as studio_runner
+        prefs = get_prefs()
+        studio = studio_runner.prefs(context)
+        if prefs is None:
+            return {'CANCELLED'}
+        if self.key == "renders" and studio is not None:
+            studio.output_root = "" if self.value == "next" else studio_core.UNSAVED_ROOT
+        elif self.key == "backups":
+            prefs.autosave = self.value == "on"
+        elif self.key == "folders":
+            prefs.project_folders = self.value == "on"
+        elif self.key == "code":
+            prefs.auto_approve = self.value == "auto"
+        elif self.key == "updates":
+            prefs.updates = self.value
+        context.preferences.is_dirty = True
+        core._setup_cache["state"] = None
         return {'FINISHED'}
 
 
@@ -1158,16 +1204,27 @@ class CLAUDE_PT_settings(bpy.types.Panel):
         layout.operator("preferences.addon_show", text="All Settings…", icon='PREFERENCES').module = __package__
 
 
-def _setup_visible(context, prefs):
-    """The setup card: until it was closed once, while Claude Code is missing, or from the ?."""
-    if prefs is None or prefs.backend == 'LOCAL' and prefs.setup_done:
+def _setup_steps_open(context, prefs, state=None):
+    """Online access, Claude Code, login: until the chat worked once, or when one goes missing."""
+    if prefs is None:
         return False
-    if setup_flow.running():
+    if context.window_manager.claude_show_setup or setup_flow.running():
         return True
-    if context.window_manager.claude_show_setup or not prefs.setup_done:
-        return True
-    state = core.setup_state()
-    return not state["cli"] or (prefs.backend != 'LOCAL' and state["online"] != 'ON')
+    if prefs.backend == 'LOCAL':
+        return False
+    state = state or core.setup_state()
+    return (not prefs.setup_done or not state["cli"] or state["online"] != 'ON'
+            or state["login"] is False)
+
+
+def _setup_questions_open(context, prefs):
+    return prefs is not None and (not prefs.setup_asked or context.window_manager.claude_show_setup)
+
+
+def _setup_visible(context, prefs):
+    """The setup card: its steps until the chat works, its questions until they were answered,
+    everything again from the ?."""
+    return _setup_steps_open(context, prefs) or _setup_questions_open(context, prefs)
 
 
 class CLAUDE_PT_chat(bpy.types.Panel):
@@ -1206,6 +1263,7 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         self._draw_login(layout)
         self._draw_actions(layout)
         self._draw_live(layout)
+        self._draw_render(layout)
         self._draw_questions(layout, context)
         self._draw_pending(layout, context)
         self._draw_input(layout, context, prefs)
@@ -1225,14 +1283,23 @@ class CLAUDE_PT_chat(bpy.types.Panel):
             h += 2.5 if autosave.in_copy() else 1.2
         if core.versions():
             h += 1.4
-        if _setup_visible(bpy.context, get_prefs()):
-            h += 12.5
+        prefs = get_prefs()
+        if _setup_visible(bpy.context, prefs):
+            h += 2.5
+            h += 7 if _setup_steps_open(bpy.context, prefs) else 0
+            h += 8 if _setup_questions_open(bpy.context, prefs) else 0
         elif core.login_needed:
             h += 2
         if core.live_status():
             h += 1
+        from .studio import runner
+        if runner.RUN.busy:
+            h += 1
         if core.update_needed or core.local_down:
             h += 2
+        from . import updates
+        if updates.state["available"] and updates.mode() == 'ASK':
+            h += 1.5
         for task in core.questions:
             h += 4 + len(task.options) + (1 if task.multi_select else 0)
         for task in core.pending:
@@ -1344,8 +1411,15 @@ class CLAUDE_PT_chat(bpy.types.Panel):
             return
         state = core.setup_state()
         box = layout.box()
-        head = box.row()
-        head.label(text=tr("Setup"), icon='TOOL_SETTINGS')
+        box.label(text=tr("Setup"), icon='TOOL_SETTINGS')
+        if _setup_steps_open(context, prefs, state):
+            self._draw_setup_steps(box, prefs, state)
+        if _setup_questions_open(context, prefs):
+            self._draw_setup_questions(box, context, prefs)
+        box.operator("claude.setup_done", text=tr("Done"), icon='CHECKMARK')
+
+    @staticmethod
+    def _draw_setup_steps(box, prefs, state):
         progress = setup_flow.status()
         if progress:
             text, factor = progress
@@ -1380,12 +1454,6 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         if state["cli"]:
             line(state["login"], {True: tr("Logged in"), False: tr("Not logged in"),
                                   None: tr("Checking the login…")}[state["login"]], "claude.login", tr("Log in"))
-        line(bool(state["base"]), tr("Base materials: {}").format(os.path.basename(state["base"]))
-             if state["base"] else tr("No base materials yet"), "claude.make_base_materials", tr("Create"))
-        where = state["output"].replace(os.path.expanduser("~"), "~") if state.get("output_set") \
-            else tr("next to the .blend file")
-        row = line(True, tr("Renders: {}").format(where))
-        row.operator("preferences.addon_show", text="", icon='FILE_FOLDER').module = __package__
         row = col.row(align=True)
         row.prop(prefs, "live_connection", text=tr("Live Connection for Cowork / Claude Code"))
         sub = row.row(align=True)
@@ -1402,10 +1470,51 @@ class CLAUDE_PT_chat(bpy.types.Panel):
                            else tr("Claude app (Cowork): not connected"))
                 if not state["live_desktop"]:
                     row.operator("claude.connect_client", text=tr("Connect")).target = 'DESKTOP'
-        box.operator("claude.setup_done", text=tr("Done"), icon='CHECKMARK')
+
+    @staticmethod
+    def _draw_setup_questions(box, context, prefs):
+        """How the user wants it (neutral until answered): one row per choice."""
+        from .studio import runner as studio_runner
+        studio = studio_runner.prefs(context)
+        box.separator(factor=0.5)
+        box.label(text=tr("How would you like it?"), icon='QUESTION')
+        col = box.column(align=True)
+
+        def choice(label, options):
+            row = col.row(align=True)
+            split = row.split(factor=0.34, align=True)
+            split.label(text=label, translate=False)
+            buttons = split.row(align=True)
+            for text, key, value, active in options:
+                op = buttons.operator("claude.setup_choice", text=text, depress=active)
+                op.key, op.value = key, value
+
+        if studio is not None:
+            folder = bool(studio.output_root)
+            choice(tr("Renders"), [(tr("Next to the file"), "renders", "next", not folder),
+                                   (tr("One folder"), "renders", "folder", folder)])
+        choice(tr("Backups"), [(tr("Every 5 min"), "backups", "on", prefs.autosave),
+                               (tr("Off"), "backups", "off", not prefs.autosave)])
+        choice(tr("New files"), [(tr("Own folder"), "folders", "on", prefs.project_folders),
+                                 (tr("Just the file"), "folders", "off", not prefs.project_folders)])
+        choice(tr("Claude's code"), [(tr("Ask first"), "code", "ask", not prefs.auto_approve),
+                                     (tr("Run directly"), "code", "auto", prefs.auto_approve)])
+        choice(tr("Updates"), [(tr("Automatic"), "updates", "AUTO", prefs.updates == 'AUTO'),
+                               (tr("Ask"), "updates", "ASK", prefs.updates == 'ASK')])
+        row = col.row(align=True)
+        split = row.split(factor=0.34, align=True)
+        split.label(text=tr("Model"))
+        split.prop(prefs, "default_model", text="")
 
     def _draw_actions(self, layout):
-        """Errors that one click can fix."""
+        """Errors that one click can fix, and a new version (Updates: Ask)."""
+        from . import updates
+        if updates.state["available"] and updates.mode() == 'ASK':
+            box = layout.box()
+            row = box.row(align=True)
+            row.label(text=tr("AI Studio {} is available").format(updates.state["available"]), icon='IMPORT',
+                      translate=False)
+            row.operator("claude.install_update", text=tr("Install"))
         if core.update_needed and not core.is_local():
             box = layout.box()
             box.label(text=tr("Claude Code is too old for this add-on"), icon='ERROR')
@@ -1414,6 +1523,19 @@ class CLAUDE_PT_chat(bpy.types.Panel):
             box = layout.box()
             box.label(text=tr("LM Studio does not answer"), icon='ERROR')
             box.operator("claude.start_lmstudio", text=tr("Start LM Studio"), icon='PLAY')
+
+    @staticmethod
+    def _draw_render(layout):
+        """A render runs (the queue, or a preview for Claude): its progress, also in the chat."""
+        from .studio import runner
+        from .studio.ui_common import _queue_progress_text
+        if not runner.RUN.busy:
+            return
+        row = layout.row(align=True)
+        text = _queue_progress_text()
+        row.progress(factor=runner.RUN.list_progress, type='BAR',
+                     text=text if text.startswith("Preview") else "Render " + text)
+        row.operator("render_studio.cancel", text="", icon='X')
 
     def _draw_live(self, layout):
         text = core.live_status()
@@ -1712,7 +1834,9 @@ classes = (
     CLAUDE_OT_start_lmstudio,
     CLAUDE_OT_make_base_materials,
     CLAUDE_OT_copy_live_connection,
+    CLAUDE_OT_install_update,
     CLAUDE_OT_setup_all,
+    CLAUDE_OT_setup_choice,
     CLAUDE_OT_setup_cancel,
     CLAUDE_OT_setup_done,
     CLAUDE_OT_example,

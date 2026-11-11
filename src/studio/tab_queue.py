@@ -220,6 +220,19 @@ def _schedule_preview(path):
     bpy.app.timers.register(load, first_interval=0.0)
 
 
+def on_live_image(path):
+    """A new draft or the finished image of the entry that renders: into the preview right away
+    (also into an open render window, which shows the same image: the live preview), unless you
+    are browsing older images."""
+    if _view["path"]:
+        return
+    try:
+        runner.show_in_preview(path)
+    except (RuntimeError, OSError) as ex:
+        print("Render Studio: preview failed:", ex)
+    runner.tag_redraw()
+
+
 _prewarmed = [0.0]
 
 
@@ -460,16 +473,19 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
             newer.enabled = index > 0
             newer.operator(RS_OT_preview_step.bl_idname, text="", icon='TRIA_RIGHT').direction = -1
             head.operator(RS_OT_show_render.bl_idname, text="", icon='ZOOM_IN')
+            # As wide as the panel (the picture is square, the image fits inside it).
+            scale = max(6.0, min(24.0, context.region.width / (20 * (context.preferences.system.ui_scale or 1.0)) - 2.5))
             if image is not None and path:
-                pic.template_icon(icon_value=layout.icon(image), scale=8.0)
+                pic.template_icon(icon_value=layout.icon(image), scale=scale)
             else:   # the same height until the draft is there
                 wait = pic.row()
                 wait.alignment = 'CENTER'
-                wait.scale_y = 8.0
+                wait.scale_y = scale
                 wait.active = False
                 wait.label(text="", icon='TIME' if live is not None else 'NONE')
-            if live is not None:
+            if RUN.current:   # whatever renders: also while you browse, animations, previews for Claude
                 pic.progress(factor=RUN.render_progress, type='BAR', text=_item_progress_text())
+            if live is not None:
                 pic.label(text=live["camera"], icon='RENDER_STILL', translate=False)
             else:
                 variant = runner.variant_of(path)
@@ -495,7 +511,7 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
             row.prop(scene, "frame_end", text="End")
         cam = active_camera(scene)
         if cam is not None and cam.type == 'CAMERA':
-            col.label(text="Adds %s %d" % (cam.name, cam.render_studio_camera.queue_count + 1), icon='CAMERA_DATA')
+            col.label(text="Adds " + cam.name, icon='CAMERA_DATA')
 
         box = layout.box()
         col = box.column(align=True)

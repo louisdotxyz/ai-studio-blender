@@ -11,9 +11,9 @@ and reads one message per line from stdin (JSON):
      "overrides": [["render.filepath", "/…/x.png"], ["cycles.samples", 64], ["camera", {"object": "o_side"}], …],
      "camera": {"source": "o_side", "matrix": [16 floats], "lens": 50.0} or null,
      "variant": [["Holz TH", "Group", "Input_3", [r, g, b, a]], …],
-     "draft": {"path": "/…/draft_12.png", "max_size": 640, "samples": 16} or null}
+     "draft": {"path": "/…/draft_12", "stages": [{"max_size": 480, "samples": 8}, …]} or null}
 
-A job applies the values, renders (first a small draft for the preview if asked), prints
+A job applies the values, renders (first small drafts for the preview if asked), prints
 "RS done <uid>" (or "RS fail <uid> …") and puts the values back. {"quit": true} or the end of
 stdin ends it. The runner sends a fresh copy when your scene changed (or the camera), so
 between jobs only these values differ: persistent data keeps geometry and textures loaded.
@@ -33,6 +33,7 @@ from mathutils import Matrix
 _SAMPLE_RE = re.compile(r"(?:Sample|Rendering)\s+(\d+)\s*/\s*(\d+)")
 # Big images render in tiles: "Rendered 3/9 Tiles, Sample 200/512" – the samples count per tile.
 _TILE_RE = re.compile(r"Rendered\s+(\d+)\s*/\s*(\d+)\s+Tiles")
+_REMAINING_RE = re.compile(r"Remaining:\s*(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)")
 _T0 = time.monotonic()
 _last = [None]
 _last_status = [None]
@@ -44,18 +45,34 @@ def _settings():
     return json.loads(argv[argv.index("--") + 1]) if "--" in argv else {}
 
 
+_GPU = [False]   # the worker renders on the GPU: jobs set the scene's device to GPU
+
+
 def _devices(settings):
+    """Your Cycles devices. "AUTO" (Cycles was never set up in Blender's preferences, the
+    default of a new Blender): the Mac's GPU over Metal when there is one."""
     kind = settings.get("compute_device_type")
     if not kind or kind == 'NONE':
         return
     try:
         cycles = bpy.context.preferences.addons["cycles"].preferences
-        cycles.compute_device_type = kind
-        cycles.get_devices()
-        wanted = {tuple(d) for d in settings.get("devices", [])}
-        for device in cycles.devices:
-            device.use = (device.type, device.name) in wanted
-        print("RS devices:", kind, [d.name for d in cycles.devices if d.use], flush=True)
+        if kind == 'AUTO':
+            try:
+                cycles.compute_device_type = 'METAL'
+            except TypeError:
+                print("RS devices: no Metal, CPU", flush=True)
+                return
+            cycles.get_devices()
+            for device in cycles.devices:
+                device.use = device.type != 'CPU'
+        else:
+            cycles.compute_device_type = kind
+            cycles.get_devices()
+            wanted = {tuple(d) for d in settings.get("devices", [])}
+            for device in cycles.devices:
+                device.use = (device.type, device.name) in wanted
+        _GPU[0] = any(d.use and d.type != 'CPU' for d in cycles.devices)
+        print("RS devices:", cycles.compute_device_type, [d.name for d in cycles.devices if d.use], flush=True)
     except Exception as ex:
         print("RS devices failed:", ex, flush=True)
 
@@ -69,8 +86,12 @@ def _stats(stats, *_args):
         key = match.groups() + (tiles.groups() if tiles else ())
         if key != _last[0]:
             _last[0] = key
-            print("RS Sample %s/%s" % match.groups() + (" tile %s/%s" % tiles.groups() if tiles else ""),
-                  flush=True)
+            # Cycles' own estimate: in the background it reports only every 30-80 s, the runner
+            # moves the bar on in between with it.
+            left = _REMAINING_RE.search(stats)
+            seconds = (int(left.group(1) or 0) * 3600 + int(left.group(2)) * 60 + float(left.group(3))) if left else None
+            print("RS Sample %s/%s" % match.groups() + (" tile %s/%s" % tiles.groups() if tiles else "")
+                  + (" left %.1f" % seconds if seconds is not None else ""), flush=True)
         return
     parts = [p.strip() for p in (stats or "").split("|")]
     status = parts[1] if len(parts) > 1 and parts[0].startswith("Mem") else parts[0]
@@ -175,30 +196,35 @@ def _variant(values, saved):
 
 
 def _draft(scene, spec, uid):
-    """A small, quick image of the entry for the preview before the real render (Cycles stills:
-    with persistent data the real render reuses what the draft loaded, so it costs ~1 s)."""
+    """Quick images of the entry for the preview before the real render (Cycles stills): first a
+    very small one, then a sharper one for long renders. With persistent data the real render
+    reuses what the drafts loaded, so they cost little. Each stage writes <path>_<n>.png and
+    prints "RS draft <uid> <n>"."""
     render, cycles = scene.render, scene.cycles
     long_side = max(render.resolution_x, render.resolution_y) * render.resolution_percentage / 100
-    samples = min(cycles.samples, spec["samples"])
-    scale = min(1.0, spec["max_size"] / max(long_side, 1))
-    if scale * scale * samples / max(cycles.samples, 1) > 0.15:
-        return   # the render itself is about as quick
-    saved = []
-    _apply(scene, [["render.resolution_percentage", max(1, int(render.resolution_percentage * scale))],
-                   ["cycles.samples", samples], ["cycles.use_denoising", True], ["cycles.time_limit", 0.0],
-                   ["render.image_settings.file_format", 'PNG'],
-                   ["render.image_settings.color_mode", 'RGBA' if render.film_transparent else 'RGB'],
-                   ["render.image_settings.color_depth", '8'], ["render.use_file_extension", False],
-                   ["render.filepath", spec["path"]]], saved)
-    print("RS draft-start %s" % uid, flush=True)
-    try:
-        bpy.ops.render.render(write_still=True, scene=scene.name)
-    except Exception as ex:
-        print("RS draft failed:", ex, flush=True)
-    finally:
-        _restore(saved)
-        _last[0] = _last_status[0] = None
-        print("RS draft %s" % uid, flush=True)   # also after a failure: the real render follows
+    final = max(cycles.samples, 1)
+    for n, stage in enumerate(spec.get("stages") or [spec]):
+        samples = min(final, stage["samples"])
+        scale = min(1.0, stage["max_size"] / max(long_side, 1))
+        if scale * scale * samples / final > stage.get("max_share", 0.15):
+            continue   # the render itself (or the next stage) is about as quick
+        saved = []
+        path = "%s_%d.png" % (spec["path"], n)
+        _apply(scene, [["render.resolution_percentage", max(1, int(render.resolution_percentage * scale))],
+                       ["cycles.samples", samples], ["cycles.use_denoising", True], ["cycles.time_limit", 0.0],
+                       ["render.image_settings.file_format", 'PNG'],
+                       ["render.image_settings.color_mode", 'RGBA' if render.film_transparent else 'RGB'],
+                       ["render.image_settings.color_depth", '8'], ["render.use_file_extension", False],
+                       ["render.filepath", path]], saved)
+        print("RS draft-start %s %d" % (uid, n), flush=True)
+        try:
+            bpy.ops.render.render(write_still=True, scene=scene.name)
+        except Exception as ex:
+            print("RS draft failed:", ex, flush=True)
+        finally:
+            _restore(saved)
+            _last[0] = _last_status[0] = None
+            print("RS draft %s %d" % (uid, n), flush=True)   # also after a failure: the real render follows
 
 
 def run(job):
@@ -212,6 +238,9 @@ def run(job):
         if job.get("camera"):
             temp = _temp_camera(scene, job["camera"])
             overrides = [[p, {"object": temp.name}] if p == "camera" else [p, v] for p, v in overrides]
+        if _GPU[0] and scene.render.engine == 'CYCLES':
+            # A new scene says CPU even when Blender is set to the GPU: the worker always uses it.
+            overrides = list(overrides) + [["cycles.device", 'GPU']]
         _variant(job.get("variant") or [], saved)
         _apply(scene, overrides, saved)
         animation = bool(job.get("animation"))
@@ -241,7 +270,7 @@ def _prepare_file():
 def _warm_up(settings):
     """Load the GPU render kernels while the runner still saves your file: a tiny render of
     the empty start scene."""
-    if not settings.get("compute_device_type") or settings.get("compute_device_type") == 'NONE':
+    if not _GPU[0]:
         return
     try:
         scene = bpy.context.scene

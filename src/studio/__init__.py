@@ -15,7 +15,7 @@ import bpy
 from bpy.props import (EnumProperty, PointerProperty, StringProperty)
 from bpy.types import Operator, Panel
 
-from . import background, cameras, claude_link, core, foreign, hdri, lights, runner, sync
+from . import background, cameras, claude_link, core, foreign, hdri, lights, runner, sync, tab_queue
 # Loaded for their side effects: the chat finds claude_tools (Claude's studio_* tools) in
 # sys.modules; api and variants are the helpers in execute_python.
 from . import api, baselib, claude_tools, variants  # noqa: F401
@@ -210,6 +210,8 @@ def register():
     bpy.types.Object.render_studio_camera = PointerProperty(type=RS_CameraSettings)
     bpy.types.Object.render_studio_light = PointerProperty(type=RS_LightSettings)
     bpy.types.STATUSBAR_HT_header.append(draw_statusbar)
+    if tab_queue.on_live_image not in runner.on_live_image:
+        runner.on_live_image.append(tab_queue.on_live_image)
     register_prompts()
     bpy.app.timers.register(_keep_old_hdri_folder, first_interval=0.2)
     lights.register()
@@ -234,6 +236,8 @@ def unregister():
     unregister_keymaps()
     if draw_statusbar in bpy.types.STATUSBAR_HT_header._dyn_ui_initialize():
         bpy.types.STATUSBAR_HT_header.remove(draw_statusbar)
+    if tab_queue.on_live_image in runner.on_live_image:
+        runner.on_live_image.remove(tab_queue.on_live_image)
 
     foreign.unregister()
     background.unregister()

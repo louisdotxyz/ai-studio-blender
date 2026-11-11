@@ -32,8 +32,11 @@ TICK = 0.2
 KILL_AFTER = 3.0
 WORKER_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "render_worker.py")
 # Cycles: "Sample 16/64", EEVEE: "Rendering 16 / 64 samples"; big Cycles images add " tile 3/9"
-_SAMPLE_RE = re.compile(r"(?:Sample|Rendering)\s+(\d+)\s*/\s*(\d+)(?:\s+tile\s+(\d+)/(\d+))?")
-DRAFT = {"max_size": 640, "samples": 16}   # the quick first image of an entry (preview)
+_SAMPLE_RE = re.compile(r"(?:Sample|Rendering)\s+(\d+)\s*/\s*(\d+)(?:\s+tile\s+(\d+)/(\d+))?(?:\s+left\s+([\d.]+))?")
+# The preview of an entry before its image is done: a very quick small one, then a sharper one
+# (only when the render takes much longer: max_share = share of the render's work).
+DRAFT_STAGES = [{"max_size": 480, "samples": 8, "max_share": 0.15},
+                {"max_size": 1280, "samples": 64, "max_share": 0.08}]
 
 
 def prefs(context=None):
@@ -441,7 +444,24 @@ class Runner:
             if not frames:
                 return 0.0
             return min(1.0, len(core.frame_files(self.current["path"])) / frames)
-        return self.sample_factor
+        return self._smooth_progress()
+
+    def _smooth_progress(self):
+        """Cycles reports the samples only every 30-80 s in the background: between two reports
+        the bar moves on with Cycles' own estimate of the time left (or the speed so far). It
+        never goes back and stops short of the end until the render says it is done."""
+        job = self.current
+        value = self.sample_factor
+        est = job.get("est")
+        if est and value < 1.0 and not job.get("drafting"):
+            seen, factor, left = est
+            if left is None and job.get("sampling") and factor > 0 and seen > job["sampling"]:
+                left = (seen - job["sampling"]) * (1 - factor) / factor
+            if left and left > 0:
+                value = factor + (1 - factor) * min(0.95, (time.monotonic() - seen) / left)
+            value = min(value, 0.99)
+        job["shown"] = max(job.get("shown", 0.0), value)
+        return job["shown"]
 
     def current_left(self):
         """Seconds until the current entry is done (None if unknown)."""
@@ -450,6 +470,9 @@ class Runner:
             return None
         now = time.monotonic()
         progress = self.render_progress
+        est = job.get("est")
+        if est and est[2] is not None and progress < 1.0:   # Cycles' estimate, counted down since
+            return max(1.0, est[2] - (now - est[0])) + 2.0  # + denoising/saving
         if job.get("sampling") and progress >= 0.05:
             sampled = now - job["sampling"]
             return sampled * (1 - progress) / progress + 2.0   # + denoising/saving
@@ -630,8 +653,8 @@ class Runner:
             self._job_failed(scene, item.uid, label)
             return
         if not self.animation:
-            draft = os.path.join(jobs_dir(), "draft_%d.png" % item.uid)
-            job["draft"] = dict(DRAFT, path=draft)
+            draft = os.path.join(jobs_dir(), "draft_%d" % item.uid)
+            job["draft"] = {"path": draft, "stages": DRAFT_STAGES}
             self.current["draft_path"] = draft
         camera_key = camera.name
         reuse = WORKER.fits(scene, _generation[0], camera_key)
@@ -662,7 +685,7 @@ class Runner:
         elif hasattr(scene, "eevee") and hasattr(scene.eevee, "taa_render_samples"):
             plan.set(scene, "eevee.taa_render_samples", min(scene.eevee.taa_render_samples, request["samples"]))
         plan.set(scene, "render.image_settings.file_format", 'PNG')
-        plan.set(scene, "render.image_settings.color_mode", 'RGB')
+        plan.set(scene, "render.image_settings.color_mode", 'RGBA' if render.film_transparent else 'RGB')
         plan.set(scene, "render.image_settings.color_depth", '8')
         plan.set(scene, "render.use_file_extension", False)
         plan.set(scene, "render.filepath", path)
@@ -736,7 +759,7 @@ class Runner:
         try:
             with open(worker_log_path(), "rb") as f:
                 f.seek(0, os.SEEK_END)
-                f.seek(max(0, f.tell() - 8192))
+                f.seek(max(0, f.tell() - 65536))
                 tail = f.read().decode("utf-8", "replace")
         except OSError:
             return None
@@ -753,18 +776,21 @@ class Runner:
             if line.startswith("RS fail %s" % uid):
                 log("worker: " + line[:300])
                 return False
+        after = 0
         for i, line in enumerate(lines):
             if line.startswith("RS draft-start %s" % uid):
                 job["drafting"] = True
             elif line.startswith("RS draft %s" % uid):
-                # The draft's samples are not the entry's: only what comes after it counts.
+                # The drafts' samples are not the entry's: only what comes after them counts.
                 job["drafting"] = False
-                if not job.get("draft") and os.path.isfile(job.get("draft_path", "")):
-                    job["draft"] = job["draft_path"]
-                    log("draft after %.1f s" % (time.monotonic() - job["started"]))
-                    tag_redraw()
-                lines = lines[i + 1:]
-                break
+                after = i + 1
+                stage = line.split()[-1] if len(line.split()) > 3 else "0"
+                path = "%s_%s.png" % (job.get("draft_path", ""), stage)
+                if job.get("draft") != path and os.path.isfile(path):
+                    job["draft"] = path
+                    log("draft %s after %.1f s" % (stage, time.monotonic() - job["started"]))
+                    _live_image(path)
+        lines = lines[after:]
         if job.get("drafting"):
             self.status = "draft"
             return None
@@ -775,7 +801,11 @@ class Runner:
                 done, total = (int(match.group(1)), int(match.group(2))) if match else (0, 0)
                 tile, tiles = (int(match.group(3)), int(match.group(4))) if match and match.group(4) else (0, 1)
                 if total and not self.animation:
-                    self.sample_factor = min(1.0, (tile + done / total) / max(tiles, 1))
+                    factor = min(1.0, (tile + done / total) / max(tiles, 1))
+                    if job.get("est", (0, -1))[1] != factor:   # a new report: the bar moves on from here
+                        left = float(match.group(5)) if match.group(5) else None
+                        job["est"] = (time.monotonic(), factor, left)
+                    self.sample_factor = factor
                 if done and not job["sampling"]:
                     job["sampling"] = time.monotonic()
                     log("first sample after %.1f s" % (job["sampling"] - job["started"]))
@@ -807,7 +837,8 @@ class Runner:
         job = self.current
         self.phase = 'START'
         self.current = None
-        _remove_file(job.get("draft_path", ""))
+        for n in range(len(DRAFT_STAGES)):
+            _remove_file("%s_%d.png" % (job["draft_path"], n) if job.get("draft_path") else "")
         if job.get("preview"):
             exists = bool(ok) and os.path.exists(job["path"])
             log("preview %s: %s" % ("done" if exists else "failed", job["camera"]))
@@ -836,6 +867,7 @@ class Runner:
 
         self.done += 1
         self.last_path = job["path"]
+        _live_image(job["path"])
         if job.get("variant"):
             from .variants import log_render
             log_render(job["path"], job["variant"])
@@ -942,7 +974,11 @@ def _device_settings():
     together took 96 s for an image the GPU alone renders in 39 s."""
     try:
         cycles = bpy.context.preferences.addons["cycles"].preferences
+        if cycles.compute_device_type == 'NONE':   # never set up (a new Blender): the worker picks the GPU
+            return {"compute_device_type": "AUTO"}
         devices = [[d.type, d.name] for d in cycles.devices if d.use]
+        if not devices:
+            return {"compute_device_type": "AUTO"}
     except (KeyError, AttributeError):
         return {}
     p = prefs()
@@ -966,9 +1002,36 @@ def show_in_preview(path):
         image.reload()
     else:
         return image
-    image.preview_ensure()
-    image.preview.reload()
+    sharp_preview(image)
     return image
+
+
+PREVIEW_SIZE = 1024   # long side of the Queue tab's preview (Blender's own image previews are 256 px)
+
+
+def sharp_preview(image, size=PREVIEW_SIZE):
+    """A preview of `image` with up to `size` px (box filtered), so the Queue tab's picture is sharp.
+    Falls back to Blender's own small preview."""
+    image.preview_ensure()
+    try:
+        import numpy as np
+        width, height = image.size
+        if not width or not height:
+            raise ValueError("image not loaded")
+        pixels = np.empty(width * height * 4, dtype=np.float32)
+        image.pixels.foreach_get(pixels)
+        pixels = pixels.reshape(height, width, 4)
+        step = max(1, int(np.ceil(max(width, height) / size)))
+        h, w = height // step, width // step
+        small = pixels[:h * step, :w * step].reshape(h, step, w, step, 4).mean(axis=(1, 3))
+        if image.is_float:   # EXR: linear values, roughly to the screen (sRGB)
+            rgb = np.clip(small[..., :3], 0.0, 1.0)
+            small[..., :3] = np.where(rgb <= 0.0031308, rgb * 12.92, 1.055 * np.power(rgb, 1 / 2.4) - 0.055)
+        image.preview.image_size = (w, h)
+        image.preview.image_pixels_float.foreach_set(np.ascontiguousarray(small, dtype=np.float32).ravel())
+    except Exception as ex:
+        print("Render Studio: sharp preview failed:", ex)
+        image.preview.reload()
 
 
 RUN = Runner()
@@ -990,13 +1053,25 @@ def log(text):
         pass
 # Called with (path, label, quality, animation) after every saved render (e.g. the chat shows it).
 on_render_saved = []
+# Called with the newest image of the entry that renders (a draft, then the image itself): the
+# Queue tab shows it, also in an open render window (live preview).
+on_live_image = []
+
+
+def _live_image(path):
+    for hook in list(on_live_image):
+        try:
+            hook(path)
+        except Exception:
+            import traceback
+            traceback.print_exc()
 
 
 def item_label(scene, item):
-    """"45 grad 3": the camera and how often it was added (counted per camera)."""
+    """"Front_01 · 3": the camera and, from the second time on, how often it was added."""
     if item.camera is None:
         return "?"
-    return "%s %d" % (item.camera.name, item.number) if item.number > 0 else item.camera.name
+    return "%s · %d" % (item.camera.name, item.number) if item.number > 1 else item.camera.name
 
 
 TEMP_KEY = "render_studio_temp_camera"

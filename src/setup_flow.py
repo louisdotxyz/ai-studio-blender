@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Setup in one click (setup card › Set Up Everything): online access, Claude Code, login,
-base materials, Live Connection for the other Claude apps. Each step that is already done is
+Live Connection for the other Claude apps. The base materials are made on their own the first
+time the Material tab needs them (step "materials"). Each step that is already done is
 skipped. The slow steps (download, login, Blender in the background) run in a thread, the
 steps that touch Blender's data run on the main thread (core's timer calls ``tick``).
 
@@ -18,7 +19,7 @@ import bpy
 from . import claude_cli, core, live_clients
 from .i18n import tr
 
-ALL = ("online", "install", "login", "materials", "connect")
+ALL = ("online", "install", "login", "connect")
 LOGIN_WAIT = 600.0     # seconds the login window gets
 LOGIN_POLL = 3.0
 
@@ -35,7 +36,7 @@ def missing():
     state = core.setup_state()
     prefs = core.get_prefs()
     live = bool(prefs and prefs.live_connection)
-    return (state["online"] == 'OFF' or not state["cli"] or state["login"] is False or not state["base"]
+    return (state["online"] == 'OFF' or not state["cli"] or state["login"] is False
             or live and state["cli"] and not state["live_code"]
             or live and state["live_desktop"] is False)
 
@@ -101,9 +102,9 @@ def cancel():
 
 
 def materials_folder():
+    """The add-on's own data folder: nothing is written into your folders without asking."""
     from .studio import paths
-    libraries = bpy.context.preferences.filepaths.asset_libraries
-    return bpy.path.abspath(libraries[0].path) if len(libraries) else paths.data_dir()
+    return paths.data_dir()
 
 
 def build_base_materials(blender, folder):
@@ -186,7 +187,7 @@ def _run(job):
                                                           "was quit and opened again once."))
             except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
                 _fail(tr("Could not connect the Claude apps: {}").format(exc))
-        if not flow["error"] and len(steps) > 2:
+        if not flow["error"] and "login" in steps and len(steps) > 2:
             _on_main(core.add_message, "info", tr("Setup complete. Ask Claude something about your scene."))
     finally:
         flow["step"] = ""

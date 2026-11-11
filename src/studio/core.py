@@ -98,7 +98,7 @@ def archive_dir(root, project):
 
 
 def _highest_number(folder, stem):
-    """Highest number among files `<stem>_001.png` and folders `<stem>_001`."""
+    """Highest number among files `<stem>_01.png` and folders `<stem>_01` (older `_001` too)."""
     pattern = re.compile(re.escape(stem) + r"_(\d+)(?:\.[^.]+)?$", re.IGNORECASE)
     highest = 0
     if os.path.isdir(folder):
@@ -110,18 +110,18 @@ def _highest_number(folder, stem):
 
 
 def next_path(folder, stem, ext=EXT, also=()):
-    """Next free path `<stem>_001<ext>`. Uses the highest number + 1 (also counting the
+    """Next free path `<stem>_01<ext>` (`_100` and up only past 99). Uses the highest number + 1 (also counting the
     folders in `also`, e.g. the archiv) so the order is kept even if files were deleted
     or sorted away."""
     highest = max(_highest_number(f, stem) for f in (folder,) + tuple(also))
-    return os.path.join(folder, "%s_%03d%s" % (stem, highest + 1, ext))
+    return os.path.join(folder, "%s_%02d%s" % (stem, highest + 1, ext))
 
 
 NAME_PATTERNS = (
-    ('NAME_CAM', "Name_Camera_001", "File name, camera, number (default)"),
-    ('CAM', "Camera_001", "Only camera and number"),
-    ('NAME_CAM_DATE', "Name_Camera_Date_001", "With today's date"),
-    ('NAME_CAM_Q', "Name_Camera_HQ_001", "With the quality (preview or HQ)"),
+    ('NAME_CAM', "Name_Camera_01", "File name, camera, number (default)"),
+    ('CAM', "Camera_01", "Only camera and number"),
+    ('NAME_CAM_DATE', "Name_Camera_Date_01", "With today's date"),
+    ('NAME_CAM_Q', "Name_Camera_HQ_01", "With the quality (preview or HQ)"),
 )
 
 
@@ -145,7 +145,7 @@ def _stem(camera_name, name="", blend_filepath=None, quality=None):
 
 
 def job_path(root, camera_name, quality, name="", blend_filepath=None, ext=EXT):
-    """`<name>_renders/<low|high>/<name>_<camera>_001.png` (extension from the still format).
+    """`<name>_renders/<low|high>/<name>_<camera>_01.png` (extension from the still format).
     Folders are made only when something is rendered into them (the archive never)."""
     project = project_name(blend_filepath, name)
     folder = quality_dir(root, project, quality)
@@ -156,7 +156,7 @@ def job_path(root, camera_name, quality, name="", blend_filepath=None, ext=EXT):
 
 
 def anim_dir(root, camera_name, quality, name="", blend_filepath=None):
-    """Folder for an animation: `<name>_renders/animation/<name>_<camera>_<low|high>_001/`."""
+    """Folder for an animation: `<name>_renders/animation/<name>_<camera>_<low|high>_01/`."""
     project = project_name(blend_filepath, name)
     names = folder_names()
     folder = os.path.join(project_dir(root, project), names['ANIM'])

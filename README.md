@@ -20,10 +20,17 @@ render studio for product shots, all in the sidebar of the 3D viewport.
 - **Memory** per project and globally. **Lessons**: after fixing an error, the model writes
   down what worked and gets it again in later chats.
 - Usage, context and auto summarizing of long chats.
-- A **setup card** on first start checks Claude Code, the login, base materials, the render
-  folder and the Live Connection. **Set Up Everything** does all open steps in one go (install with
-  progress, log in, base materials, connect the Claude apps); each step also has its own button. The **?**
-  at the top shows shortcuts, clicks worth knowing and example prompts.
+- A **setup card** on first start: **Set Up Everything** allows online access, installs Claude Code
+  (with a progress bar), opens the login and connects the Claude apps; each step also has its own
+  button. Once the chat has answered, the steps go away by themselves. Below them a few questions
+  (where renders go, backups, a folder per new file, whether Claude's code runs directly, updates,
+  the model for new chats): nothing is decided for you until you choose. The **?** at the top shows
+  shortcuts, clicks worth knowing, example prompts and the setup again.
+- **Short names**: new cameras, lights and render files get a two-digit number ("Ortho Top_01",
+  "Stuhl_Front_01.png"; three digits only past 99), no collection prefix and no ".001". Chats are
+  named after the first words of their first message.
+- **Updates** (installed from the install page): new versions install by themselves when Blender
+  is idle, and the chat says so. Or only a notice with an Install button, or off (Preferences › Chat).
 - Replaced objects are never deleted unless you say so: they go into a hidden archive
   collection (`AS_archiv`). Claude's helper objects go into `temp`, removed after the answer.
 
@@ -54,9 +61,13 @@ render studio for product shots, all in the sidebar of the 3D viewport.
   (`studio_section`), reference images of the project (a `reference` folder next to or above the
   .blend file, one subfolder per topic, e.g. `reference/CMF`).
 - **Queue:** ⌘R (High) / ⇧⌘R (Low) adds the camera. Images render in a second Blender
-  without a window, so you can keep working. The preview shows the image that renders now
-  (a quick draft within seconds, then the final), with progress and time left. Before every
-  render it checks that the second Blender has your current scene (new cameras, undo).
+  without a window, so you can keep working, on the Mac's GPU even when Cycles was never set up.
+  The preview (as wide as the panel, sharp) shows the image that renders now: a quick draft within
+  seconds, a sharper one for long renders, then the final, live also in the render window (⇧⌘E).
+  The progress bar moves on smoothly with Cycles' own time estimate and is also in the chat.
+  The image is exactly Blender's own render (color management, Cycles settings and file format
+  are checked in the tests). Before every render it checks that the second Blender has your
+  current scene (new cameras, undo).
   Includes material variants (series in different colors) and browsing through earlier
   renders. Renders go right next to the .blend file (`<name>_renders/low`, `high`, `animation`), or into
   an output folder you set; the folders are made only when needed.
@@ -90,8 +101,8 @@ Repository* with `https://louisdotxyz.github.io/ai-studio-blender/index.json`.
 
 Then open the sidebar in the 3D viewport (N): tabs **Claude** and **Studio**, and click **Set Up Everything**
 in the setup card. It allows online access, installs Claude Code (official installer, in the background with
-a progress bar), opens the login, creates the base materials and connects Claude Code and the Claude app to
-the Live Connection. Claude Code needs online access even when the add-on was installed from a zip (not
+a progress bar), opens the login and connects Claude Code and the Claude app to the Live Connection. The
+base materials are made by themselves the first time the Material tab shows its library. Claude Code needs online access even when the add-on was installed from a zip (not
 possible when Blender was started with `--offline-mode`). The login terminal closes by itself when done.
 
 ## Settings
@@ -100,8 +111,8 @@ possible when Blender was started with `--offline-mode`). The login terminal clo
 
 | Section | What you set |
 |---|---|
-| Chat | Claude CLI path, what goes with every message, attach folder, **default model and effort** for new chats (also in the chat's gear menu), auto summarizing |
-| Files | Project folder per file, folder names (backups, assets, archive), main file suffix, backup interval and count |
+| Chat | Claude CLI path, what goes with every message, attach folder, **updates** (automatic, ask, off), **default model and effort** for new chats (also in the chat's gear menu), auto summarizing |
+| Files | Project folder per file and backups (both off until you choose them in the setup card), folder names (backups, assets, archive), main file suffix, backup interval and count |
 | Renders | Output folder (empty: next to the .blend file) and its subfolders (low, high, animation, archive), High Quality samples for new files (512 instead of Blender's 4096), Low Quality size and samples, GPU only |
 | Studio | HDRI folder, base materials file, material presets folder, shortcuts |
 | Local | LM Studio model, context length, thinking |
@@ -125,7 +136,7 @@ instructions for any other session into the clipboard.
 The collection names (cameras `AS_camera`, lights `AS_lights`, archive `AS_archiv`, `temp`) are set in
 Preferences › Studio; older `RS_Cameras` / `RS_Lights` collections are renamed.
 
-`studio/make_base_materials.py` (also the *Create* button of the setup card) creates a "Base Materials.blend" with 19 everyday materials
+`studio/make_base_materials.py` (run by itself the first time the Material tab needs it) creates a "Base Materials.blend" with 19 everyday materials
 (glass, metals, plastics, rubber, paint, speaker cloth …) as assets.
 
 ## Privacy
@@ -145,6 +156,8 @@ stays on your computer.
 - `Blender -b --python tests/functional.py` runs the functional checks headless.
 - `python3 tests/cad_unit.py` checks the CAD hand-over without Blender; `Blender -b --factory-startup --python
   tests/cad_blender.py` checks import, take-over, archive and mounts (loads `src/` directly).
+- `python3 tests/update_e2e.py` installs an old build from a local test repository into a fresh
+  Blender profile and lets it update itself to the current version.
 
 Up to 0.24 the extension id was `claude_assistant`. Version 1.0 (`AI_Studio`) takes over its settings,
 chats and Studio data, turns it off and asks you to remove it in *Preferences › Get Extensions*.

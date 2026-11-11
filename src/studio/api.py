@@ -281,6 +281,14 @@ def environment_bake(name, collection=None, location=None, world=None, resolutio
 
 # ---------------------------------------------------------------- objects, CAD versions, references
 
+def unique_name(name, kind="objects"):
+    """A short name with the next free two-digit number: "Ortho Top" → "Ortho Top_01"
+    ("Ortho Top_02" when _01 exists). kind: the bpy.data collection to check (objects,
+    materials, collections, cameras, lights …)."""
+    from ..naming import numbered
+    return numbered(name, getattr(bpy.data, kind).keys())
+
+
 def archive(objects):
     """Move objects (or names) into the hidden archive collection instead of deleting them; the user
     deletes them there. Returns how many were moved."""

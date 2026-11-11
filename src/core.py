@@ -44,6 +44,9 @@ How to work:
 - Small, focused steps. After visible changes, check the result (screenshot, or print values).
 - Prefer bpy.data and direct property access over bpy.ops. Reuse existing materials/objects \
 instead of creating duplicates. Never delete or overwrite user data or files without asking.
+- Names: short and plain, no collection or type prefix (a camera "Ortho Top", not "AS_camera Ortho Top"; \
+a light "Key"). New objects always get a two-digit number: api.unique_name("Ortho Top") gives "Ortho Top_01" \
+(the next free one; _100 only past 99), never Blender's ".001".
 - Objects you replace or that are no longer wanted: api.archive(objects) moves them into the hidden \
 archive collection, where the user deletes them. Delete objects only when the user says so explicitly.
 - Helper objects (cutters, measuring planes, test objects): put them into api.temp_collection(); it is \
@@ -658,6 +661,28 @@ def list_chats():
     return _chats
 
 
+TITLE_WORDS = 5
+TITLE_CHARS = 32
+
+
+def short_title(text, taken=()):
+    """A few words of the first message ("Kamera frontal stellen"), a number when the same
+    title exists already ("… _02")."""
+    words = [w for w in re.sub(r"[\[\]{}()\"'`*_#>|]+", " ", text or "").split() if w]
+    title = ""
+    for word in words[:TITLE_WORDS]:
+        if title and len(title) + 1 + len(word) > TITLE_CHARS:
+            break
+        title = (title + " " + word).strip()
+    title = (title or "Chat")[:TITLE_CHARS].rstrip(" ,.;:!?-")
+    if title in taken:
+        n = 2
+        while "%s_%02d" % (title, n) in taken:
+            n += 1
+        title = "%s_%02d" % (title, n)
+    return title
+
+
 def save_current_chat():
     if not session_id or not messages:
         return
@@ -673,8 +698,9 @@ def save_current_chat():
     if pending_title and not entry.get("renamed"):
         entry.update(title=pending_title, renamed=True)
         pending_title = ""
-    if not entry.get("renamed"):
-        entry["title"] = " ".join(title.split())[:70]
+    if not entry.get("renamed") and (not entry.get("title") or entry["title"] == "Chat" and first_user):
+        others = {c.get("title") for c in chats if c is not entry}
+        entry["title"] = short_title(title, others)
     entry.update(updated=time.time(), messages=messages[-400:], context=dict(context))
     prefs = get_prefs()
     if prefs:  # the chat continues with the model it was used with
@@ -1370,6 +1396,8 @@ def _handle_done(rc, stderr):
         _set_login_needed(False)
         _set_flag("login_ok", True)
         _set_flag("update_needed", False)
+    if rc == 0:
+        _chat_works()
     if rc == -1 and (stderr or "").startswith("LM Studio"):
         _set_flag("local_down", True)
     elif rc == 0:
@@ -1446,6 +1474,17 @@ def setup_state():
     state["live_desktop"] = live_clients.desktop_connected() if live_clients.desktop_installed() else None
     _setup_cache.update(time=now, state=state)
     return state
+
+
+def _chat_works():
+    """The first good answer: the setup's steps are done, the card goes away (its questions
+    stay until they were answered)."""
+    prefs = get_prefs()
+    if prefs is not None and not prefs.setup_done:
+        prefs.setup_done = True
+        bpy.context.preferences.is_dirty = True
+        _setup_cache["state"] = None
+        mark_dirty()
 
 
 def online_state():

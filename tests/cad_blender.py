@@ -197,9 +197,11 @@ def check_views_place_cameras():
     cadimport.check_folder = lambda: os.path.join(TMP, "cad-check")
     cams = cadimport.check_views(views=("Iso", "Front"))
     result = cadimport.check_result()
-    front = bpy.data.objects["CAD Front"]
+    front = bpy.data.objects["CAD Front_01"]
     forward = front.matrix_world.to_3x3() @ Vector((0, 0, -1))
-    check("check cameras look at the parts", cams == ["CAD Iso", "CAD Front"] and forward.y > 0.999, forward)
+    check("check cameras look at the parts", cams == ["CAD Iso_01", "CAD Front_01"] and forward.y > 0.999,
+          (cams, forward))
+    check("check cameras reused, not numbered on", cadimport.check_views(views=("Front",)) == ["CAD Front_01"])
     check("check images copied", result and sorted(result["images"]) == ["Front", "Iso"]
           and all(os.path.exists(p) for p in result["images"].values()), result)
 

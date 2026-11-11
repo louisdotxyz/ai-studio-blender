@@ -835,6 +835,21 @@ def base_group():
 
 
 _base_pending = [False]
+_base_made = [False]   # tried once this session
+
+
+def _ensure_base_library():
+    """No base materials yet: make them in the background the first time the tab shows its
+    library (glass, metals, plastics … in the add-on's data folder). Not part of the setup."""
+    if _base_made[0] or bpy.app.background or base_library_file():
+        return
+    _base_made[0] = True
+
+    def start():
+        from .. import setup_flow
+        setup_flow.start(("materials",))
+        return None
+    bpy.app.timers.register(start, first_interval=0.5)
 
 
 _base_loaded = set()   # (blend file, library file, its mtime) already copied in
@@ -1015,6 +1030,10 @@ class RS_PT_material(_SidebarPanel, Panel):
         wm = context.window_manager
         box.prop(wm, "render_studio_mat_search", text="", icon='VIEWZOOM')
         search = wm.render_studio_mat_search
+        _ensure_base_library()
+        from .. import setup_flow
+        if setup_flow.running() and setup_flow.flow["step"] == "materials":
+            box.label(text="Creating the base materials…", icon='TIME')
         groups = _library_groups(search)
         if not groups:
             box.label(text="No match" if search else "No materials in this file", icon='INFO')

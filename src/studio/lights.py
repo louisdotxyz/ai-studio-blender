@@ -192,8 +192,9 @@ def apply_setup(scene, target, spec, replace=True, tag=True):
     center, radius = subject(scene, target)
     front = front_angle(scene, center)
     created = []
+    from ..naming import base_of, numbered
     for item in spec["lights"]:
-        obj = next((o for o in old if o.name == item["name"]), old[0] if old else None)
+        obj = next((o for o in old if base_of(o.name) == base_of(item["name"])), old[0] if old else None)
         if obj is not None:
             old.remove(obj)
             data = obj.data
@@ -201,7 +202,7 @@ def apply_setup(scene, target, spec, replace=True, tag=True):
             data.color = (1.0, 1.0, 1.0)
             data.use_temperature = False
         else:
-            data = bpy.data.lights.new(item["name"], item["type"])
+            data = bpy.data.lights.new(numbered(item["name"], bpy.data.lights.keys()), item["type"])
         distance = item["distance"] * radius
         if item["type"] == 'SUN':
             data.energy = item["power"] * SUN_STRENGTH
@@ -223,7 +224,7 @@ def apply_setup(scene, target, spec, replace=True, tag=True):
             data.use_temperature = True
             data.temperature = item["kelvin"]
         if obj is None:
-            obj = bpy.data.objects.new(item["name"], data)
+            obj = bpy.data.objects.new(numbered(item["name"], bpy.data.objects.keys()), data)
             light_collection(scene).objects.link(obj)
         if tag:
             obj[PRESET_KEY] = spec["name"]
