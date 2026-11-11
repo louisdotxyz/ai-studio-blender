@@ -532,6 +532,12 @@ class RS_Preferences(PropertyGroup):
         description="macOS notification with sound when a queue with several cameras is done",
         default=True,
     )
+    onshape_comments: BoolProperty(
+        name="CAD Feedback as Onshape Comments",
+        description="A feedback point for a part from Onshape also becomes a comment on its Onshape element "
+                    "(needs API keys); comments resolved in Onshape tick the point off",
+        default=True,
+    )
     hdri_folder: StringProperty(
         name="HDRI Folder",
         description="HDRI files (.hdr, .exr) in this folder and its subfolders appear in the Light tab "
@@ -566,6 +572,10 @@ class RS_Preferences(PropertyGroup):
         col.prop(self, "material_library")
         col.prop(self, "material_preset_folder")
         col.separator()
+        from .onshape_ops import draw_prefs
+        draw_prefs(layout, self)
+        col = layout.column()
+        col.use_property_split = True
         sub = col.column(heading="Collections")
         sub.prop(self, "camera_collection")
         sub.prop(self, "light_collection")

@@ -160,6 +160,102 @@ os.environ["HOME"] = real_home
 os.remove(saved)
 os.rmdir(target_dir)
 
+# Onshape: comments for the CAD side, against a stand-in for Onshape's API
+import base64
+import http.server
+import threading
+osh = load("onshape", "studio/onshape.py")
+seen = {"comments": {}, "auth": set(), "attachments": []}
+
+
+class FakeOnshape(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def _answer(self, code, data):
+        body = json.dumps(data).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        seen["auth"].add(self.headers.get("Authorization"))
+        if self.path == "/api/v6/users/sessioninfo":
+            return self._answer(200, {"name": "Test User"})
+        cid = self.path.rsplit("/", 1)[-1]
+        if cid in seen["comments"]:
+            return self._answer(200, seen["comments"][cid])
+        self._answer(404, {"message": "not found"})
+
+    def do_POST(self):
+        seen["auth"].add(self.headers.get("Authorization"))
+        data = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        if self.path == "/api/v6/comments":
+            body = json.loads(data)
+            cid = "c%d" % (len(seen["comments"]) + 1)
+            seen["comments"][cid] = dict(body, id=cid)
+            return self._answer(200, {"id": cid})
+        if self.path.endswith("/attachment"):
+            seen["attachments"].append((self.path, self.headers.get("Content-Type"), data))
+            return self._answer(200, {})
+        self._answer(404, {})
+
+
+fake = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeOnshape)
+threading.Thread(target=fake.serve_forever, daemon=True).start()
+base = "http://127.0.0.1:%d" % fake.server_address[1]
+creds = ("AKEY", "SECRET")
+source = base + "/documents/d1/w/w1/e/e1"
+check("source parsed (also company domains)", osh.parse_source(source)["eid"] == "e1"
+      and osh.parse_source("https://acme.onshape.com/documents/a/w/b/e/c")["base"] == "https://acme.onshape.com"
+      and osh.parse_source("https://evil.com/documents/a/w/b/e/c") is None)
+check("keys tested with Basic auth", osh.whoami(base, creds) == "Test User"
+      and "Basic " + base64.b64encode(b"AKEY:SECRET").decode() in seen["auth"])
+png = os.path.join(TMP, "check.png")
+open(png, "wb").write(b"\x89PNG fake")
+cid = osh.post_comment(source, "AI Studio (Blender) · Front: 1.2 mm collision", image=png, credentials=creds)
+made = seen["comments"][cid]
+check("comment on the element of the export", (made["documentId"], made["workspaceId"], made["elementId"],
+                                               made["objectId"]) == ("d1", "w1", "e1", "d1")
+      and "collision" in made["message"])
+check("check image attached", seen["attachments"] and b"PNG fake" in seen["attachments"][0][2]
+      and seen["attachments"][0][1].startswith("multipart/form-data"))
+check("open comment is not resolved", osh.comment_resolved(base, cid, creds) is False)
+seen["comments"][cid]["resolvedAt"] = "2026-11-11T10:00:00Z"
+check("resolved in Onshape", osh.comment_resolved(base, cid, creds) is True)
+seen["comments"][cid]["reopenedAt"] = "2026-11-11T11:00:00Z"
+check("reopened after resolving: open again", osh.comment_resolved(base, cid, creds) is False)
+check("deleted comment: None", osh.comment_resolved(base, "gone", creds) is None)
+try:
+    osh.post_comment(base + "/documents/d1/v/v1/e/e1", "x", credentials=creds)
+    check("version of a document refused", False)
+except osh.OnshapeError:
+    check("version of a document refused", True)
+folder = os.path.join(TMP, "fb_onshape")
+cf.add_feedback(folder, "Front", "zu dick", today="2026-11-11")
+point = cf.open_feedback(folder)[0]
+cf.remember_comment(folder, point, cid, base)
+check("comment remembered per point", cf.feedback_comments(folder)[point]["cid"] == cid)
+check("tick off a point", cf.tick_feedback(folder, point) and cf.open_feedback(folder) == []
+      and "- [x] " + point + " · resolved in Onshape" in open(os.path.join(folder, cf.FEEDBACK_FILE)).read())
+fake.shutdown()
+
+
+class Done:
+    def __init__(self, code=0, out="", err=""):
+        self.returncode, self.stdout, self.stderr = code, out, err
+
+
+real_security = osh._security
+osh._security = lambda *a: Done(0, 'keychain: "x"\n    "acct"<blob>="AKEY"\n    "svce"<blob>="%s"\n' % osh.SERVICE,
+                                 'password: "SE\\"CRET"\n')
+check("keys read from the keychain", osh.keys() == ("AKEY", 'SE\\"CRET'), osh.keys())
+osh._security = lambda *a: Done(44, "", "security: SecKeychainSearchCopyNext: The specified item could not be found")
+check("no keys in the keychain: None", osh.keys() is None)
+osh._security = real_security
+
 ok = all(results)
 print("CAD_UNIT_OK" if ok else "CAD_UNIT_FAIL", "%d/%d" % (sum(results), len(results)))
 sys.exit(0 if ok else 1)

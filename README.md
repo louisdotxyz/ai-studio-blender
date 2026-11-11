@@ -58,6 +58,12 @@ render studio for product shots, all in the sidebar of the 3D viewport.
   ids, CAD materials (mapped to base materials), mounting points (`MOUNT | …` empties that move with
   every version), sizes to check and variants. Claude: `studio_cad_import`, `studio_cad_check` (check
   images), `studio_cad_feedback` (`CAD-Feedback.md` next to the export for the CAD side), skill */cad*.
+- **Onshape:** a feedback point for a part that came from Onshape also becomes a **comment on its
+  Onshape element** (with a check image or render if given), so the CAD side sees it there and gets
+  a notification. Comments resolved in Onshape tick their point off in `CAD-Feedback.md` (on *Sync
+  CAD Feedback* and at every import of a new version). Needs Onshape API keys once
+  (dev-portal.onshape.com/keys, read and write): *Preferences › Studio › Onshape › Add Keys…*; they are
+  kept in the macOS keychain, not in the preferences.
   Onshape sends the package straight into Blender with `tools/onshape/onshape-helpers.js`
   (`POST /cad` on the Live Connection, see below).
 - **For Claude:** sections through a scan and the CAD part with measurements

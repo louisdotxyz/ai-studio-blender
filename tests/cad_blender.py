@@ -180,9 +180,68 @@ def take_over_with_sidecar():
 @section
 def feedback_next_to_export():
     part = next(o for o in bpy.data.objects if o.get("cad_version") == "V4")
-    path = cadimport.feedback(part.name, "Kollision 1.2 mm mit dem Lenker")
+    path, _note = cadimport.feedback(part.name, "Kollision 1.2 mm mit dem Lenker", send=False)
     check("feedback next to the export", os.path.dirname(path) == TMP and
           cadfiles.open_feedback(TMP)[0].endswith("· Kollision 1.2 mm mit dem Lenker (Blender)"), path)
+
+
+@section
+def feedback_to_onshape():
+    """A feedback point for a part from Onshape becomes a comment there; resolved there, it is ticked off."""
+    import http.server
+    import threading
+    onshape = mod("studio.onshape")
+    comments = {}
+
+    class Fake(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def _json(self, data):
+            body = json.dumps(data).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            data = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+            cid = "c%d" % (len(comments) + 1)
+            comments[cid] = dict(data, id=cid)
+            self._json({"id": cid})
+
+        def do_GET(self):
+            self._json(comments.get(self.path.rsplit("/", 1)[-1], {}))
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Fake)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    real_keys = onshape.keys
+    onshape.keys = lambda: ("AKEY", "SECRET")   # never the real keychain in tests
+    folder = os.path.join(TMP, "from_onshape")
+    os.makedirs(folder)
+    part = bpy.data.objects.new("Deckel_01", None)
+    bpy.context.scene.collection.objects.link(part)
+    part["cad_file"] = os.path.join(folder, "Leuchte V5.glb")
+    part["cad_source"] = "http://127.0.0.1:%d/documents/d9/w/w9/e/e9" % server.server_address[1]
+    try:
+        path, note = cadimport.feedback(part, "Wand 2.4 mm statt 2.0 mm", send=True)
+        made = next(iter(comments.values()), {})
+        check("feedback goes to Onshape as a comment", note == "also as a comment in Onshape"
+              and made.get("elementId") == "e9" and "Wand 2.4 mm" in made.get("message", ""), (note, made))
+        cadfiles.add_feedback(folder, "Deckel_01", "Radius 1 mm", today="2026-11-11")   # e.g. written by hand
+        text = cadimport.sync_feedback(folder)
+        check("sync sends what is missing", len(comments) == 2 and "1 sent" in text, text)
+        for comment in comments.values():
+            comment["resolvedAt"] = "2026-11-11T12:00:00Z"
+        text = cadimport.sync_feedback(folder)
+        check("resolved in Onshape: ticked off", cadfiles.open_feedback(folder) == [] and "2 resolved" in text, text)
+        onshape.keys = lambda: None
+        path, note = cadimport.feedback(part, "noch etwas", send=True)
+        check("no keys: only the file, says why", "no API keys" in note, note)
+    finally:
+        onshape.keys = real_keys
+        server.shutdown()
+        bpy.data.objects.remove(part)
 
 
 @section

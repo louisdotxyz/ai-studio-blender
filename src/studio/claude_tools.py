@@ -175,8 +175,11 @@ def _cad_check(args):
 def _cad_feedback(args):
     from . import cadfiles, cadimport
     if args.get("problem"):
-        path = cadimport.feedback(args.get("part") or "", str(args["problem"]), args.get("folder") or None)
-        return "Noted for the CAD side in " + path
+        path, note = cadimport.feedback(args.get("part") or "", str(args["problem"]), args.get("folder") or None,
+                                        image=args.get("image") or None)
+        return "Noted for the CAD side in " + path + (" (%s)" % note if note else "")
+    if args.get("sync"):
+        return cadimport.sync_feedback(args.get("folder") or None)
     folder = args.get("folder") or cadimport.feedback_folder(args.get("part") or None)
     points = cadfiles.open_feedback(folder)
     return "Open CAD feedback:\n" + ("\n".join("- " + p for p in points) if points else "none")
@@ -282,12 +285,17 @@ def get_tools():
          "handler": _cad_check},
         {"name": "studio_cad_feedback", "label": "Render Studio: CAD feedback",
          "description": "Feedback for the CAD side: with 'problem', note an open point (collision, size, "
-                        "a look that needs a geometry change) in CAD-Feedback.md next to the part's CAD "
-                        "export; without, list the open points. Geometry problems go here, not into a "
-                        "Blender fix of the CAD mesh.",
+                        "a look that needs a geometry change, a change to make) in CAD-Feedback.md next to "
+                        "the part's CAD export; when the export came from Onshape it also becomes a comment "
+                        "on the Onshape element (with 'image', e.g. a check image or render). sync=true: "
+                        "send missing points to Onshape and tick off the ones resolved there. Without "
+                        "either, list the open points. Geometry problems go here, not into a Blender fix "
+                        "of the CAD mesh.",
          "inputSchema": {"type": "object", "properties": {
              "part": {"type": "string", "description": "Object name of the part (or empty for the whole model)"},
              "problem": {"type": "string", "description": "One sentence with numbers, in the user's language"},
+             "image": {"type": "string", "description": "PNG/JPEG to attach in Onshape (optional)"},
+             "sync": {"type": "boolean", "description": "Sync with Onshape both ways"},
              "folder": {"type": "string", "description": "Folder of the CAD export, if no part is given"}}},
          "handler": _cad_feedback},
         {"name": "studio_render_queue", "label": "Render Studio: render queue",

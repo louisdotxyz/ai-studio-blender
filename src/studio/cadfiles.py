@@ -355,6 +355,43 @@ def add_feedback(folder, part, problem, source="Blender", today=None):
     return path
 
 
+ONSHAPE_FILE = ".cad_feedback_onshape.json"   # point → its comment in Onshape
+
+
+def feedback_comments(folder):
+    """{point text: {"cid", "base"}} of the points that went to Onshape as comments."""
+    try:
+        with open(os.path.join(folder, ONSHAPE_FILE), encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def remember_comment(folder, point, cid, base):
+    data = feedback_comments(folder)
+    data[point] = {"cid": cid, "base": base}
+    with open(os.path.join(folder, ONSHAPE_FILE), "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=1, ensure_ascii=False)
+
+
+def tick_feedback(folder, point, note="resolved in Onshape"):
+    """Mark an open point done ("- [x] … · resolved in Onshape"). True when it was found."""
+    path = os.path.join(folder, FEEDBACK_FILE)
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError:
+        return False
+    for i, line in enumerate(lines):
+        if line.startswith("- [ ] ") and line[6:].rstrip() == point:
+            lines[i] = "- [x] %s · %s\n" % (point, note)
+            with open(path, "w", encoding="utf-8") as f:
+                f.writelines(lines)
+            return True
+    return False
+
+
 def open_feedback(folder):
     """The open points (lines '- [ ] …') of CAD-Feedback.md in `folder`."""
     try:

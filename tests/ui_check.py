@@ -178,6 +178,30 @@ gate.set()
 flow.flow["thread"].join()
 flow.flow.update(step="", installer=None)
 run(bpy.types.CLAUDE_PT_chat, ctx)
+# every section of the add-on's preferences (Chat, Files, Renders, Studio with Onshape, …)
+addon_prefs = bpy.context.preferences.addons[PKG].preferences
+
+
+class PrefsProxy:
+    """The real preferences with a checking layout (their own layout is read-only)."""
+    def __init__(self):
+        object.__setattr__(self, "layout", Fake("AddonPreferences"))
+
+    def __getattr__(self, name):
+        attr = getattr(type(addon_prefs), name, None)
+        if callable(attr) and not isinstance(attr, type):
+            return attr.__get__(self)
+        return getattr(addon_prefs, name)
+
+
+keep_tab = addon_prefs.prefs_tab
+for tab in [i.identifier for i in addon_prefs.bl_rna.properties["prefs_tab"].enum_items]:
+    addon_prefs.prefs_tab = tab
+    try:
+        type(addon_prefs).draw(PrefsProxy(), ctx)
+    except Exception:
+        errors.append("preferences %s: " % tab + traceback.format_exc(limit=3).strip().splitlines()[-1])
+addon_prefs.prefs_tab = keep_tab
 print("UI_CHECKED", len(classes), "classes")
 for e in sorted(set(errors)):
     print("UI_ERROR", e)
