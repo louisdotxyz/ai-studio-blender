@@ -7,7 +7,7 @@ import os
 
 import bpy
 
-VERSION = 3
+VERSION = 4
 # Collection names before 1.3 (with the "AS_" prefix): saved as settings, they become the new defaults.
 OLD_COLLECTIONS = {"camera_collection": "AS_camera", "light_collection": "AS_lights", "archive_collection": "AS_archiv"}
 # Defaults that became neutral in 1.2 (new users are asked in the setup card): people who used
@@ -48,6 +48,9 @@ def apply_once():
         for key, old in OLD_COLLECTIONS.items():
             if getattr(prefs.studio, key, "") == old:
                 prefs.studio.property_unset(key)
+    if prefs.settings_version < 4 and prefs.german_interface:   # 1.7: the checkbox became a language
+        prefs.language = 'DE'
+        prefs.german_interface = False
     prefs.settings_version = VERSION
     bpy.context.preferences.is_dirty = True   # saved with the preferences
     return None

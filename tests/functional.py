@@ -410,16 +410,19 @@ def english_by_default():
     """The add-on speaks English, also in a German Blender, unless German Interface is on."""
     i18n, prefs = mod("i18n"), mod("preferences").get_prefs()
     view = bpy.context.preferences.view
-    keep = (view.language, view.use_translate_interface, prefs.german_interface)
+    keep = (view.language, view.use_translate_interface, prefs.language)
     try:
         view.language, view.use_translate_interface = 'de_DE', True
-        prefs.german_interface = False
+        prefs.language = 'EN'
         check("English in a German Blender", i18n.tr("Set Up Everything") == "Set Up Everything"
               and bpy.app.translations.pgettext_iface("Renders", "AI_Studio") == "Renders")
-        prefs.german_interface = True
-        check("German Interface on: German", i18n.tr("Set Up Everything") == "Alles einrichten")
+        prefs.language = 'DE'
+        check("Deutsch: German", i18n.tr("Set Up Everything") == "Alles einrichten")
+        view.language = 'en_US'
+        check("Deutsch also in an English Blender (the add-on's own texts)",
+              i18n.tr("Set Up Everything") == "Alles einrichten")
     finally:
-        prefs.german_interface = keep[2]
+        prefs.language = keep[2]
         view.language, view.use_translate_interface = keep[0], keep[1]
 
 

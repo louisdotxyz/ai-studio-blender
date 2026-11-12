@@ -35,9 +35,13 @@ DEFAULT_MODELS = MODELS + [('LOCAL', "Local (LM Studio)", "The local model chose
 I18N_CONTEXT = "AI_Studio"   # Blender's own catalog has nothing here ("Renders" would become "Ausführungen")
 
 
+LANGUAGES = [('EN', "English", "The add-on in English"),
+             ('DE', "Deutsch", "Das Add-on auf Deutsch (Blenders eigene Menüs folgen Blenders Sprache)")]
+
+
 def _german_changed(self):
     from . import i18n
-    i18n.apply(self.german_interface)
+    i18n.apply(self.language == 'DE')
 
 
 def _default_model_changed(self, context):
@@ -126,12 +130,13 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
     settings_version: IntProperty(options={'HIDDEN'})   # see settings.py
     prefs_tab: EnumProperty(
         name="Section",
-        items=[('GENERAL', "General", "What most people change: Claude, model, updates, language", 'PREFERENCES', 0),
-               ('FILES', "Files", "Backups and project folders", 'FILE_FOLDER', 1),
+        items=[('GENERAL', "General", "Language, Claude, the connection to the Claude app, updates",
+                'PREFERENCES', 0),
+               ('FILES', "Files", "Auto save, backups and project folders", 'FILE_FOLDER', 1),
                ('RENDERS', "Renders", "Where renders go, quality", 'RENDER_STILL', 2),
                ('STUDIO', "Studio", "HDRIs, base materials, Onshape, names", 'SCENE', 3),
-               ('ADVANCED', "Advanced", "Everything else: Claude CLI, what is sent, local models, lessons, "
-                                        "folder names, collections, shortcuts", 'TOOL_SETTINGS', 4)],
+               ('ADVANCED', "Advanced", "Rarely needed: Claude CLI, what is sent, local models, lessons, "
+                                        "render folder names, collections, shortcuts", 'TOOL_SETTINGS', 4)],
         default='GENERAL', options={'SKIP_SAVE'}, translation_context=I18N_CONTEXT)
     autosave_before_risky: BoolProperty(
         name="Before Code and Renders",
@@ -146,12 +151,13 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
     )
     backend: EnumProperty(name="Cloud / Local", items=BACKENDS, default='CLOUD', update=_backend_changed)
     model: EnumProperty(name="Model", items=MODELS, default='sonnet', update=_model_changed)
-    german_interface: BoolProperty(
-        name="German Interface",
-        description="Show the add-on in German when Blender's interface is German (off: always English)",
-        default=False,
+    language: EnumProperty(
+        name="Language", items=LANGUAGES, default='EN',
+        description="Language of the add-on (Blender's own menus follow Blender's language)",
         update=lambda self, _context: _german_changed(self),
     )
+    # before 1.7: a checkbox; settings.py turns it into language once
+    german_interface: BoolProperty(name="German Interface", default=False, options={'HIDDEN'})
     updates: EnumProperty(
         name="Updates",
         description="New versions of AI Studio (when it was installed from its install page, not from a zip)",
@@ -231,9 +237,9 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
         default=True,
     )
     live_connection: BoolProperty(
-        name="Live Connection (External Claude Sessions)",
-        description="Let other Claude sessions on this computer (Cowork, blender-mcp) work in the open Blender. "
-                    "Port and token are in ~/.config/ai-studio/live.json. "
+        name="Live Connection",
+        description="Let the Claude app and Claude Code on this computer work in the open Blender and take CAD "
+                    "jobs. Port and token are in ~/.config/ai-studio/live.json. "
                     "'Run Code Without Asking' applies to them too",
         default=True,
         update=_live_connection_changed,
@@ -301,8 +307,16 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
         getattr(self, "_draw_" + self.prefs_tab.lower())(box, context)
 
     def _draw_general(self, layout, context):
+        from .i18n import tr
         col = layout.column()
         col.use_property_split = True
+        col.prop(self, "language")
+        view = context.preferences.view
+        if self.language == 'DE' and not (view.language.startswith("de") and view.use_translate_interface):
+            row = col.row()
+            row.label(text="")
+            row.operator(CLAUDE_OT_blender_german.bl_idname, icon='WORLD')
+        col.separator()
         sub = col.column(heading="Claude")
         sub.prop(self, "auto_approve")
         sub.prop(self, "auto_screenshot", text="Sees the Viewport")
@@ -310,10 +324,36 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
         sub = col.row()
         sub.enabled = self.default_model != 'LOCAL'
         sub.prop(self, "default_effort")
-        col.separator()
-        col.prop(self, "live_connection", text="Claude App and Claude Code")
         col.prop(self, "updates")
-        col.prop(self, "german_interface")
+
+        box = layout.box()
+        row = box.row()
+        row.prop(self, "live_connection", text="")
+        row.label(text="Live Connection: the Claude app and Claude Code work in this Blender", icon='LINKED')
+        if not self.live_connection:
+            return
+        from . import core
+        state = core.setup_state()
+        col = box.column(align=True)
+
+        def status(ok, text, target):
+            line = col.row(align=True)
+            line.label(text=text, icon='CHECKMARK' if ok else 'ERROR', translate=False)
+            if not ok:
+                line.operator("claude.connect_client", text=tr("Connect")).target = target
+        if state["live_desktop"] is not None:
+            status(state["live_desktop"], tr("Claude app (Cowork) connected") if state["live_desktop"]
+                   else tr("Claude app (Cowork): not connected"), 'DESKTOP')
+        if state["cli"]:
+            status(state["live_code"], tr("Claude Code connected") if state["live_code"]
+                   else tr("Claude Code: not connected"), 'CODE')
+        sub = col.row()
+        sub.active = False
+        sub.label(text="After connecting: quit the Claude app once (Cmd+Q) and open it again")
+        row = box.row(align=True)
+        row.use_property_split = True
+        row.prop(self, "live_port")
+        row.operator("claude.copy_live_connection", text="", icon='COPYDOWN')
 
     def _draw_files(self, layout, context):
         col = layout.column()
@@ -323,8 +363,16 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
         sub.active = self.autosave
         sub.prop(self, "autosave_mode")
         sub.prop(self, "autosave_minutes")
+        sub.prop(self, "autosave_keep")
         col.separator()
         col.prop(self, "project_folders")
+        if self.project_folders:
+            sub = col.column(heading="Folder Names", align=True)
+            sub.prop(self, "backup_dir")
+            sub.prop(self, "assets_dir")
+            sub.prop(self, "archive_dir")
+            col.prop(self, "main_suffix")
+        col.separator()
         col.prop(self, "attach_folder")
 
     def _draw_renders(self, layout, context):
@@ -356,39 +404,19 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
         sub = col.column(heading="With Every Message")
         sub.prop(self, "send_scene_context", text="Scene Info")
         sub.prop(self, "send_selection", text="Selection")
-        col.prop(self, "screenshot_max_size")
         row = col.row(heading="Auto Summarize")
         row.prop(self, "auto_compact", text="")
         sub = row.row()
         sub.active = self.auto_compact
         sub.prop(self, "compact_at", text="At")
         col.prop(self, "show_stats")
-        col.prop(self, "max_display")
         col.prop(self, "custom_instructions")
         col.prop(self, "extra_args")
-        sub = col.row(align=True)
-        sub.active = self.live_connection
-        sub.prop(self, "live_port", text="Live Connection Port")
-        sub.operator("claude.copy_live_connection", text="", icon='COPYDOWN')
-
-        col = group("Backups and Project Folders", 'FILE_FOLDER')
-        sub = col.column()
-        sub.active = self.autosave
-        sub.prop(self, "autosave_keep")
-        sub.prop(self, "autosave_before_risky")
-        sub.prop(self, "autosave_on_memory")
-        sub.prop(self, "backup_stamp")
-        sub = col.column(heading="Folder Names", align=True)
-        sub.prop(self, "backup_dir")
-        sub.prop(self, "assets_dir")
-        sub.prop(self, "archive_dir")
-        col.prop(self, "main_suffix")
 
         col = group("Local Models (LM Studio, ~/.lmstudio/models)", 'DESKTOP')
         col.prop(self, "local_model")
         col.prop(self, "local_context")
         col.prop(self, "local_effort")
-        col.prop(self, "local_send_screenshot")
 
         col = group("Learning", 'LIGHT')
         col.prop(self, "learn_from_errors")
@@ -399,9 +427,27 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
         self.studio.draw_advanced(layout)
 
 
+class CLAUDE_OT_blender_german(bpy.types.Operator):
+    bl_idname = "claude.blender_german"
+    bl_label = "Blender in German Too"
+    bl_description = ("Switch Blender's own menus and tooltips to German as well (names of new objects stay "
+                      "English). Back: Preferences › Interface › Translation")
+
+    def execute(self, context):
+        view = context.preferences.view
+        view.language = 'de_DE'
+        view.use_translate_interface = True
+        view.use_translate_tooltips = True
+        view.use_translate_new_dataname = False
+        context.preferences.is_dirty = True
+        return {'FINISHED'}
+
+
 def register():
+    bpy.utils.register_class(CLAUDE_OT_blender_german)
     bpy.utils.register_class(ClaudeAssistantPreferences)
 
 
 def unregister():
     bpy.utils.unregister_class(ClaudeAssistantPreferences)
+    bpy.utils.unregister_class(CLAUDE_OT_blender_german)

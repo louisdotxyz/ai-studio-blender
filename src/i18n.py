@@ -649,6 +649,27 @@ DE = {
     'The model every new chat starts with (also after starting Blender)': 'Das Modell, mit dem jeder neue Chat startet (auch nach dem Start von Blender)',
     "The effort every new chat starts with (set to the model's usual one when the model changes)": 'Der Aufwand, mit dem jeder neue Chat startet (wechselt beim Modellwechsel auf den üblichen Wert des Modells)',
     'The local model chosen in the chat (LM Studio)': 'Das im Chat gewählte lokale Modell (LM Studio)',
+    # -- 1.7: language, preferences in new order -----------------------------
+    'Language': 'Sprache',
+    'The add-on in English': 'Das Add-on auf Englisch',
+    "Language of the add-on (Blender's own menus follow Blender's language)": 'Sprache des Add-ons (Blenders eigene Menüs folgen Blenders Sprache)',
+    'Blender in German Too': 'Blender auch auf Deutsch',
+    "Switch Blender's own menus and tooltips to German as well (names of new objects stay English). Back: Preferences › Interface › Translation": 'Stellt auch Blenders eigene Menüs und Tooltips auf Deutsch (Namen neuer Objekte bleiben englisch). Zurück: Einstellungen › Oberfläche › Übersetzung',
+    'Live Connection': 'Live Connection',
+    'Live Connection: the Claude app and Claude Code work in this Blender': 'Live Connection: Claude-App und Claude Code arbeiten in diesem Blender',
+    'After connecting: quit the Claude app once (Cmd+Q) and open it again': 'Nach dem Verbinden: die Claude-App einmal beenden (Cmd+Q) und neu öffnen',
+    "Let the Claude app and Claude Code on this computer work in the open Blender and take CAD jobs. Port and token are in ~/.config/ai-studio/live.json. 'Run Code Without Asking' applies to them too": 'Claude-App und Claude Code auf diesem Computer arbeiten im offenen Blender und nehmen CAD-Aufträge an. Port und Token stehen in ~/.config/ai-studio/live.json. «Code ohne Nachfrage ausführen» gilt auch für sie',
+    'Language, Claude, the connection to the Claude app, updates': 'Sprache, Claude, Verbindung zur Claude-App, Updates',
+    'Auto save, backups and project folders': 'Automatisch speichern, Backups und Projektordner',
+    'Rarely needed: Claude CLI, what is sent, local models, lessons, render folder names, collections, shortcuts': 'Selten gebraucht: Claude CLI, was mitgeschickt wird, lokale Modelle, Lektionen, Render-Ordnernamen, Collections, Tastenkürzel',
+    'Folder Names': 'Ordnernamen',
+    'Port': 'Port',
+    'CAD job ready': 'CAD-Auftrag bereit',
+    'Name the chat (e.g. CAD 5) or choose New Chat': 'Den Chat nennen (z.B. CAD 5) oder «Neuer Chat» wählen',
+    'To Chat': 'An Chat',
+    'New Chat': 'Neuer Chat',
+    'Chat': 'Chat',
+    "The Claude app gets Blender's tools now; reopen Claude once": 'Die Claude-App bekommt jetzt Blenders Werkzeuge; Claude einmal neu öffnen',
 }
 
 # Blender looks up operator names in the "Operator" context and everything else
@@ -670,12 +691,18 @@ _active = [False]   # the German strings are registered (Preferences › General
 def tr(msgid):
     """Translate a UI string built at runtime (labels, messages). English unless the German
     interface is on (Blender's own catalog would otherwise translate common words)."""
-    return bpy.app.translations.pgettext_iface(msgid) if _active[0] else msgid
+    if not _active[0]:
+        return msgid
+    # Our own table first: German also when Blender itself is English (Blender only translates
+    # registered strings when its interface language is German).
+    return DE.get(msgid) or bpy.app.translations.pgettext_iface(msgid)
 
 
 def tip(msgid):
     """Translate a tooltip built at runtime."""
-    return bpy.app.translations.pgettext_tip(msgid) if _active[0] else msgid
+    if not _active[0]:
+        return msgid
+    return DE.get(msgid) or bpy.app.translations.pgettext_tip(msgid)
 
 
 def apply(german):
