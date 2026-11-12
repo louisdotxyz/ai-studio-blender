@@ -245,14 +245,8 @@ class RS_OT_cad_comments_open(Operator):
 
 
 def _job_targets(self, context):
-    from . import cadimport
-    chat = cadimport.origin_chat(context.active_object, comment_state(context)["folder"])
-    if chat:
-        name = chat.get("name") or "the chat of the export"
-        items = [('ORIGIN', "Send to %s" % name, "The Claude chat this CAD export came from"),
-                 ('NEW', "New Chat", "Start a new chat in the Claude app with the job")]
-    else:
-        items = [('NEW', "New Chat", "The export does not say which chat it came from: a new chat gets the job")]
+    items = [('CHAT', "To Chat", "The Claude chat named below (the chat of the export or of the last job)"),
+             ('NEW', "New Chat", "Start a new chat in the Claude app with the job")]
     _job_targets.items = items   # Blender needs the list to live on
     return items
 
@@ -266,12 +260,18 @@ class RS_OT_cad_job(Operator):
     part: StringProperty(name="Part", options={'SKIP_SAVE'})
     text: StringProperty(name="Change", description="What should change, with numbers", options={'SKIP_SAVE'})
     target: EnumProperty(name="To", items=_job_targets, options={'SKIP_SAVE'})
+    chat: StringProperty(name="Chat", description="Name of the Claude chat that works on this CAD model, e.g. "
+                         "'CAD 5' (remembered for this export)", options={'SKIP_SAVE'})
 
     def invoke(self, context, event):
+        from . import cadimport
         obj = context.active_object
         if obj is not None and obj.select_get():
             from . import cadswap
             self.part = obj.get(cadswap.CAD_ID) or obj.name
+        known = cadimport.job_chat(obj, comment_state(context)["folder"])
+        self.chat = (known or {}).get("name") or ""
+        self.target = 'CHAT' if self.chat else 'NEW'
         return context.window_manager.invoke_props_dialog(self, width=480, confirm_text="Send")
 
     def draw(self, context):
@@ -279,15 +279,26 @@ class RS_OT_cad_job(Operator):
         col.prop(self, "part")
         col.prop(self, "text")
         col.row().prop(self, "target", expand=True)
+        if self.target == 'CHAT':
+            col.prop(self, "chat")
+        from .. import live_clients
+        if live_clients.desktop_installed() and not live_clients.desktop_connected():
+            sub = col.row()
+            sub.active = False
+            sub.label(text="The Claude app gets Blender's tools now; reopen Claude once", icon='INFO')
 
     def execute(self, context):
         from . import cadimport
         if not self.text.strip():
             self.report({'WARNING'}, "Write what should change first")
             return {'CANCELLED'}
+        if self.target == 'CHAT' and not self.chat.strip():
+            self.report({'WARNING'}, "Name the chat (e.g. CAD 5) or choose New Chat")
+            return {'CANCELLED'}
         try:
             job, how = cadimport.send_job(self.text, self.part.strip() or None,
-                                          "origin" if self.target == 'ORIGIN' else "new")
+                                          "origin" if self.target == 'CHAT' else "new",
+                                          chat_name=self.chat if self.target == 'CHAT' else "")
         except (OSError, ValueError) as exc:
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}

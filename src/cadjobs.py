@@ -52,18 +52,63 @@ def clean_chat(chat):
 
 
 def new_job(text, part="", cad_folder="", source="", chat=None, images=(), jobs_dir=None):
-    """Write a new open job. Returns it (with "path")."""
+    """Write a new open job. Returns it (with "path"). The images are copied next to the job
+    (jobs/<id>/), so they stay when the original was a temporary file (a chat's tool result)."""
+    import shutil
     text = " ".join(str(text or "").split())
     if not text:
         raise ValueError("A CAD job needs a text: what should change?")
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    job = {"id": "cad-%s-%s" % (stamp, uuid.uuid4().hex[:4]), "created": _now(), "status": "open",
+    job_id = "cad-%s-%s" % (stamp, uuid.uuid4().hex[:4])
+    folder = _dir(jobs_dir)
+    kept = []
+    for i, image in enumerate(p for p in images if p and os.path.isfile(p)):
+        target_dir = os.path.join(folder, job_id)
+        os.makedirs(target_dir, exist_ok=True)
+        target = os.path.join(target_dir, "%d%s" % (i + 1, os.path.splitext(image)[1].lower() or ".png"))
+        shutil.copyfile(image, target)
+        kept.append(target)
+    job = {"id": job_id, "created": _now(), "status": "open",
            "text": text, "part": str(part or ""), "cad_folder": str(cad_folder or ""),
-           "source": str(source or ""), "chat": clean_chat(chat),
-           "images": [str(p) for p in images if p and os.path.isfile(p)]}
-    path = os.path.join(_dir(jobs_dir), job["id"] + ".json")
+           "source": str(source or ""), "chat": clean_chat(chat), "images": kept}
+    path = os.path.join(folder, job["id"] + ".json")
     _write(path, job)
     return dict(job, path=path)
+
+
+# ---------------------------------------------------------------- the chat of a CAD folder
+# The chat a job went to is remembered per CAD export folder (jobs/chats.json), so the next job of
+# that project goes there too when the export itself does not name its chat.
+
+def _chats_file(jobs_dir=None):
+    return os.path.join(_dir(jobs_dir), "chats.json")
+
+
+def remembered_chat(cad_folder, jobs_dir=None):
+    """The chat the last job of this CAD folder went to ({"name", "url", "session"}), or None."""
+    if not cad_folder:
+        return None
+    try:
+        with open(_chats_file(jobs_dir), encoding="utf-8") as f:
+            known = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return clean_chat(known.get(os.path.normpath(cad_folder))) if isinstance(known, dict) else None
+
+
+def remember_chat(cad_folder, chat, jobs_dir=None):
+    chat = clean_chat(chat)
+    if not cad_folder or not chat:
+        return
+    path = _chats_file(jobs_dir)
+    try:
+        with open(path, encoding="utf-8") as f:
+            known = json.load(f)
+        known = known if isinstance(known, dict) else {}
+    except (OSError, ValueError):
+        known = {}
+    known[os.path.normpath(cad_folder)] = chat
+    _write(path, known)
 
 
 def load(job_id, jobs_dir=None):
@@ -110,16 +155,28 @@ def done(job_id, note="", jobs_dir=None):
 
 
 def message(job):
-    """The text for the chat (opened with it, and in the clipboard)."""
-    lines = ["CAD job from Blender (AI Studio), id %s:" % job["id"], job["text"]]
+    """The text for the chat (opened with it, and in the clipboard). It works on its own: what to
+    change, where the files are, and what to do when the chat lacks the tools."""
+    to = (job.get("chat") or {}).get("name")
+    lines = ["CAD job from Blender (ID Toolkit), id %s%s:" % (job["id"], " – for the chat '%s'" % to if to else ""),
+             job["text"]]
     if job.get("part"):
         lines.append("Part: %s" % job["part"])
     if job.get("source"):
         lines.append("Onshape: %s" % job["source"])
+    if job.get("cad_folder"):
+        lines.append("Export the new version into: %s (GLB + .cad.json, same part names)" % job["cad_folder"])
     if job.get("images"):
-        lines.append("Images: %s" % ", ".join(job["images"]))
-    lines.append("Take it with the tool blender_jobs (action claim, id %s), make the change in the CAD model, "
-                 "export again, then blender_jobs action done with a short note." % job["id"])
+        lines.append("Images (on the Mac): %s" % ", ".join(job["images"]))
+    lines.append("Steps: blender_jobs action claim (id %s) → change the CAD model → export again → blender_jobs "
+                 "action done with a short note." % job["id"])
+    lines.append("Needs: a chat in the Claude desktop app that is linked to the Mac (for Onshape in the built-in "
+                 "browser, signed in: check the sign-in first and tell the user if it is missing).")
+    lines.append("If this chat has no blender_jobs tool, it is not connected to Blender: say so and ask the user to "
+                 "click Connect next to the Claude app in Blender (setup card, or the add-on's preferences › Live "
+                 "Connection) and then quit and reopen Claude once. "
+                 "Until then the job file can be read through the link to the Mac: %s"
+                 % (job.get("path") or os.path.join(JOBS_DIR, job["id"] + ".json")))
     return "\n".join(lines)
 
 

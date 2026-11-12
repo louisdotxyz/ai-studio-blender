@@ -429,10 +429,19 @@ def origin_chat(obj=None, folder=None):
     return None
 
 
-def send_job(text, part=None, target="origin", image=None, open_app=True):
-    """A CAD job for the chat: a file in ~/.config/ai-studio/jobs, its text in the clipboard and
-    the Claude app opened at the chat the export came from (target "origin") or at a new chat
-    ("new"). Returns (job, how it was delivered)."""
+def job_chat(obj=None, folder=None):
+    """The chat a job of this part goes to by default: the export's own chat, else the chat the
+    last job of this CAD folder went to. None: unknown (a new chat)."""
+    from .. import cadjobs
+    return origin_chat(obj, folder) or cadjobs.remembered_chat(folder)
+
+
+def send_job(text, part=None, target="origin", image=None, open_app=True, chat_name=""):
+    """A CAD job for the chat: a file in ~/.config/ai-studio/jobs (images copied next to it), its
+    text in the clipboard and the Claude app opened at the chat. The chat is the one the user names
+    (chat_name, e.g. "CAD 5"), else the export's chat or the one the last job of this CAD folder
+    went to (target "origin"); target "new" or no known chat: a new chat. A named chat is remembered
+    for the folder. Returns (job, how it was delivered)."""
     from .. import cadjobs
     obj = bpy.data.objects.get(part) if isinstance(part, str) else part
     label = (obj.get(cadswap.CAD_ID) or obj.name) if obj is not None else str(part or "")
@@ -440,23 +449,68 @@ def send_job(text, part=None, target="origin", image=None, open_app=True):
         folder = feedback_folder(obj)
     except ValueError:
         folder = ""
-    chat = origin_chat(obj, folder or None)
+    chat = job_chat(obj, folder or None)
+    chat_name = " ".join(str(chat_name or "").split())
+    if chat_name:
+        known = chat if chat and (chat.get("name") or "").lower() == chat_name.lower() else {}
+        chat = dict(known or {}, name=chat_name)
+        target = "origin"
+    if target != "origin":
+        chat = None
     job = cadjobs.new_job(text, part=label, cad_folder=folder, source=onshape_source(obj, folder or None),
-                          chat=chat if target == "origin" else None, images=[image] if image else [])
+                          chat=chat, images=[image] if image else [])
+    if chat and folder:
+        cadjobs.remember_chat(folder, chat)
     how = ["saved as %s" % job["id"]]
+    connected = ensure_claude_app_tools()
+    if connected:
+        how.append(connected)
     try:
         bpy.context.window_manager.clipboard = cadjobs.message(job)
         how.append("text in the clipboard")
     except (AttributeError, RuntimeError):
         pass
     if open_app:
-        link, said = cadjobs.chat_link(job, target)
+        link, said = cadjobs.chat_link(job, "origin" if chat else "new")
         if deliver_link(link):
             how.append(said)
-    if target == "origin" and chat and chat.get("session"):
+            if chat and link == cadjobs.RECENTS:
+                notify("CAD job ready", "Paste it into the chat '%s' (it is in the clipboard)" % chat.get("name"))
+            if not chat:
+                how.append("a new chat only has Onshape and Blender when it is a task linked to your Mac")
+    if chat and chat.get("session"):
         _notify_session_later(chat["session"], job)
         how.append("also sent to the Claude Code session '%s' if it is open" % chat["session"])
     return job, ", ".join(how)
+
+
+def ensure_claude_app_tools():
+    """The chats of the Claude app take jobs with blender_jobs, a tool of this add-on's MCP server:
+    connect it when it is missing. Returns a sentence when something changed or is missing, else ""."""
+    from .. import live_clients
+    try:
+        if not live_clients.desktop_installed() or live_clients.desktop_connected():
+            return ""
+        if bpy.app.background or os.environ.get("AI_STUDIO_NO_OPEN"):
+            return "the Claude app is not connected to Blender's tools yet"
+        live_clients.connect_desktop()
+    except (OSError, ValueError, RuntimeError) as exc:
+        return "the Claude app could not be connected to Blender's tools (%s)" % exc
+    return ("connected the Claude app to Blender's tools: quit and reopen Claude once, then its chats have "
+            "blender_jobs")
+
+
+def notify(title, text):
+    """A macOS notification (nothing in tests or without a window)."""
+    import subprocess
+    import sys
+    if sys.platform != "darwin" or bpy.app.background or os.environ.get("AI_STUDIO_NO_OPEN"):
+        return
+    script = "display notification %s with title %s" % (json.dumps(text), json.dumps(title))
+    try:
+        subprocess.Popen(["/usr/bin/osascript", "-e", script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
 
 
 def _notify_session_later(session, job):

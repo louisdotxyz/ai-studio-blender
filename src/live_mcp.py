@@ -66,6 +66,8 @@ TOOLS.append(
          "id": {"type": "string", "description": "The job id (claim, done)"},
          "status": {"type": "string", "enum": ["open", "claimed", "done", "all"],
                     "description": "list: which ones (default open)"},
+         "chat": {"type": "string", "description": "list: only the jobs for this chat (its name, e.g. 'CAD 5') "
+                  "and the ones for no chat in particular"},
          "by": {"type": "string", "description": "claim: who takes it, e.g. the chat's name"},
          "note": {"type": "string", "description": "done: what was changed"}},
          "required": ["action"]}})
@@ -103,6 +105,10 @@ def jobs_tool(arguments):
         if action == "list":
             status = arguments.get("status") or "open"
             found = cadjobs.jobs(None if status == "all" else status)
+            wanted = " ".join(str(arguments.get("chat") or "").split()).lower()
+            if wanted:
+                found = [j for j in found if not (j.get("chat") or {}).get("name")
+                         or str(j["chat"]["name"]).lower() == wanted]
             if not found:
                 return {"content": [{"type": "text", "text": "No %s CAD jobs." % status}]}
             text = "\n\n".join("%s\n%s" % (cadjobs.summary(j), cadjobs.message(j)) for j in found)

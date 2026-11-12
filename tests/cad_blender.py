@@ -306,6 +306,22 @@ def cad_job_to_its_chat():
               "text in the clipboard" in how, how)
         job, _how = cadimport.send_job("Fase 1 mm", part, "new", open_app=False)
         check("new chat: no chat in the job", job["chat"] is None)
+        # a part whose export names no chat: the chat the user names is used and remembered
+        lonely_folder = os.path.join(TMP, "no_chat")
+        os.makedirs(lonely_folder)
+        lonely = bpy.data.objects.new("Draht", None)
+        bpy.context.scene.collection.objects.link(lonely)
+        lonely["cad_file"] = os.path.join(lonely_folder, "Leuchte V22.glb")
+        try:
+            job, how = cadimport.send_job("Biegeradius 1.5 mm", lonely, "origin", open_app=False, chat_name=" CAD  5 ")
+            check("named chat goes into the job", job["chat"]["name"] == "CAD 5", (job, how))
+            job, how = cadimport.send_job("Enden flach", lonely, "origin", open_app=False)
+            check("next job of that export goes to the remembered chat", (job["chat"] or {}).get("name") == "CAD 5",
+                  (job, how))
+            check("the dialog suggests the remembered chat",
+                  (cadimport.job_chat(lonely, lonely_folder) or {}).get("name") == "CAD 5")
+        finally:
+            bpy.data.objects.remove(lonely)
         ops = mod("studio.onshape_ops")
         for cls in ops.classes:
             bpy.utils.register_class(cls)

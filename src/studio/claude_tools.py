@@ -192,8 +192,10 @@ def _cad_job(args):
         found = cadjobs.jobs()
         return "CAD jobs:\n" + ("\n".join("- " + cadjobs.summary(j) for j in found[-15:]) if found else "none")
     target = "new" if str(args.get("target") or "").lower() == "new" else "origin"
-    job, how = cadimport.send_job(str(args["text"]), args.get("part") or None, target, args.get("image") or None)
-    return "CAD job %s: %s" % (job["id"], how)
+    job, how = cadimport.send_job(str(args["text"]), args.get("part") or None, target, args.get("image") or None,
+                                  chat_name=str(args.get("chat") or ""))
+    to = (job.get("chat") or {}).get("name")
+    return "CAD job %s%s: %s" % (job["id"], " for the chat '%s'" % to if to else " (new chat)", how)
 
 
 _SETUP = {"type": "object", "description": "The setup as described by studio_context"}
@@ -312,13 +314,17 @@ def get_tools():
         {"name": "studio_cad_job", "label": "Render Studio: CAD job",
          "description": "Send a change to the CAD side as a job for a Claude chat that works in the CAD program "
                         "(e.g. Onshape in the Claude app): saved in ~/.config/ai-studio/jobs, its text copied, "
-                        "and the Claude app opened at the chat the CAD export came from (target 'origin', the "
-                        "default, when the export names its chat) or at a new chat (target 'new'). That chat "
-                        "takes it with blender_jobs. Only when the user asks to send it. Without 'text': list "
-                        "the jobs and their status.",
+                        "and the Claude app opened at that chat. The chat: the one the user names ('chat', e.g. "
+                        "'CAD 5'; remembered for this CAD export), else the chat the export came from or the last "
+                        "job of this export went to (target 'origin'); none known or target 'new': a new chat. "
+                        "When a chat is known and the user did not say where, ask first (ask_user: that chat or "
+                        "a new one). That chat takes it with blender_jobs. Only when the user asks to send it. "
+                        "Report exactly what the result says (e.g. that the Claude app must be reopened once). "
+                        "Without 'text': list the jobs and their status.",
          "inputSchema": {"type": "object", "properties": {
              "text": {"type": "string", "description": "What to change, with numbers, in the user's language"},
              "part": {"type": "string", "description": "Object name of the part (optional)"},
+             "chat": {"type": "string", "description": "Name of the Claude chat the user wants it in, e.g. 'CAD 5'"},
              "target": {"type": "string", "enum": ["origin", "new"]},
              "image": {"type": "string", "description": "PNG/JPEG that shows it (optional)"}}},
          "handler": _cad_job},

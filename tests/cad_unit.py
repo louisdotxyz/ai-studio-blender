@@ -290,6 +290,21 @@ check("no link, only a name: Recents and paste", jobs.chat_link(dict(job, chat={
       == jobs.RECENTS)
 link = jobs.chat_link(job, "new")[0]
 check("new chat with the text", link.startswith("claude://claude.ai/new?q=CAD%20job") and "Wand%202.4%20mm" in link)
+text = jobs.message(dict(job, path=job["path"]))
+check("message names its chat and works without blender_jobs", "for the chat 'Leuchte'" in text
+      and "no blender_jobs tool" in text and job["path"] in text and "linked to the Mac" in text, text)
+temp_image = os.path.join(TMP, "tool-result.png")
+open(temp_image, "wb").write(b"\x89PNG fake")
+with_image = jobs.new_job("Radius 2 mm", images=[temp_image, os.path.join(TMP, "missing.png")], jobs_dir=jobs_dir)
+os.remove(temp_image)   # the temporary original is gone, the job keeps its copy
+check("images copied next to the job", len(with_image["images"]) == 1
+      and with_image["images"][0].startswith(os.path.join(jobs_dir, with_image["id"]))
+      and os.path.isfile(with_image["images"][0]), with_image["images"])
+check("no chat remembered yet", jobs.remembered_chat("/x/VELO/files/CAD", jobs_dir) is None)
+jobs.remember_chat("/x/VELO/files/CAD/", {"name": "CAD 5"}, jobs_dir)
+check("chat remembered per CAD folder", jobs.remembered_chat("/x/VELO/files/CAD", jobs_dir)
+      == {"name": "CAD 5", "url": "", "session": ""}, jobs.remembered_chat("/x/VELO/files/CAD", jobs_dir))
+jobs.done(with_image["id"], jobs_dir=jobs_dir)
 jobs.claim(job["id"], "Leuchte", jobs_dir=jobs_dir)
 check("claimed", jobs.load(job["id"], jobs_dir)["status"] == "claimed")
 jobs.done(job["id"], "Wand ist 2.4", jobs_dir=jobs_dir)
