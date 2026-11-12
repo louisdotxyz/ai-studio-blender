@@ -111,7 +111,7 @@ def _unpin(panel):
 
 
 STUDIO_TABS = (
-    ('RENDER', "Render", "Camera, format and image", 'CAMERA_DATA', 0),
+    ('RENDER', "Camera", "Camera, format and image", 'CAMERA_DATA', 0),
     ('LIGHT', "Light", "Light setups, lights and the World", 'LIGHT', 1),
     ('MATERIAL', "Material", "Materials of the active object", 'MATERIAL', 2),
     ('QUEUE', "Queue", "Render queue", 'RENDER_STILL', 3),

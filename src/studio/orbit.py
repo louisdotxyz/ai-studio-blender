@@ -4,9 +4,11 @@
 Horizontal, vertical and distance are computed from the camera position
 relative to the orbit center (center of the object's bounding box, or the 3D
 cursor). When changed, the camera moves on a sphere around that center and
-looks at it. Height moves camera and center up or down, Left / Right moves them
-sideways (along the camera's horizontal axis). Vertical goes up to ±90°: the
-roll comes from the horizontal angle, so a straight top view keeps its direction.
+looks at it. Height moves camera and center up or down (world Z), Left / Right moves them
+sideways (along the camera's horizontal axis) and Up / Down along the image's up direction
+(the camera's Y axis: in a straight top view this is the only way to move the picture up or
+down). Vertical goes up to ±90°: the roll comes from the horizontal angle, so a straight top
+view keeps its direction.
 """
 
 import math
@@ -37,6 +39,20 @@ def target_center(target, lift=0.0):
 def _right(horizontal):
     """The horizontal axis pointing right for a view from `horizontal` (no roll)."""
     return Vector((-math.sin(horizontal), math.cos(horizontal), 0.0))
+
+
+def _up(horizontal, vertical):
+    """The image's up direction for a view from (horizontal, vertical) without roll."""
+    direction = Vector((math.cos(vertical) * math.cos(horizontal),
+                        math.cos(vertical) * math.sin(horizontal),
+                        math.sin(vertical)))
+    return direction.cross(_right(horizontal))
+
+
+def pitch(obj):
+    """Vertical angle of the direction the object looks back along (its Z axis)."""
+    z = obj.matrix_world.to_3x3().normalized().col[2]
+    return math.asin(max(-1.0, min(1.0, z.z)))
 
 
 def heading(obj):
@@ -116,8 +132,12 @@ def _base(settings, camera):
     return center
 
 
-def _center(settings, camera, horizontal):
-    return _base(settings, camera) + _right(horizontal) * settings.orbit_side
+def _center(settings, camera, horizontal, vertical=None):
+    """The point the camera looks at: the base, shifted sideways and along the image's up."""
+    center = _base(settings, camera) + _right(horizontal) * settings.orbit_side
+    if settings.orbit_up:
+        center += _up(horizontal, pitch(camera) if vertical is None else vertical) * settings.orbit_up
+    return center
 
 
 def camera_orbit(settings, camera=None):
@@ -130,8 +150,8 @@ def camera_orbit(settings, camera=None):
 def _place(settings, camera, horizontal, vertical, distance):
     vertical = max(-MAX_VERTICAL, min(MAX_VERTICAL, vertical))
     distance = max(MIN_DISTANCE, distance)
-    camera.matrix_world = orbit_matrix(_center(settings, camera, horizontal), horizontal, vertical, distance,
-                                       camera.matrix_world.to_scale())
+    camera.matrix_world = orbit_matrix(_center(settings, camera, horizontal, vertical), horizontal, vertical,
+                                       distance, camera.matrix_world.to_scale())
 
 
 def _getter(index):
@@ -181,6 +201,22 @@ def set_side(settings, value):
     settings.orbit_side = value
 
 
+def get_up(settings):
+    return settings.orbit_up
+
+
+def set_up(settings, value):
+    """Up / Down: camera and the point it looks at move along the image's up direction together
+    (also in a straight top view, where Height only changes the distance)."""
+    camera = _camera(settings)
+    if camera is None:
+        return
+    matrix = camera.matrix_world.copy()
+    matrix.translation += _up(heading(camera), pitch(camera)) * (value - settings.orbit_up)
+    camera.matrix_world = matrix
+    settings.orbit_up = value
+
+
 get_horizontal, set_horizontal = _getter(0), _setter(0)
 get_vertical, set_vertical = _getter(1), _setter(1)
 get_distance, set_distance = _getter(2), _setter(2)
@@ -191,6 +227,7 @@ def on_target(settings, _context):
     (cleared: the camera stays, the 3D cursor is the center from now on)."""
     settings.orbit_lift = 0.0
     settings.orbit_side = 0.0
+    settings.orbit_up = 0.0
     camera = _camera(settings)
     if camera is not None and settings.orbit_target is not None and settings.orbit_target != camera:
         center = _base(settings, camera)

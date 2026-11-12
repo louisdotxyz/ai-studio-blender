@@ -386,6 +386,11 @@ class RS_Settings(PropertyGroup):
         name="Left / Right", description="Camera and the point it looks at move sideways together (0 = centered)",
         step=FINE_STEP, precision=3, subtype='DISTANCE', get=orbit.get_side, set=orbit.set_side, options=set(),
     )
+    orbit_up_offset: FloatProperty(
+        name="Up / Down", description="Camera and the point it looks at move up or down in the picture together "
+                                      "(also in a straight top view; 0 = centered)",
+        step=FINE_STEP, precision=3, subtype='DISTANCE', get=orbit.get_up, set=orbit.set_up, options=set(),
+    )
     cam_ortho_scale: FloatProperty(
         name="Ortho Scale", description="Width the orthographic camera shows", min=0.001,
         step=FINE_STEP, precision=3, subtype='DISTANCE', get=_cam_value("ortho_scale", 1.0)[0],
@@ -404,6 +409,7 @@ class RS_Settings(PropertyGroup):
         set=_cam_value("clip_end")[1], options=set())
     orbit_lift: FloatProperty(subtype='DISTANCE', options={'HIDDEN'})
     orbit_side: FloatProperty(subtype='DISTANCE', options={'HIDDEN'})
+    orbit_up: FloatProperty(subtype='DISTANCE', options={'HIDDEN'})
     material_source: PointerProperty(
         type=bpy.types.Object, poll=_has_material, update=_material_pick_update,
         name="Link Material From",

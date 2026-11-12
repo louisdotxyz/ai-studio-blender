@@ -180,9 +180,7 @@ class RS_PT_camera(_SidebarPanel, Panel):
         layout = self.layout
         draw_claude_prompt(layout.box(), context, 'RENDER')
         scene = context.scene
-        from . import cadswap, render_setup
-        render_setup.draw(layout, scene)
-        cadswap.draw(layout)   # CAD up front: import, new version, comments and jobs for the CAD side
+        # Set Up for Product Renders is in the chat's setup card, the CAD box in the chat (Claude tab)
         rq = scene.render_studio
         render = scene.render
         cam = active_camera(scene)
@@ -269,6 +267,7 @@ class RS_PT_camera(_SidebarPanel, Panel):
         col.prop(rq, "orbit_distance")
         col.prop(rq, "orbit_height")
         col.prop(rq, "orbit_side_offset")
+        col.prop(rq, "orbit_up_offset")
 
         # Background
         box = layout.box()

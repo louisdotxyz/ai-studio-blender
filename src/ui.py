@@ -1269,6 +1269,7 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         self._draw_actions(layout)
         self._draw_live(layout)
         self._draw_render(layout)
+        self._draw_cad(layout, context)
         self._draw_questions(layout, context)
         self._draw_pending(layout, context)
         self._draw_input(layout, context, prefs)
@@ -1305,6 +1306,8 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         from . import updates
         if updates.state["available"] and updates.mode() == 'ASK':
             h += 1.5
+        from .studio import cadswap
+        h += cadswap.chat_height(bpy.context)
         for task in core.questions:
             h += 4 + len(task.options) + (1 if task.multi_select else 0)
         for task in core.pending:
@@ -1567,6 +1570,12 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         row.progress(factor=runner.RUN.list_progress, type='BAR',
                      text=text if text.startswith("Preview") else "Render " + text)
         row.operator("render_studio.cancel", text="", icon='X')
+
+    @staticmethod
+    def _draw_cad(layout, context):
+        """CAD: import, new version, comments and jobs for the CAD side (Onshape chat)."""
+        from .studio import cadswap
+        cadswap.draw_chat(layout, context)
 
     def _draw_live(self, layout):
         text = core.live_status()
@@ -1910,6 +1919,9 @@ def register():
         set=lambda self, value: core.set_current_title(value),
         options={'SKIP_SAVE'},
     )
+    bpy.types.WindowManager.claude_show_cad = BoolProperty(
+        name="CAD Comments and Jobs", description="Show the CAD comments and jobs for the CAD side",
+        default=False)
     bpy.types.WindowManager.claude_show_setup = BoolProperty(
         name="Show Setup", description="Show the setup card in the chat", default=False, options={'SKIP_SAVE'})
     bpy.types.WindowManager.claude_use_selection = BoolProperty(
@@ -1934,6 +1946,7 @@ def unregister():
     del bpy.types.WindowManager.claude_prompt
     del bpy.types.WindowManager.claude_use_selection
     del bpy.types.WindowManager.claude_show_setup
+    del bpy.types.WindowManager.claude_show_cad
     del bpy.types.WindowManager.claude_chat_title
     chatview.unregister()
     for cls in reversed(classes):

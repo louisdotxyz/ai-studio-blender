@@ -134,6 +134,20 @@ def orbit_and_top_view():
     rq.orbit_side_offset = 0.5
     check("left/right moves the camera", abs((cam.location - before).length - 0.5) < 1e-4)
     rq.orbit_side_offset = 0.0
+    # straight top view: Height only changes the distance, Up / Down moves the picture
+    rq.orbit_vertical = math.radians(90)
+    bpy.context.view_layer.update()
+    before, look = cam.matrix_world.translation.copy(), cam.matrix_world.to_3x3() @ Vector((0, 0, -1))
+    rq.orbit_up_offset = 0.3
+    bpy.context.view_layer.update()
+    moved = cam.matrix_world.translation - before
+    check("up/down in a top view moves the picture, not the distance", abs(moved.length - 0.3) < 1e-4
+          and abs(moved.z) < 1e-6 and ((cam.matrix_world.to_3x3() @ Vector((0, 0, -1))) - look).length < 1e-6, moved)
+    rq.orbit_horizontal = math.radians(60)
+    check("orbiting keeps the up/down offset", abs(rq.orbit_up_offset - 0.3) < 1e-6
+          and abs(math.degrees(rq.orbit_vertical) - 90) < 1e-3)
+    rq.orbit_up_offset = 0.0
+    rq.orbit_vertical = math.radians(30)
 
 
 @section
