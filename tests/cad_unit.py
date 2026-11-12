@@ -256,6 +256,65 @@ osh._security = lambda *a: Done(44, "", "security: SecKeychainSearchCopyNext: Th
 check("no keys in the keychain: None", osh.keys() is None)
 osh._security = real_security
 
+# friendly sentences instead of errors (CAD box, sync)
+real_whoami = osh.whoami
+for error, expect in (("Onshape refused the keys (401): …", "does not accept the saved API keys"),
+                      ("Onshape does not answer: timed out", "cannot be reached")):
+    def boom(*a, _e=error, **k):
+        raise osh.OnshapeError(_e)
+    osh.whoami = boom
+    ok_, text = osh.check(credentials=("A", "B"))
+    check("keys check: %s" % expect, not ok_ and expect in text, text)
+osh.whoami = lambda *a, **k: "Louis"
+check("keys check: works", osh.check(credentials=("A", "B")) == (True, "Onshape keys work (Louis)"))
+osh.whoami = real_whoami
+
+# the chat an export came from
+side = os.path.join(TMP, "Chat V1.cad.json")
+json.dump({"format": "ai-studio-cad/1", "chat": {"name": "Leuchte V22", "url": "https://evil.example/x",
+                                                 "session": "cad-leuchte"}}, open(side, "w"))
+chat = cf.load_sidecar(side)["chat"]
+check("sidecar chat: name and session kept, foreign link dropped",
+      chat == {"name": "Leuchte V22", "url": "", "session": "cad-leuchte"}, chat)
+
+# CAD jobs (files) and the links into the Claude app
+jobs = load("cadjobs", "cadjobs.py")
+jobs_dir = os.path.join(TMP, "jobs")
+uuid_ = "0b9e1c2a-1111-4222-8333-444455556666"
+job = jobs.new_job("  Wand  2.4 mm  ", part="Deckel", chat={"name": "Leuchte", "url": "https://claude.ai/chat/" + uuid_},
+                   jobs_dir=jobs_dir)
+check("job written, text tidy", job["text"] == "Wand 2.4 mm" and os.path.isfile(job["path"])
+      and jobs.jobs("open", jobs_dir)[0]["id"] == job["id"])
+check("origin chat opens by its link", jobs.chat_link(job)[0] == "claude://claude.ai/chat/" + uuid_)
+check("no link, only a name: Recents and paste", jobs.chat_link(dict(job, chat={"name": "Leuchte"}))[0]
+      == jobs.RECENTS)
+link = jobs.chat_link(job, "new")[0]
+check("new chat with the text", link.startswith("claude://claude.ai/new?q=CAD%20job") and "Wand%202.4%20mm" in link)
+jobs.claim(job["id"], "Leuchte", jobs_dir=jobs_dir)
+check("claimed", jobs.load(job["id"], jobs_dir)["status"] == "claimed")
+jobs.done(job["id"], "Wand ist 2.4", jobs_dir=jobs_dir)
+check("done with a note", jobs.load(job["id"], jobs_dir)["note"] == "Wand ist 2.4" and not jobs.jobs("open", jobs_dir))
+try:
+    jobs.claim(job["id"], jobs_dir=jobs_dir)
+    check("a done job cannot be claimed again", False)
+except ValueError:
+    check("a done job cannot be claimed again", True)
+calls = []
+
+
+def fake_run(cmd, **k):
+    calls.append(cmd)
+    if cmd[1] == "agents":
+        return Done(0, json.dumps([{"name": "cad-leuchte", "sessionId": "abc", "status": "idle", "cwd": "/x"}]))
+    return Done(0)
+
+
+found = jobs.find_session(jobs.code_sessions("claude", run=fake_run), "CAD-Leuchte")
+check("open Claude Code session found by name", found and found["sessionId"] == "abc")
+check("message goes out with only SendMessage", jobs.notify_session("claude", "cad-leuchte", job, run=fake_run)
+      and calls[-1][1] == "-p" and calls[-1][-2:] == ["SendMessage", "ListAgents"]
+      and "cad-leuchte" in calls[-1][2] and job["id"] in calls[-1][2])
+
 ok = all(results)
 print("CAD_UNIT_OK" if ok else "CAD_UNIT_FAIL", "%d/%d" % (sum(results), len(results)))
 sys.exit(0 if ok else 1)

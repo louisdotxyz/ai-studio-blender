@@ -2,7 +2,7 @@
 """Preferences › Studio › Onshape: API keys into the keychain, test them, sync CAD feedback."""
 
 import bpy
-from bpy.props import StringProperty
+from bpy.props import EnumProperty, StringProperty
 from bpy.types import Operator
 
 from . import onshape
@@ -117,14 +117,42 @@ def comment_state(context, force=False):
             folder = cadimport.feedback_folder()
         except (ValueError, AttributeError):
             folder = None
+        from .. import cadjobs
+        try:
+            jobs = [j for j in cadjobs.jobs() if folder and j.get("cad_folder") == folder]
+        except OSError:
+            jobs = []
         _points.update(time=time.monotonic(), folder=folder,
                        open=cadfiles.open_feedback(folder) if folder else [],
-                       sent=cadfiles.feedback_comments(folder) if folder else {})
+                       sent=cadfiles.feedback_comments(folder) if folder else {}, jobs=jobs)
     return _points
 
 
 def _refresh():
     _points["time"] = -10.0
+
+
+_key_check = {"time": -1e9, "ok": True, "text": "", "thread": None}
+KEY_CHECK_EVERY = 600.0   # seconds
+
+
+def key_hint(base):
+    """A sentence when the saved Onshape keys do not work (checked in the background at most every
+    10 minutes, when the CAD box is shown), else ""."""
+    import threading
+    import time
+    if not cached_keys():
+        return ""
+    running = _key_check["thread"] is not None and _key_check["thread"].is_alive()
+    if not running and time.monotonic() - _key_check["time"] > KEY_CHECK_EVERY:
+        _key_check["time"] = time.monotonic()
+
+        def run():
+            ok, text = onshape.check(base)
+            _key_check.update(ok=ok, text=text)
+        _key_check["thread"] = threading.Thread(target=run, name="ai-studio-onshape-check", daemon=True)
+        _key_check["thread"].start()
+    return "" if _key_check["ok"] else _key_check["text"]
 
 
 class RS_OT_cad_comment(Operator):
@@ -216,7 +244,64 @@ class RS_OT_cad_comments_open(Operator):
         return {'FINISHED'}
 
 
+def _job_targets(self, context):
+    from . import cadimport
+    chat = cadimport.origin_chat(context.active_object, comment_state(context)["folder"])
+    if chat:
+        name = chat.get("name") or "the chat of the export"
+        items = [('ORIGIN', "Send to %s" % name, "The Claude chat this CAD export came from"),
+                 ('NEW', "New Chat", "Start a new chat in the Claude app with the job")]
+    else:
+        items = [('NEW', "New Chat", "The export does not say which chat it came from: a new chat gets the job")]
+    _job_targets.items = items   # Blender needs the list to live on
+    return items
+
+
+class RS_OT_cad_job(Operator):
+    bl_idname = "render_studio.cad_job"
+    bl_label = "Send CAD Job"
+    bl_description = ("Ask the CAD side for a change: the Claude app opens at the chat that made the CAD export "
+                      "(or a new chat) with the job, the text is also in the clipboard")
+
+    part: StringProperty(name="Part", options={'SKIP_SAVE'})
+    text: StringProperty(name="Change", description="What should change, with numbers", options={'SKIP_SAVE'})
+    target: EnumProperty(name="To", items=_job_targets, options={'SKIP_SAVE'})
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        if obj is not None and obj.select_get():
+            from . import cadswap
+            self.part = obj.get(cadswap.CAD_ID) or obj.name
+        return context.window_manager.invoke_props_dialog(self, width=480, confirm_text="Send")
+
+    def draw(self, context):
+        col = self.layout.column()
+        col.prop(self, "part")
+        col.prop(self, "text")
+        col.row().prop(self, "target", expand=True)
+
+    def execute(self, context):
+        from . import cadimport
+        if not self.text.strip():
+            self.report({'WARNING'}, "Write what should change first")
+            return {'CANCELLED'}
+        try:
+            job, how = cadimport.send_job(self.text, self.part.strip() or None,
+                                          "origin" if self.target == 'ORIGIN' else "new")
+        except (OSError, ValueError) as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        _refresh()
+        self.report({'INFO'}, "CAD job %s" % how)
+        return {'FINISHED'}
+
+
 SHOWN = 5
+
+
+def _wrap(text, width):
+    import textwrap
+    return textwrap.wrap(text, width) or [text]
 
 
 def draw_comments(layout, context):
@@ -230,8 +315,15 @@ def draw_comments(layout, context):
     row.label(text="CAD Comments · %d open" % len(points) if points else "CAD Comments", icon='WORDWRAP_ON')
     row.operator(RS_OT_cad_comments_open.bl_idname, text="", icon='TEXT')
     from . import cadimport
-    if cached_keys() and onshape.parse_source(cadimport.onshape_source(None, state["folder"])):
+    where = onshape.parse_source(cadimport.onshape_source(None, state["folder"]))
+    hint = key_hint(where["base"]) if where else ""
+    if cached_keys() and where:
         row.operator(RS_OT_onshape_sync.bl_idname, text="", icon='FILE_REFRESH')
+    if hint:
+        sub = box.column(align=True)
+        sub.alert = True
+        for part in _wrap(hint, 60):
+            sub.label(text=part, translate=False)
     col = box.column(align=True)
     for point in points[-SHOWN:]:
         _day, _sep, rest = point.partition(" · ")
@@ -243,8 +335,19 @@ def draw_comments(layout, context):
         sub = col.row()
         sub.active = False
         sub.label(text="… and %d earlier ones" % (len(points) - SHOWN))
-    box.operator(RS_OT_cad_comment.bl_idname, icon='ADD')
+    row = box.row(align=True)
+    row.operator(RS_OT_cad_comment.bl_idname, icon='ADD')
+    row.operator(RS_OT_cad_job.bl_idname, text="Send CAD Job", icon='EXPORT')
+    jobs = state.get("jobs") or []
+    if jobs:
+        col = box.column(align=True)
+        for job in jobs[-3:]:
+            icon = {'open': 'TIME', 'claimed': 'PLAY', 'done': 'CHECKMARK'}.get(job.get("status"), 'DOT')
+            line = col.row()
+            line.active = job.get("status") != "done"
+            note = (" · " + job["note"]) if job.get("note") else ""
+            line.label(text="%s%s" % (job.get("text", ""), note), icon=icon, translate=False)
 
 
 classes = (RS_OT_onshape_keys, RS_OT_onshape_forget, RS_OT_onshape_sync,
-           RS_OT_cad_comment, RS_OT_cad_comment_done, RS_OT_cad_comments_open)
+           RS_OT_cad_comment, RS_OT_cad_comment_done, RS_OT_cad_comments_open, RS_OT_cad_job)

@@ -285,6 +285,43 @@ def feedback_to_onshape():
 
 
 @section
+def cad_job_to_its_chat():
+    """A CAD job goes to the chat the export came from (named in the sidecar), else to a new chat."""
+    os.environ["AI_STUDIO_JOBS_DIR"] = os.path.join(TMP, "jobs")
+    os.environ["AI_STUDIO_NO_OPEN"] = "1"   # never open the Claude app from a test
+    cadjobs = mod("cadjobs")
+    folder = os.path.join(TMP, "with_chat")
+    os.makedirs(folder)
+    part = bpy.data.objects.new("Griff", None)
+    bpy.context.scene.collection.objects.link(part)
+    part["cad_file"] = os.path.join(folder, "Leuchte V6.glb")
+    part["cad_chat"] = json.dumps({"name": "Leuchte V22", "url": "https://claude.ai/chat/0b9e1c2a-1111-4222-8333-444455556666"})
+    try:
+        chat = cadimport.origin_chat(part)
+        check("origin chat from the part", chat and chat["name"] == "Leuchte V22", chat)
+        job, how = cadimport.send_job("Griff 5 mm länger", part, "origin", open_app=False)
+        check("job saved with its chat and folder", job["chat"]["name"] == "Leuchte V22" and job["cad_folder"] == folder
+              and job["part"] == "Griff" and "saved as" in how, (job, how))
+        check("job text into the clipboard (Blender without a window keeps no clipboard)",
+              "text in the clipboard" in how, how)
+        job, _how = cadimport.send_job("Fase 1 mm", part, "new", open_app=False)
+        check("new chat: no chat in the job", job["chat"] is None)
+        ops = mod("studio.onshape_ops")
+        for cls in ops.classes:
+            bpy.utils.register_class(cls)
+        try:
+            bpy.context.view_layer.objects.active = None
+            result = bpy.ops.render_studio.cad_job(part="Griff", text="Radius 2 mm", target='NEW')
+            check("Send CAD Job button", result == {'FINISHED'}
+                  and any(j["text"] == "Radius 2 mm" for j in cadjobs.jobs()), result)
+        finally:
+            for cls in ops.classes:
+                bpy.utils.unregister_class(cls)
+    finally:
+        bpy.data.objects.remove(part)
+
+
+@section
 def check_views_place_cameras():
     runner = mod("studio.runner")
     shown = []

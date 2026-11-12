@@ -69,6 +69,17 @@ def _vec(value, name):
     return [float(v) for v in value]
 
 
+def clean_chat(chat):
+    """The sidecar's "chat" (where the export came from) as {"name", "url", "session"}, or None.
+    url: only links into Claude; session: a Claude Code session's name (cross-session messages)."""
+    if not isinstance(chat, dict):
+        return None
+    out = {key: str(chat.get(key) or "").strip()[:200] for key in ("name", "url", "session")}
+    if out["url"] and not out["url"].startswith(("https://claude.ai/", "claude://")):
+        out["url"] = ""
+    return out if any(out.values()) else None
+
+
 def load_sidecar(path):
     """The sidecar as a checked dict; parts keyed by part_name(id) under "by_key"."""
     with open(path, encoding="utf-8") as f:
@@ -104,6 +115,7 @@ def load_sidecar(path):
                        "x": _vec(m.get("x", [1, 0, 0]), "x"), "z": _vec(m.get("z", [0, 0, 1]), "z")})
     data["mounts"] = mounts
     data["variants"] = data.get("variants") or {}
+    data["chat"] = clean_chat(data.get("chat"))   # the Claude chat the export came from
     data["path"] = path
     return data
 

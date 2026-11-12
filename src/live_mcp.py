@@ -10,6 +10,9 @@ written by live.py) on every call and forwards to Blender's Live Connection
 import json
 import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import cadjobs  # noqa: E402  (next to this file, no bpy)
 import urllib.error
 import urllib.request
 
@@ -20,7 +23,9 @@ INSTRUCTIONS = (
     "blender_scene. blender_python runs bpy code in Blender as one undo step (print() returns output; "
     "bpy, bmesh, mathutils, math are imported; `api` is AI Studio's helper module). The user may have to "
     "approve the code in Blender. Never save the .blend file. Objects you replace go into the archive "
-    "with api.archive(objects) instead of being deleted, unless the user says to delete them.")
+    "with api.archive(objects) instead of being deleted, unless the user says to delete them. "
+    "CAD jobs (changes Blender asks the CAD side for): blender_jobs list / claim / done – this works "
+    "without Blender being open.")
 
 TOOLS = [
     {"name": "blender_status",
@@ -51,6 +56,20 @@ TOOLS = [
          "required": ["path"]}},
 ]
 
+TOOLS.append(
+    {"name": "blender_jobs",
+     "description": "CAD jobs from Blender: changes to make in the CAD model (e.g. in Onshape). list shows the "
+                    "open ones; claim takes one (others see it is being worked on); done marks it finished with "
+                    "a short note for Blender. Works without Blender being open.",
+     "inputSchema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["list", "claim", "done"]},
+         "id": {"type": "string", "description": "The job id (claim, done)"},
+         "status": {"type": "string", "enum": ["open", "claimed", "done", "all"],
+                    "description": "list: which ones (default open)"},
+         "by": {"type": "string", "description": "claim: who takes it, e.g. the chat's name"},
+         "note": {"type": "string", "description": "done: what was changed"}},
+         "required": ["action"]}})
+
 OPS = {"blender_status": "ping", "blender_scene": "info", "blender_object": "object",
        "blender_python": "python", "blender_screenshot": "screenshot", "blender_image": "image"}
 
@@ -77,8 +96,34 @@ def call_blender(payload, timeout=7200):
         raise RuntimeError("Blender does not answer (%s). Is it still open?" % exc)
 
 
+def jobs_tool(arguments):
+    """blender_jobs: the job files, no Blender needed."""
+    action = str(arguments.get("action") or "list")
+    try:
+        if action == "list":
+            status = arguments.get("status") or "open"
+            found = cadjobs.jobs(None if status == "all" else status)
+            if not found:
+                return {"content": [{"type": "text", "text": "No %s CAD jobs." % status}]}
+            text = "\n\n".join("%s\n%s" % (cadjobs.summary(j), cadjobs.message(j)) for j in found)
+        elif action == "claim":
+            job = cadjobs.claim(arguments.get("id", ""), arguments.get("by", ""))
+            text = "Claimed.\n" + cadjobs.message(job) + ("\nCAD export folder: %s" % job["cad_folder"]
+                                                         if job.get("cad_folder") else "")
+        elif action == "done":
+            job = cadjobs.done(arguments.get("id", ""), arguments.get("note", ""))
+            text = "Done: %s. Blender shows it in its CAD box." % job["id"]
+        else:
+            raise ValueError("action must be list, claim or done")
+    except (OSError, ValueError, KeyError) as exc:
+        return {"content": [{"type": "text", "text": "CAD jobs: %s" % exc}], "isError": True}
+    return {"content": [{"type": "text", "text": text}]}
+
+
 def run_tool(name, arguments):
     """MCP tools/call result."""
+    if name == "blender_jobs":
+        return jobs_tool(arguments or {})
     if name not in OPS:
         return {"content": [{"type": "text", "text": "Unknown tool " + name}], "isError": True}
     payload = dict(arguments or {}, op=OPS[name])

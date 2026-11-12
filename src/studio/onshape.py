@@ -116,6 +116,28 @@ def whoami(base="https://cad.onshape.com", credentials=None):
     return info.get("name") or info.get("email") or "?"
 
 
+KEYS_REFUSED = ("Onshape does not accept the saved API keys (deleted or expired?): add new ones in "
+                "Preferences › Studio › Onshape.")
+OFFLINE = ("Onshape cannot be reached right now (offline?). The comments stay in CAD-Feedback.md and go to "
+           "Onshape at the next sync.")
+
+
+def check(base="https://cad.onshape.com", credentials=None):
+    """(ok, sentence) for the user: do the saved keys work? Never raises."""
+    if not (credentials or keys()):
+        return False, "No Onshape API keys yet: Preferences › Studio › Onshape › Add Keys…"
+    try:
+        name = whoami(base, credentials)
+    except OnshapeError as exc:
+        text = str(exc)
+        if "refused the keys" in text:
+            return False, KEYS_REFUSED
+        if "does not answer" in text:
+            return False, OFFLINE
+        return False, "Onshape: " + text
+    return True, "Onshape keys work (%s)" % name
+
+
 def post_comment(source, message, image=None, credentials=None):
     """A comment on the source's element (+ the image as an attachment). Returns the comment id."""
     where = parse_source(source)

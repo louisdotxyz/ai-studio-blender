@@ -185,6 +185,17 @@ def _cad_feedback(args):
     return "Open CAD feedback:\n" + ("\n".join("- " + p for p in points) if points else "none")
 
 
+def _cad_job(args):
+    from . import cadimport
+    from .. import cadjobs
+    if not args.get("text"):
+        found = cadjobs.jobs()
+        return "CAD jobs:\n" + ("\n".join("- " + cadjobs.summary(j) for j in found[-15:]) if found else "none")
+    target = "new" if str(args.get("target") or "").lower() == "new" else "origin"
+    job, how = cadimport.send_job(str(args["text"]), args.get("part") or None, target, args.get("image") or None)
+    return "CAD job %s: %s" % (job["id"], how)
+
+
 _SETUP = {"type": "object", "description": "The setup as described by studio_context"}
 
 
@@ -298,6 +309,19 @@ def get_tools():
              "sync": {"type": "boolean", "description": "Sync with Onshape both ways"},
              "folder": {"type": "string", "description": "Folder of the CAD export, if no part is given"}}},
          "handler": _cad_feedback},
+        {"name": "studio_cad_job", "label": "Render Studio: CAD job",
+         "description": "Send a change to the CAD side as a job for a Claude chat that works in the CAD program "
+                        "(e.g. Onshape in the Claude app): saved in ~/.config/ai-studio/jobs, its text copied, "
+                        "and the Claude app opened at the chat the CAD export came from (target 'origin', the "
+                        "default, when the export names its chat) or at a new chat (target 'new'). That chat "
+                        "takes it with blender_jobs. Only when the user asks to send it. Without 'text': list "
+                        "the jobs and their status.",
+         "inputSchema": {"type": "object", "properties": {
+             "text": {"type": "string", "description": "What to change, with numbers, in the user's language"},
+             "part": {"type": "string", "description": "Object name of the part (optional)"},
+             "target": {"type": "string", "enum": ["origin", "new"]},
+             "image": {"type": "string", "description": "PNG/JPEG that shows it (optional)"}}},
+         "handler": _cad_job},
         {"name": "studio_render_queue", "label": "Render Studio: render queue",
          "description": "Render Studio's render queue: 'status' (entries, cameras, progress), 'add' a camera "
                         "(LOW = quick test, HIGH = final), 'start', 'wait' (answers when everything is "

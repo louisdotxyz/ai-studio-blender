@@ -78,6 +78,8 @@ def import_tagged(path):
             obj["cad_mass_kg"] = float(part["mass_kg"])
         if sidecar.get("source"):
             obj["cad_source"] = str(sidecar["source"])
+        if sidecar.get("chat"):
+            obj["cad_chat"] = json.dumps(sidecar["chat"])
     if sidecar:
         place_mounts(sidecar["mounts"])
     _last.update(objects=[o.name for o in objects], file=path, folder=os.path.dirname(path))
@@ -400,6 +402,103 @@ def onshape_source(obj=None, folder=None):
     return ""
 
 
+def origin_chat(obj=None, folder=None):
+    """The Claude chat the CAD export came from ({"name", "url"}), or None."""
+    from ..cadjobs import clean_chat
+
+    def parse(text):
+        try:
+            return clean_chat(json.loads(text))
+        except (TypeError, ValueError):
+            return None
+    if obj is not None and obj.get("cad_chat"):
+        return parse(obj["cad_chat"])
+    for other in bpy.data.objects:
+        if other.get("cad_chat") and (folder is None or os.path.dirname(other.get("cad_file", "")) == folder):
+            return parse(other["cad_chat"])
+    if folder and os.path.isdir(folder):
+        sidecars = sorted((os.path.join(folder, n) for n in os.listdir(folder) if n.endswith(".cad.json")),
+                          key=os.path.getmtime, reverse=True)
+        for path in sidecars:
+            try:
+                chat = (cadfiles.load_sidecar(path) or {}).get("chat")
+            except (OSError, ValueError):
+                continue
+            if chat:
+                return chat
+    return None
+
+
+def send_job(text, part=None, target="origin", image=None, open_app=True):
+    """A CAD job for the chat: a file in ~/.config/ai-studio/jobs, its text in the clipboard and
+    the Claude app opened at the chat the export came from (target "origin") or at a new chat
+    ("new"). Returns (job, how it was delivered)."""
+    from .. import cadjobs
+    obj = bpy.data.objects.get(part) if isinstance(part, str) else part
+    label = (obj.get(cadswap.CAD_ID) or obj.name) if obj is not None else str(part or "")
+    try:
+        folder = feedback_folder(obj)
+    except ValueError:
+        folder = ""
+    chat = origin_chat(obj, folder or None)
+    job = cadjobs.new_job(text, part=label, cad_folder=folder, source=onshape_source(obj, folder or None),
+                          chat=chat if target == "origin" else None, images=[image] if image else [])
+    how = ["saved as %s" % job["id"]]
+    try:
+        bpy.context.window_manager.clipboard = cadjobs.message(job)
+        how.append("text in the clipboard")
+    except (AttributeError, RuntimeError):
+        pass
+    if open_app:
+        link, said = cadjobs.chat_link(job, target)
+        if deliver_link(link):
+            how.append(said)
+    if target == "origin" and chat and chat.get("session"):
+        _notify_session_later(chat["session"], job)
+        how.append("also sent to the Claude Code session '%s' if it is open" % chat["session"])
+    return job, ", ".join(how)
+
+
+def _notify_session_later(session, job):
+    """The open Claude Code session named in the export gets the job as a message (in a thread:
+    `claude agents` and a short `claude -p` take a few seconds). The chat says how it went."""
+    import threading
+    from .. import cadjobs, claude_cli, core
+    prefs = core.get_prefs()
+    path = claude_cli.find_claude(prefs.claude_path if prefs else "")
+    if not path:
+        return
+
+    def run():
+        from ..setup_flow import _on_main
+        found = cadjobs.find_session(cadjobs.code_sessions(path), session)
+        if found is None:
+            text = "CAD job %s: the Claude Code session '%s' is not open (the job waits in blender_jobs)" % (
+                job["id"], session)
+        elif cadjobs.notify_session(path, found.get("name") or session, job):
+            text = "CAD job %s: sent to the open Claude Code session '%s'" % (job["id"], found.get("name") or session)
+        else:
+            text = "CAD job %s: could not message '%s' (the job waits in blender_jobs)" % (job["id"], session)
+        _on_main(core.add_message, "info", text)
+
+    threading.Thread(target=run, name="ai-studio-cad-job", daemon=True).start()
+
+
+def deliver_link(link):
+    """Open a claude:// link in the Claude app (False when it is not installed)."""
+    import subprocess
+    import sys
+    if sys.platform != "darwin" or not os.path.isdir("/Applications/Claude.app"):
+        return False
+    if os.environ.get("AI_STUDIO_NO_OPEN") or bpy.app.background:   # tests, Blender without a window
+        return False
+    try:
+        subprocess.Popen(["/usr/bin/open", link], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except OSError:
+        return False
+
+
 def _send_to_onshape():
     from .runner import prefs
     p = prefs()
@@ -454,6 +553,9 @@ def sync_feedback(folder=None):
         return "The CAD export did not come from Onshape"
     if not onshape.keys():
         return "No Onshape API keys (Preferences › Studio › Onshape)"
+    ok, sentence = onshape.check(onshape.parse_source(source)["base"])   # a clear hint instead of an error
+    if not ok:
+        return sentence
     sent = cadfiles.feedback_comments(folder)
     posted = resolved = 0
     for point in cadfiles.open_feedback(folder):

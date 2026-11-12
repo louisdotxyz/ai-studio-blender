@@ -2,13 +2,18 @@
 // Everything runs with the user's own Onshape session (cookie + XSRF token), nothing leaves the browser
 // except the export package, which goes straight to Blender's AI Studio (http://127.0.0.1:<port>/cad).
 //
+//   await OS.session()                     signed in? {ok, name} – else a clear message what to do
 //   await OS.info()                        document, workspace, element of the open tab
 //   await OS.parts()                       [{name, material, min, max}] of the Part Studio (one FS eval)
 //   await OS.addFeatures([f1, f2, …])      several features in a row, stops at the first ERROR
 //   await OS.updateFeatures([f, …])        change several features in one regeneration
 //   await OS.setVariables(eid, [{name, type, expression}])   Variable Studio, all in one call
-//   await OS.exportPackage({port, token, name, version, folder, floor})
-//        GLB (glTF) + <name>.cad.json (ids, materials, boxes, mounts) straight into Blender's folder
+//   await OS.exportPackage({port, token, name, version, folder, floor, chat: {name, url}})
+//        GLB (glTF) + <name>.cad.json (ids, materials, boxes, mounts) straight into Blender's folder.
+//        chat: where this export comes from, so Blender can send CAD jobs back (blender_jobs):
+//          name = the chat's title as the user sees it, url = its link if known (a chat cannot read its
+//          own link: ask the user to paste it once, https://claude.ai/chat/<id>), session = the name of
+//          a Claude Code session (Blender then also messages it directly while it is open)
 //
 // Mounting points: mate connectors whose feature name starts with "MOUNT |" (e.g. "MOUNT | Lenker"):
 // origin, X and Z of the connector become the empty in Blender (Z points into the part it is mounted on).
@@ -18,19 +23,44 @@
     if (!m) throw new Error("Open a Part Studio of a document first");
     return {d: m[1], w: m[2], e: m[3]};
   };
+  const SIGN_IN = "Not signed in to Onshape: sign in to Onshape in the browser pane of the Claude app " +
+                  "(cad.onshape.com), then run this again.";
   const token = () => {
     const c = document.cookie.split(";").map(s => s.trim()).find(s => s.startsWith("XSRF-TOKEN="));
-    if (!c) throw new Error("Not signed in to Onshape (no XSRF-TOKEN): ask the user to sign in");
+    if (!c) throw new Error(SIGN_IN);
     return c.slice(11);   // raw, not decoded (decoded gives 401)
   };
   const OS = window.OS = {};
+  // Signed in? Checked before anything else (info, export …): a clear sentence instead of a 401.
+  OS.session = async () => {
+    if (!/(^|\.)onshape\.com$/.test(location.hostname)) {
+      return {ok: false, message: "This tab is not Onshape: open cad.onshape.com in the browser pane first."};
+    }
+    const c = document.cookie.split(";").map(s => s.trim()).find(s => s.startsWith("XSRF-TOKEN="));
+    if (!c) return {ok: false, message: SIGN_IN};
+    const r = await fetch("/api/users/sessioninfo", {credentials: "include",
+      headers: {Accept: "application/json;charset=UTF-8; qs=0.09", "X-XSRF-TOKEN": c.slice(11)}});
+    if (r.status === 401 || r.status === 403) return {ok: false, message: SIGN_IN};
+    if (!r.ok) return {ok: false, message: "Onshape answered " + r.status + ": try again in a moment."};
+    const j = await r.json();
+    return {ok: true, name: j.name || j.email || ""};
+  };
+  let signedIn = false;
+  const ensureSession = async () => {
+    if (signedIn) return;
+    const s = await OS.session();
+    if (!s.ok) throw new Error(s.message);
+    signedIn = true;
+  };
   OS.api = async (method, path, body) => {
+    await ensureSession();
     const r = await fetch("/api" + path, {
       method, credentials: "include", body: body === undefined ? undefined : JSON.stringify(body),
       headers: {"Content-Type": "application/json", Accept: "application/json;charset=UTF-8; qs=0.09",
                 "X-XSRF-TOKEN": token()}});
     const text = await r.text();
     let j; try { j = JSON.parse(text); } catch (e) { j = text; }
+    if (r.status === 401) { signedIn = false; throw new Error(SIGN_IN); }
     if (r.status >= 400) throw new Error(method + " " + path + " → " + r.status + ": " + String(text).slice(0, 300));
     return j;
   };
@@ -140,7 +170,7 @@
     }
     throw new Error("translation did not finish in 2 minutes");
   };
-  OS.sidecar = async ({version, floor, e, parameters, variants} = {}) => {
+  OS.sidecar = async ({version, floor, e, parameters, variants, chat} = {}) => {
     const info = await OS.info();
     const parts = await OS.parts(e);
     const names = parts.map(p => p.name);
@@ -152,6 +182,8 @@
       parts: parts.map(p => ({id: p.name, material: p.material || "", bbox: [p.min, p.max]})),
       mounts: await OS.mounts(e), parameters: parameters || {}, variants: variants || {},
       warnings: [...generic.map(n => "unnamed part " + n), ...dupes.map(n => "two parts named " + n)],
+      ...(chat && (chat.name || chat.url || chat.session) ?
+          {chat: {name: String(chat.name || ""), url: String(chat.url || ""), session: String(chat.session || "")}} : {}),
     };
   };
   OS.send = async ({port, token: blenderToken, folder}, name, body) => {
@@ -163,8 +195,9 @@
     return j.path;
   };
   // One call: GLB + sidecar into Blender's folder. Blender side: api.cad_import(<glb path>).
-  OS.exportPackage = async ({port, token: blenderToken, name, version, folder, floor, e, parameters, variants}) => {
-    const sidecar = await OS.sidecar({version, floor, e, parameters, variants});
+  OS.exportPackage = async ({port, token: blenderToken, name, version, folder, floor, e, parameters, variants, chat}) => {
+    await ensureSession();
+    const sidecar = await OS.sidecar({version, floor, e, parameters, variants, chat});
     const glb = await OS.exportGLTF(e);
     const target = {port, token: blenderToken, folder};
     const model = await OS.send(target, name + ".glb", glb);
