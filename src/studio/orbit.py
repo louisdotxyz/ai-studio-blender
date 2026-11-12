@@ -136,14 +136,50 @@ def _center(settings, camera, horizontal, vertical=None):
     """The point the camera looks at: the base, shifted sideways and along the image's up."""
     center = _base(settings, camera) + _right(horizontal) * settings.orbit_side
     if settings.orbit_up:
-        center += _up(horizontal, pitch(camera) if vertical is None else vertical) * settings.orbit_up
+        if vertical is None:
+            stored = stored_orbit(camera)
+            vertical = stored[1] if stored is not None else pitch(camera)
+        center += _up(horizontal, vertical) * settings.orbit_up
     return center
+
+
+# The values set here are kept on the camera with the matrix they produced: as long as the camera
+# was not moved otherwise, the fields show exactly what was set (0° stays 0°, 90° stays 90° also
+# after Height, Left / Right …). Recomputing them from the position drifts (rounding, the
+# straight top view) and made the values jump.
+ORBIT_KEY = "_rs_orbit"
+
+
+def _flat(matrix):
+    return [value for row in matrix for value in row]
+
+
+def stored_orbit(camera):
+    """(horizontal, vertical, distance) as last set, or None when the camera moved since."""
+    data = camera.get(ORBIT_KEY)
+    try:
+        data = list(data) if data is not None else None
+    except TypeError:
+        return None
+    if not data or len(data) != 19:
+        return None
+    tolerance = 1e-5 * max(1.0, abs(data[2]))
+    if any(abs(a - b) > tolerance for a, b in zip(data[3:], _flat(camera.matrix_world))):
+        return None
+    return tuple(data[:3])
+
+
+def remember(camera, values):
+    camera[ORBIT_KEY] = [float(v) for v in values] + _flat(camera.matrix_world)
 
 
 def camera_orbit(settings, camera=None):
     camera = camera or settings.id_data.camera
     if camera is None:
         return 0.0, 0.0, 0.0
+    stored = stored_orbit(camera)
+    if stored is not None:
+        return stored
     return orbit_values(camera, _center(settings, camera, heading(camera)))
 
 
@@ -152,6 +188,7 @@ def _place(settings, camera, horizontal, vertical, distance):
     distance = max(MIN_DISTANCE, distance)
     camera.matrix_world = orbit_matrix(_center(settings, camera, horizontal, vertical), horizontal, vertical,
                                        distance, camera.matrix_world.to_scale())
+    remember(camera, (horizontal, vertical, distance))
 
 
 def _getter(index):
@@ -180,10 +217,12 @@ def set_height(settings, value):
     camera = _camera(settings)
     if camera is None:
         return
+    values = camera_orbit(settings, camera)
     matrix = camera.matrix_world.copy()
     matrix.translation.z += value - settings.orbit_lift
     camera.matrix_world = matrix
     settings.orbit_lift = value
+    remember(camera, values)
 
 
 def get_side(settings):
@@ -195,10 +234,12 @@ def set_side(settings, value):
     camera = _camera(settings)
     if camera is None:
         return
+    values = camera_orbit(settings, camera)
     matrix = camera.matrix_world.copy()
-    matrix.translation += _right(heading(camera)) * (value - settings.orbit_side)
+    matrix.translation += _right(values[0]) * (value - settings.orbit_side)
     camera.matrix_world = matrix
     settings.orbit_side = value
+    remember(camera, values)
 
 
 def get_up(settings):
@@ -211,10 +252,12 @@ def set_up(settings, value):
     camera = _camera(settings)
     if camera is None:
         return
+    values = camera_orbit(settings, camera)
     matrix = camera.matrix_world.copy()
-    matrix.translation += _up(heading(camera), pitch(camera)) * (value - settings.orbit_up)
+    matrix.translation += _up(values[0], values[1]) * (value - settings.orbit_up)
     camera.matrix_world = matrix
     settings.orbit_up = value
+    remember(camera, values)
 
 
 get_horizontal, set_horizontal = _getter(0), _setter(0)

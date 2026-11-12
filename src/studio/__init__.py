@@ -24,7 +24,7 @@ from .ui_common import STUDIO_TABS, _queue_progress_text, _unpin
 from .keymaps import register_keymaps, unregister_keymaps
 from .tab_camera import (RS_OT_camera_back, RS_OT_camera_from_view, RS_OT_dof_focus, RS_OT_duplicate_camera,
                          RS_OT_fit_frame, RS_OT_reset_frame, RS_OT_set_camera, RS_OT_set_fstop,
-                         RS_OT_set_lens, RS_OT_set_resolution, RS_OT_set_scale, RS_PT_camera, RS_PT_frame)
+                         RS_OT_set_lens, RS_OT_toggle_ortho, RS_OT_set_resolution, RS_OT_set_scale, RS_PT_camera, RS_PT_frame)
 from .tab_light import (RS_MT_hdris, RS_MT_light_presets, RS_OT_add_light, RS_OT_bounces_preset,
                         RS_OT_duplicate_light, RS_OT_hdri_apply, RS_OT_hdri_favorite, RS_OT_hdri_refresh,
                         RS_OT_hdri_step, RS_OT_light_focus_selection, RS_OT_light_preset,
@@ -115,6 +115,7 @@ classes = render_setup.classes + (
     RS_OT_camera_from_view,
     RS_OT_show_render,
     RS_OT_set_lens,
+    RS_OT_toggle_ortho,
     RS_OT_set_resolution,
     RS_OT_set_scale,
     RS_OT_select_light,

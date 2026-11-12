@@ -170,6 +170,29 @@ def orbit_and_top_view():
           and abs(math.degrees(rq.orbit_vertical) - 90) < 1e-3)
     rq.orbit_up_offset = 0.0
     rq.orbit_vertical = math.radians(30)
+    # the values stay exactly as set while Height, Left / Right, Up / Down change
+    rq.orbit_horizontal, rq.orbit_vertical, rq.orbit_distance = 0.0, math.radians(90), 0.611
+    for name, value in (("orbit_height", 0.05), ("orbit_side_offset", 0.02), ("orbit_up_offset", -0.03),
+                        ("orbit_height", 0.0)):
+        setattr(rq, name, value)
+        bpy.context.view_layer.update()
+    check("angles stay exactly as set (0 stays 0, 90 stays 90)", rq.orbit_horizontal == 0.0
+          and abs(rq.orbit_vertical - math.radians(90)) < 1e-6 and abs(rq.orbit_distance - 0.611) < 1e-6,
+          (rq.orbit_horizontal, rq.orbit_vertical, rq.orbit_distance))
+    cam.location.x += 0.1   # moved by hand: the fields follow the camera again
+    bpy.context.view_layer.update()
+    check("moved by hand: values recomputed", abs(rq.orbit_vertical - math.radians(90)) > 1e-4)
+    rq.orbit_side_offset = rq.orbit_up_offset = 0.0
+    rq.orbit_horizontal, rq.orbit_vertical, rq.orbit_distance = math.radians(30), math.radians(20), 2.0
+    cam.data.type = 'PERSP'
+    bpy.ops.render_studio.toggle_ortho()
+    sensor = cam.data.sensor_width
+    check("to ortho: the framing stays (scale from the distance)", cam.data.type == 'ORTHO'
+          and abs(cam.data.ortho_scale - 2.0 * sensor / cam.data.lens) < 1e-4, cam.data.ortho_scale)
+    cam.data.ortho_scale *= 2
+    bpy.ops.render_studio.toggle_ortho()
+    check("back to perspective: distance from the ortho scale", cam.data.type == 'PERSP'
+          and abs(rq.orbit_distance - 4.0) < 1e-3, rq.orbit_distance)
 
 
 @section

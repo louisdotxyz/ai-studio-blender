@@ -115,6 +115,34 @@ class RS_OT_camera_from_view(Operator):
 LENS_PRESETS = (24, 35, 50, 85, 135)
 
 
+class RS_OT_toggle_ortho(Operator):
+    bl_idname = "render_studio.toggle_ortho"
+    bl_label = "Orthographic / Perspective"
+    bl_description = ("Switch the camera between perspective and orthographic; the framing stays about the "
+                      "same (ortho scale from the distance, the distance from the ortho scale)")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        cam = context.scene.camera
+        return cam is not None and cam.type == 'CAMERA'
+
+    def execute(self, context):
+        from . import orbit
+        scene = context.scene
+        cam, rq = scene.camera, scene.render_studio
+        data = cam.data
+        sensor = data.sensor_height if data.sensor_fit == 'VERTICAL' else data.sensor_width
+        distance = orbit.camera_orbit(rq, cam)[2]
+        if data.type == 'ORTHO':
+            data.type = 'PERSP'
+            rq.orbit_distance = max(orbit.MIN_DISTANCE, data.ortho_scale * data.lens / sensor)
+        else:
+            data.ortho_scale = max(0.001, distance * sensor / data.lens)
+            data.type = 'ORTHO'
+        return {'FINISHED'}
+
+
 class RS_OT_set_lens(Operator):
     bl_idname = "render_studio.set_lens"
     bl_label = "Set Focal Length"
@@ -222,6 +250,8 @@ class RS_PT_camera(_SidebarPanel, Panel):
             row.prop(rq, "cam_ortho_scale", text="Ortho Scale")
         else:
             row.prop(data, "lens", text="Focal Length")
+        row.operator(RS_OT_toggle_ortho.bl_idname, text="",
+                     icon='VIEW_PERSPECTIVE' if data.type == 'ORTHO' else 'VIEW_ORTHO')
         if space is not None and space.type == 'VIEW_3D':
             sub = row.row(align=True)
             sub.active = not locked
@@ -263,7 +293,8 @@ class RS_PT_camera(_SidebarPanel, Panel):
         col.enabled = not locked
         col.prop(rq, "orbit_horizontal")
         col.prop(rq, "orbit_vertical")
-        col.prop(rq, "orbit_distance")
+        if cam.data.type != 'ORTHO':   # orthographic: the distance changes nothing in the picture
+            col.prop(rq, "orbit_distance")
         col.prop(rq, "orbit_height")
         col.prop(rq, "orbit_side_offset")
         col.prop(rq, "orbit_up_offset")
