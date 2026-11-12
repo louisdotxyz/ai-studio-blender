@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Translations.
 
-The add-on is written in English and shows English by default. With Preferences › Chat ›
+The add-on is written in English and shows English by default. With Preferences › General ›
 German Interface on, Blender shows the German strings below when its interface language is
 German (Preferences › Interface › Translation).
 Labels, operator names, properties and tooltips are translated by Blender
@@ -174,6 +174,17 @@ DE = {
     "Don't look for new versions": 'Nicht nach neuen Versionen suchen',
     'AI Studio {} is available': 'AI Studio {} ist verfügbar',
     'Base materials ready': 'Grundmaterialien bereit',
+    'General': 'Allgemein',
+    'Learning': 'Lernen',
+    'Advanced': 'Erweitert',
+    'Sees the Viewport': 'Sieht den Viewport',
+    'Claude App and Claude Code': 'Claude-App und Claude Code',
+    'Backups and Project Folders': 'Backups und Projektordner',
+    'Render Folders': 'Render-Ordner',
+    'Collections and Shortcuts': 'Collections und Tastenkürzel',
+    'Live Connection Port': 'Port der Live-Verbindung',
+    'Local Models (LM Studio, ~/.lmstudio/models)': 'Lokale Modelle (LM Studio, ~/.lmstudio/models)',
+    'What most people change: Claude, model, updates, language': 'Was die meisten ändern: Claude, Modell, Updates, Sprache',
     'Last step, in the Claude app:': 'Letzter Schritt, in der Claude-App:',
     'Set the permission switch under the message box to Auto: the Blender tools then run without asking each time (or Customize › Connectors › ai-studio › Tool permissions › Always allow).': 'Den Berechtigungs-Schalter unter dem Eingabefeld auf Auto stellen: dann laufen die Blender-Werkzeuge ohne Rückfrage (oder Customize › Connectors › ai-studio › Tool permissions › Always allow).',
     'Base materials missing': 'Grundmaterialien fehlen',
@@ -653,7 +664,7 @@ def _build():
     return {"de_DE": de}
 
 
-_active = [False]   # the German strings are registered (Preferences › Chat › German Interface)
+_active = [False]   # the German strings are registered (Preferences › General › German Interface)
 
 
 def tr(msgid):

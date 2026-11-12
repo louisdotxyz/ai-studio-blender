@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Updates of AI Studio itself (Preferences › Chat › Updates).
+"""Updates of AI Studio itself (Preferences › General › Updates).
 
 Installed from the add-on's repository (the install page on GitHub), Blender knows where new
 versions come from. A few seconds after Blender starts the add-on

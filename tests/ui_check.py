@@ -220,6 +220,12 @@ except Exception:
     errors.append("CAD Comments: " + traceback.format_exc(limit=3).strip().splitlines()[-1])
 onshape_ops._points["time"] = onshape_ops._found["time"] = -10.0
 
+# defaults (1.5): auto mode and the viewport screenshot are on for new users
+rna = addon_prefs.bl_rna.properties
+for key in ("auto_approve", "auto_screenshot"):
+    if rna[key].default is not True:
+        errors.append("default of %s should be on" % key)
+
 keep_tab = addon_prefs.prefs_tab
 for tab in [i.identifier for i in addon_prefs.bl_rna.properties["prefs_tab"].enum_items]:
     addon_prefs.prefs_tab = tab

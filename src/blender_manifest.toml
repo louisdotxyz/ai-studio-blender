@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "AI_Studio"
-version = "1.4.0"
+version = "1.5.0"
 name = "AI Studio"
 tagline = "Part of ID Toolkit: render, CAD hand-over and a Claude chat"
 maintainer = "louisdotxyz"

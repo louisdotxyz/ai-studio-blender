@@ -90,7 +90,7 @@ def call_blender(payload, timeout=7200):
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
-            raise RuntimeError("The Live Connection is off in Blender (AI Studio preferences › Chat).")
+            raise RuntimeError("The Live Connection is off in Blender (AI Studio preferences › General).")
         raise RuntimeError("Blender answered %d: %s" % (exc.code, exc.read()[:300].decode("utf-8", "replace")))
     except (urllib.error.URLError, OSError) as exc:
         raise RuntimeError("Blender does not answer (%s). Is it still open?" % exc)

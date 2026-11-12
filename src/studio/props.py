@@ -602,36 +602,44 @@ class RS_Preferences(PropertyGroup):
     )
 
     def draw_renders(self, layout):
-        """Preferences › Renders: where images go and how Low Quality is made."""
+        """Preferences › Renders: where images go and how good they are."""
         col = layout.column()
         col.use_property_split = True
         col.prop(self, "output_root")
-        col.prop(self, "output_suffix")
-        sub = col.column(heading="Subfolders", align=True)
-        for key in ("low_dir", "high_dir", "anim_dir", "render_archive_dir"):
-            sub.prop(self, key)
-        col.separator()
         col.prop(self, "default_samples")
         col.prop(self, "low_resolution")
         col.prop(self, "low_samples_percent")
         col.separator()
         col.prop(self, "auto_render")
         col.prop(self, "notify")
-        col.prop(self, "worker_gpu_only")
 
     def draw_studio(self, layout):
-        """Preferences › Studio: folders and shortcuts of the Studio tab."""
+        """Preferences › Studio: HDRIs, base materials, Onshape, names."""
         col = layout.column()
         col.use_property_split = True
         col.prop(self, "hdri_folder")
         col.prop(self, "material_library")
-        col.prop(self, "material_preset_folder")
-        col.separator()
+        col.prop(self, "name_scheme")
         from .onshape_ops import draw_prefs
         draw_prefs(layout, self)
-        col = layout.column()
+
+    def draw_advanced(self, layout):
+        """Preferences › Advanced: the Studio part (folder names, collections, shortcuts)."""
+        box = layout.box()
+        box.label(text="Render Folders", icon='RENDER_STILL')
+        col = box.column()
         col.use_property_split = True
-        col.prop(self, "name_scheme")
+        col.prop(self, "output_suffix")
+        sub = col.column(heading="Subfolders", align=True)
+        for key in ("low_dir", "high_dir", "anim_dir", "render_archive_dir"):
+            sub.prop(self, key)
+        col.prop(self, "worker_gpu_only")
+        col.prop(self, "material_preset_folder")
+
+        box = layout.box()
+        box.label(text="Collections and Shortcuts", icon='OUTLINER_COLLECTION')
+        col = box.column()
+        col.use_property_split = True
         sub = col.column(heading="Collections")
         sub.prop(self, "camera_collection")
         sub.prop(self, "light_collection")

@@ -126,13 +126,13 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
     settings_version: IntProperty(options={'HIDDEN'})   # see settings.py
     prefs_tab: EnumProperty(
         name="Section",
-        items=[('CHAT', "Chat", "Model, what is sent, chat behaviour", 'COMMUNITY', 0),
-               ('FILES', "Files", "Project folders and backups", 'FILE_FOLDER', 1),
-               ('RENDERS', "Renders", "Where renders go, Low Quality", 'RENDER_STILL', 2),
-               ('STUDIO', "Studio", "HDRIs, base materials, shortcuts", 'SCENE', 3),
-               ('LOCAL', "Local", "Local models with LM Studio", 'DESKTOP', 4),
-               ('LEARN', "Learning", "Lessons and memory", 'LIGHT', 5)],
-        default='CHAT', options={'SKIP_SAVE'}, translation_context=I18N_CONTEXT)
+        items=[('GENERAL', "General", "What most people change: Claude, model, updates, language", 'PREFERENCES', 0),
+               ('FILES', "Files", "Backups and project folders", 'FILE_FOLDER', 1),
+               ('RENDERS', "Renders", "Where renders go, quality", 'RENDER_STILL', 2),
+               ('STUDIO', "Studio", "HDRIs, base materials, Onshape, names", 'SCENE', 3),
+               ('ADVANCED', "Advanced", "Everything else: Claude CLI, what is sent, local models, lessons, "
+                                        "folder names, collections, shortcuts", 'TOOL_SETTINGS', 4)],
+        default='GENERAL', options={'SKIP_SAVE'}, translation_context=I18N_CONTEXT)
     autosave_before_risky: BoolProperty(
         name="Before Code and Renders",
         description="Also save right before the model runs code and before renders "
@@ -226,8 +226,9 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
     )
     auto_approve: BoolProperty(
         name="Run Code Without Asking",
-        description="Auto mode: Claude runs code directly without asking every time (undo with Ctrl+Z)",
-        default=False,
+        description="Auto mode: Claude changes the scene directly without asking every time (Ctrl+Z undoes "
+                    "every step). Off: you approve each piece of code first",
+        default=True,
     )
     live_connection: BoolProperty(
         name="Live Connection (External Claude Sessions)",
@@ -255,9 +256,9 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
     )
     auto_screenshot: BoolProperty(
         name="Screenshot With Every Message",
-        description="Attach a viewport screenshot to every message. Off: the model takes one itself when it "
-                    "needs to see the scene (saves about 800 tokens per message)",
-        default=False,
+        description="Claude sees the 3D viewport with every message, so it knows what you look at. Off: it "
+                    "takes a screenshot itself when it needs one (about 800 tokens less per message)",
+        default=True,
     )
     send_selection: BoolProperty(
         name="Send Selection",
@@ -299,69 +300,32 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
         box = layout.box()
         getattr(self, "_draw_" + self.prefs_tab.lower())(box, context)
 
-    def _draw_chat(self, layout, context):
-        from . import claude_cli
-        from .i18n import tr
+    def _draw_general(self, layout, context):
         col = layout.column()
         col.use_property_split = True
-        col.prop(self, "claude_path")
-        found = claude_cli.find_claude(self.claude_path)
-        row = col.row()
-        if found:
-            row.label(text=tr("Found: {}").format(found), icon='CHECKMARK', translate=False)
-        else:
-            row.label(text="Claude CLI not found – see the README", icon='ERROR')
-        col.separator()
-        sub = col.column(heading="With Every Message")
-        sub.prop(self, "send_scene_context", text="Scene Info")
-        sub.prop(self, "send_selection", text="Selection")
-        sub.prop(self, "auto_screenshot", text="Viewport Screenshot")
-        col.prop(self, "screenshot_max_size")
-        col.prop(self, "attach_folder")
-        col.separator()
-        col.prop(self, "updates")
-        col.prop(self, "german_interface")
+        sub = col.column(heading="Claude")
+        sub.prop(self, "auto_approve")
+        sub.prop(self, "auto_screenshot", text="Sees the Viewport")
         col.prop(self, "default_model")
         sub = col.row()
         sub.enabled = self.default_model != 'LOCAL'
         sub.prop(self, "default_effort")
         col.separator()
-        col.prop(self, "auto_approve")
-        col.prop(self, "live_connection")
-        sub = col.row(align=True)
-        sub.active = self.live_connection
-        sub.prop(self, "live_port")
-        sub.operator("claude.copy_live_connection", text="", icon='COPYDOWN')
-        col.prop(self, "show_stats")
-        row = col.row(heading="Auto Summarize")
-        row.prop(self, "auto_compact", text="")
-        sub = row.row()
-        sub.active = self.auto_compact
-        sub.prop(self, "compact_at", text="At")
-        col.prop(self, "max_display")
-        col.separator()
-        col.prop(self, "custom_instructions")
-        col.prop(self, "extra_args")
+        col.prop(self, "live_connection", text="Claude App and Claude Code")
+        col.prop(self, "updates")
+        col.prop(self, "german_interface")
 
     def _draw_files(self, layout, context):
         col = layout.column()
         col.use_property_split = True
-        col.prop(self, "project_folders")
-        sub = col.column(heading="Folder Names", align=True)
-        sub.prop(self, "backup_dir")
-        sub.prop(self, "assets_dir")
-        sub.prop(self, "archive_dir")
-        col.prop(self, "main_suffix")
-        col.prop(self, "backup_stamp")
-        col.separator()
         col.prop(self, "autosave")
         sub = col.column()
         sub.active = self.autosave
         sub.prop(self, "autosave_mode")
         sub.prop(self, "autosave_minutes")
-        sub.prop(self, "autosave_keep")
-        sub.prop(self, "autosave_before_risky")
-        sub.prop(self, "autosave_on_memory")
+        col.separator()
+        col.prop(self, "project_folders")
+        col.prop(self, "attach_folder")
 
     def _draw_renders(self, layout, context):
         self.studio.draw_renders(layout)
@@ -369,22 +333,70 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
     def _draw_studio(self, layout, context):
         self.studio.draw_studio(layout)
 
-    def _draw_local(self, layout, context):
-        col = layout.column()
-        col.use_property_split = True
-        col.label(text="Local models run with LM Studio (models in ~/.lmstudio/models).", icon='INFO')
+    def _draw_advanced(self, layout, context):
+        """Everything most people never change, in groups."""
+        from . import claude_cli
+        from .i18n import tr
+
+        def group(title, icon):
+            box = layout.box()
+            box.label(text=title, icon=icon)
+            col = box.column()
+            col.use_property_split = True
+            return col
+
+        col = group("Claude", 'COMMUNITY')
+        col.prop(self, "claude_path")
+        found = claude_cli.find_claude(self.claude_path)
+        row = col.row()
+        if found:
+            row.label(text=tr("Found: {}").format(found), icon='CHECKMARK', translate=False)
+        else:
+            row.label(text="Claude CLI not found – see the README", icon='ERROR')
+        sub = col.column(heading="With Every Message")
+        sub.prop(self, "send_scene_context", text="Scene Info")
+        sub.prop(self, "send_selection", text="Selection")
+        col.prop(self, "screenshot_max_size")
+        row = col.row(heading="Auto Summarize")
+        row.prop(self, "auto_compact", text="")
+        sub = row.row()
+        sub.active = self.auto_compact
+        sub.prop(self, "compact_at", text="At")
+        col.prop(self, "show_stats")
+        col.prop(self, "max_display")
+        col.prop(self, "custom_instructions")
+        col.prop(self, "extra_args")
+        sub = col.row(align=True)
+        sub.active = self.live_connection
+        sub.prop(self, "live_port", text="Live Connection Port")
+        sub.operator("claude.copy_live_connection", text="", icon='COPYDOWN')
+
+        col = group("Backups and Project Folders", 'FILE_FOLDER')
+        sub = col.column()
+        sub.active = self.autosave
+        sub.prop(self, "autosave_keep")
+        sub.prop(self, "autosave_before_risky")
+        sub.prop(self, "autosave_on_memory")
+        sub.prop(self, "backup_stamp")
+        sub = col.column(heading="Folder Names", align=True)
+        sub.prop(self, "backup_dir")
+        sub.prop(self, "assets_dir")
+        sub.prop(self, "archive_dir")
+        col.prop(self, "main_suffix")
+
+        col = group("Local Models (LM Studio, ~/.lmstudio/models)", 'DESKTOP')
         col.prop(self, "local_model")
         col.prop(self, "local_context")
         col.prop(self, "local_effort")
         col.prop(self, "local_send_screenshot")
 
-    def _draw_learn(self, layout, context):
-        col = layout.column()
-        col.use_property_split = True
+        col = group("Learning", 'LIGHT')
         col.prop(self, "learn_from_errors")
         sub = col.column()
         sub.active = self.learn_from_errors
         sub.prop(self, "lessons_dir")
+
+        self.studio.draw_advanced(layout)
 
 
 def register():

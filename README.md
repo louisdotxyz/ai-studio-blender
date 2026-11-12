@@ -49,8 +49,8 @@ never used Blender get a clean product image from a CAD model.
   in 1 mm steps (arrows and dragging), also in the camera settings (⚙).
 - **Updates** (installed from the install page): once a day the add-on looks for a new version and
   installs it by itself when Blender is idle; the chat says so. Or only a notice with an Install
-  button, or off (Preferences › Chat).
-- **English** throughout, also in a German Blender; *Preferences › Chat › German Interface* shows
+  button, or off (Preferences › General).
+- **English** throughout, also in a German Blender; *Preferences › General › German Interface* shows
   the add-on in German.
 - Replaced objects are never deleted unless you say so: they go into a hidden archive
   collection (`Archive`). Claude's helper objects go into `temp`, removed after the answer.
@@ -152,18 +152,18 @@ possible when Blender was started with `--offline-mode`). The login terminal clo
 
 ## Settings
 
-*Preferences › Add-ons › AI Studio* has six sections:
+*Preferences › Add-ons › AI Studio* has five sections; the first four hold what people change, the
+rest is under *Advanced*:
 
 | Section | What you set |
 |---|---|
-| Chat | Claude CLI path, what goes with every message, attach folder, **updates** (automatic, ask, off), German interface, **default model and effort** for new chats (also in the chat's gear menu), auto summarizing |
-| Files | Project folder per file and backups (both off until you choose them in the setup card), folder names (backups, assets, archive), main file suffix, backup interval and count |
-| Renders | Output folder (empty: next to the .blend file) and its subfolders (low, high, animation, archive), High Quality samples for new files (512 instead of Blender's 4096), Low Quality size and samples, GPU only |
-| Studio | HDRI folder, base materials file, material presets folder, shortcuts |
-| Local | LM Studio model, context length, thinking |
-| Learning | Where lessons are kept (e.g. a folder in your Obsidian vault) |
+| General | **Run Code Without Asking** (auto mode, on by default: Claude changes the scene directly, Ctrl+Z undoes every step), **Sees the Viewport** (a screenshot with every message, on by default), default model and effort for new chats, Claude app and Claude Code (Live Connection), **updates** (automatic, ask, off), German interface |
+| Files | Backups (every 5 minutes, as copies or saving the file), a project folder per new file, the attach folder |
+| Renders | Output folder (empty: next to the .blend file), High Quality samples for new files, Low Quality size and samples, render on adding, notification |
+| Studio | HDRI folder, base materials file, name scheme, Onshape keys |
+| Advanced | Claude CLI path, scene info and selection with every message, image size, auto summarizing, statistics, custom instructions, extra CLI arguments, Live Connection port; backup details and folder names; local models (LM Studio); lessons; render subfolders, GPU only, material presets folder; collections and shortcuts |
 
-**Live Connection** (Chat section, on by default): other Claude sessions on this computer (Cowork,
+**Live Connection** (General section, on by default): other Claude sessions on this computer (Cowork,
 blender-mcp) can work in the open Blender without a click. Blender listens on 127.0.0.1 and writes port and
 token to `~/.config/ai-studio/live.json` (only your user can read it; the Blender opened last owns it). Send
 `POST /live` with `Authorization: Bearer <token>` and `{"op": "ping" | "info" | "object" | "python" | "screenshot" | "image"}`.
@@ -179,7 +179,7 @@ app reads it at its next start. Set a fixed **Port** if a client needs one; the 
 instructions for any other session into the clipboard.
 
 The collection names (`Camera`, `Light`, `Archive`, `temp`; Claude's set pieces go into `Set`) are set
-in Preferences › Studio; collections of older versions (`AS_camera`, `AS_camera | Packshot`,
+in Preferences › Advanced; collections of older versions (`AS_camera`, `AS_camera | Packshot`,
 `AS_lights`, `AS_archiv V2`, `AS_set`, `RS_Cameras`, `RS_Lights`) are renamed when a file is opened.
 
 `studio/make_base_materials.py` (run by itself the first time the Material tab needs it) creates a "Base Materials.blend" with 19 everyday materials

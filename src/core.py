@@ -774,7 +774,7 @@ MODEL_KEYS = ("backend", "model", "effort", "local_model", "local_effort")
 
 
 def default_model():
-    """What a new chat starts with: Preferences › Chat › Default Model and Effort."""
+    """What a new chat starts with: Preferences › General › Default Model and Effort."""
     prefs = get_prefs()
     choice = getattr(prefs, "default_model", 'sonnet')
     if choice == 'LOCAL':
