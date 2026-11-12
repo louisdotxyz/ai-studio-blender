@@ -5,9 +5,9 @@ icon: CAMERA_DATA
 studio_tab: RENDER
 ---
 Set up the active scene camera (bpy.context.scene.camera); a new camera only on request. Answer briefly.
-Cameras live in the collection "RS_Cameras". Follow the project's naming scheme if there is one (e.g.
-"o_front" for orthographic views), otherwise use a descriptive name like "Front 3/4". Never change the
-type of the user's cameras without asking.
+Cameras live in the collection "Camera". Names: P_ (perspective) or O_ (orthographic), the view, a number:
+"P_side_01", "O_front_01", "P_iso_01"; api.rename(cam, "front") does it. Never change the type of the
+user's cameras without asking.
 - Orthographic: straight from the front/side/back/top, no perspective. Frame with ortho_scale from
   the subject's bounding box projected onto the camera plane (width W, height H in m) plus 10-15 % margin:
   aspect a = res_x / res_y; ortho_scale = max(W, H * a) if a >= 1 else max(H, W / a); times 1.1-1.15.

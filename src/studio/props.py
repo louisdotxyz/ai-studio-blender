@@ -10,6 +10,34 @@ from . import background, cameras, core, hdri, lights, matpresets, orbit, sync
 from .matpresets import _color_input
 from .keymaps import SHORTCUTS, _user_keymap_item
 
+# Length fields of camera and light: 1 mm per click on the arrows and per pixel when dragging
+# (Blender turns the step of a length into its nearest unit: 0.05 gives millimeters).
+FINE_STEP = 0.05
+
+
+def _get_short_name(self):
+    return self.id_data.name
+
+
+def _set_short_name(self, value):
+    cameras.rename(self.id_data, value)
+
+
+def _cam_value(key, default=0.0):
+    def get(self):
+        cam = cameras.active_camera(self.id_data)
+        if cam is None:
+            return default
+        owner = cam.data.dof if key == "focus_distance" else cam.data
+        return getattr(owner, key)
+
+    def set(self, value):
+        cam = cameras.active_camera(self.id_data)
+        if cam is not None:
+            owner = cam.data.dof if key == "focus_distance" else cam.data
+            setattr(owner, key, value)
+    return get, set
+
 
 # ---------------------------------------------------------------------- Data
 
@@ -159,6 +187,9 @@ def _material_pick_update(settings, context):
 
 
 class RS_CameraSettings(PropertyGroup):
+    short_name: StringProperty(
+        name="Name", description="Rename the camera: \"side\" becomes \"P_side_01\" (Preferences › Studio › "
+        "Name Scheme)", get=_get_short_name, set=_set_short_name, options=set())
     use_resolution: BoolProperty(
         name="Resolution per Camera",
         description="Pin the resolution to this camera. When it becomes active, the scene switches to it",
@@ -195,13 +226,16 @@ class RS_Item(PropertyGroup):
 
 class RS_LightSettings(PropertyGroup):
     """Per light (Object.render_studio_light): its own target and height."""
+    short_name: StringProperty(
+        name="Name", description="Rename the light: \"key\" becomes \"A_key_01\" (Preferences › Studio › "
+        "Name Scheme)", get=_get_short_name, set=_set_short_name, options=set())
     target: PointerProperty(
         type=bpy.types.Object, poll=_is_not_camera_or_light, update=lights.on_light_target,
         name="Target", description="This light points at this object. Empty = the setup's object")
     lift: FloatProperty(subtype='DISTANCE', options={'HIDDEN'})
     height: FloatProperty(
         name="Height", description="The light and the point it looks at move up or down together",
-        subtype='DISTANCE', get=lights.get_light_height, set=lights.set_light_height, options=set())
+        step=FINE_STEP, precision=3, subtype='DISTANCE', get=lights.get_light_height, set=lights.set_light_height, options=set())
 
 
 def _look_changed(settings, context):
@@ -341,17 +375,33 @@ class RS_Settings(PropertyGroup):
     )
     orbit_distance: FloatProperty(
         name="Distance", description="Distance to the center of the object",
-        subtype='DISTANCE', min=orbit.MIN_DISTANCE,
+        step=FINE_STEP, precision=3, subtype='DISTANCE', min=orbit.MIN_DISTANCE,
         get=orbit.get_distance, set=orbit.set_distance, options=set(),
     )
     orbit_height: FloatProperty(
         name="Height", description="Camera and the point it looks at move up or down together",
-        subtype='DISTANCE', get=orbit.get_height, set=orbit.set_height, options=set(),
+        step=FINE_STEP, precision=3, subtype='DISTANCE', get=orbit.get_height, set=orbit.set_height, options=set(),
     )
     orbit_side_offset: FloatProperty(
         name="Left / Right", description="Camera and the point it looks at move sideways together (0 = centered)",
-        subtype='DISTANCE', get=orbit.get_side, set=orbit.set_side, options=set(),
+        step=FINE_STEP, precision=3, subtype='DISTANCE', get=orbit.get_side, set=orbit.set_side, options=set(),
     )
+    cam_ortho_scale: FloatProperty(
+        name="Ortho Scale", description="Width the orthographic camera shows", min=0.001,
+        step=FINE_STEP, precision=3, subtype='DISTANCE', get=_cam_value("ortho_scale", 1.0)[0],
+        set=_cam_value("ortho_scale")[1], options=set())
+    cam_focus_distance: FloatProperty(
+        name="Distance", description="Distance to the sharp plane (depth of field)", min=0.0,
+        step=FINE_STEP, precision=3, subtype='DISTANCE', get=_cam_value("focus_distance", 1.0)[0],
+        set=_cam_value("focus_distance")[1], options=set())
+    cam_clip_start: FloatProperty(
+        name="Start", description="Nothing closer to the camera is drawn or rendered", min=0.0001,
+        step=FINE_STEP, precision=4, subtype='DISTANCE', get=_cam_value("clip_start", 0.1)[0],
+        set=_cam_value("clip_start")[1], options=set())
+    cam_clip_end: FloatProperty(
+        name="End", description="Nothing farther from the camera is drawn or rendered", min=0.001,
+        step=FINE_STEP, precision=3, subtype='DISTANCE', get=_cam_value("clip_end", 100.0)[0],
+        set=_cam_value("clip_end")[1], options=set())
     orbit_lift: FloatProperty(subtype='DISTANCE', options={'HIDDEN'})
     orbit_side: FloatProperty(subtype='DISTANCE', options={'HIDDEN'})
     material_source: PointerProperty(
@@ -384,7 +434,7 @@ class RS_Settings(PropertyGroup):
     )
     light_orbit_distance: FloatProperty(
         name="Distance", description="Distance to the center of the object",
-        subtype='DISTANCE', min=orbit.MIN_DISTANCE,
+        step=FINE_STEP, precision=3, subtype='DISTANCE', min=orbit.MIN_DISTANCE,
         get=lights.get_distance, set=lights.set_distance, options=set(),
     )
     # World / HDRI (see hdri.py)
@@ -484,13 +534,18 @@ class RS_Preferences(PropertyGroup):
         default="archive")
     camera_collection: StringProperty(
         name="Cameras", description="Collection for new cameras (an existing one of this name is used)",
-        default="AS_camera")
+        default="Camera")
     light_collection: StringProperty(
         name="Lights", description="Collection for new lights (an existing one of this name is used)",
-        default="AS_lights")
+        default="Light")
     archive_collection: StringProperty(
         name="Archive", description="Collection for replaced objects (e.g. the old CAD version): hidden, "
-        "you delete them yourself", default="AS_archiv")
+        "you delete them yourself", default="Archive")
+    name_scheme: BoolProperty(
+        name="Name Scheme",
+        description="Cameras P_ (perspective) or O_ (orthographic), lights A_ (area), P_ (point), S_ (spot) or "
+        "D_ (sun), then what they show or do and a number: P_side_01, O_front_01, A_key_01. Off: only "
+        "\".001\" and old prefixes are fixed", default=True)
     temp_collection: StringProperty(
         name="Temporary", description="Collection for Claude's helper objects, emptied after each answer",
         default="temp")
@@ -576,6 +631,7 @@ class RS_Preferences(PropertyGroup):
         draw_prefs(layout, self)
         col = layout.column()
         col.use_property_split = True
+        col.prop(self, "name_scheme")
         sub = col.column(heading="Collections")
         sub.prop(self, "camera_collection")
         sub.prop(self, "light_collection")

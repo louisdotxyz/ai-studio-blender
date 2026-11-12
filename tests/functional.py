@@ -48,6 +48,14 @@ def log_since(path, mark):
     return text[text.rfind(mark):]
 
 
+# The other sections use Blender's names ("Camera"): the name scheme is on only in short_names.
+mod("studio").runner.prefs().name_scheme = False
+for _obj, _name in ((bpy.context.scene.camera, "Camera"),
+                    (next((o for o in bpy.data.objects if o.type == 'LIGHT'), None), "Light")):
+    if _obj is not None:   # the scheme named them when the start file was loaded ("P_iso_01")
+        _obj.name = _obj.data.name = _name
+
+
 def small_scene():
     scene = bpy.context.scene
     scene.render.engine = 'CYCLES'
@@ -449,8 +457,10 @@ def short_names():
     check("three digits only past 99", naming.numbered("A", ["A_99"]) == "A_100")
     cams = mod("studio").cameras
     scene = bpy.context.scene
+    prefs_studio = mod("studio").runner.prefs()
+    prefs_studio.name_scheme = True
     cam = cams._new_camera(scene, bpy.context.view_layer, "Ortho Top")
-    check("new camera: short name with _01", cam.name == "Ortho Top_01" and cam.data.name == "Ortho Top_01", cam.name)
+    check("new camera: in the scheme", cam.name == "P_top_01" and cam.data.name == "P_top_01", cam.name)
     bpy.data.objects.remove(cam)
     check("chat title: a few words", core.short_title("Mach bitte die Kamera frontal und rendere eine Vorschau")
           == "Mach bitte die Kamera frontal", core.short_title("Mach bitte die Kamera frontal und rendere"))
@@ -460,27 +470,75 @@ def short_names():
     check("render files with _01", studio_core.next_path(folder, "Stuhl_Front").endswith("Stuhl_Front_01.png"))
 
     # Names of older versions and Blender's ".001" are made short (on load and after Claude's answers).
+    check("scheme: words", naming.role_of("AS_camera Ortho Oben.001", ["AS_camera"]) == "top"
+          and naming.role_of("Packshot Front") == "packshot-front" and naming.role_of("") == "view")
     check("tidy: prefix and .001 go", naming.tidy(["Ortho Front", "AS_camera View", "AS_camera View.001", "AS_1",
                                                   "AS_camera View Alt"], ["AS_camera", "AS"], "Camera")
           == {"AS_camera View": "View_01", "AS_camera View.001": "View_02", "AS_1": "Camera_01",
               "AS_camera View Alt": "View Alt_01"})
+    before = {o: (o.name, o.data.name if o.data else None) for o in bpy.data.objects}   # for the other sections
     made = []
-    for name in ("AS_camera View", "AS_camera View.001", "Ortho Front"):
+    for name, kind in (("AS_camera View", 'PERSP'), ("AS_camera View.001", 'PERSP'), ("Ortho Oben", 'ORTHO'),
+                       ("detail pod", 'PERSP'), ("O_front_01", 'ORTHO')):
         data = bpy.data.cameras.new(name)
+        data.type = kind
         made.append(bpy.data.objects.new(name, data))
         scene.collection.objects.link(made[-1])
     renamed = cams.tidy_names()
-    check("tidy in the file: cameras and their data", made[0].name == "View_01" and made[1].name == "View_02"
-          and made[1].data.name == "View_02" and made[2].name == "Ortho Front", renamed)
+    check("scheme in the file: P_/O_, the view, a number", [o.name for o in made] ==
+          ["P_top_01", "P_top_02", "O_top_01", "P_detail-pod_01", "O_front_01"]
+          and made[1].data.name == "P_top_02", [o.name for o in made])
+    made[4].data.type = 'PERSP'
+    cams.tidy_names()
+    check("camera switched to perspective: O_ becomes P_", made[4].name == "P_front_01", made[4].name)
+    check("rename in the studio: the word is enough", cams.rename(made[3], "Seite") == "P_side_01"
+          and made[3].data.name == "P_side_01")
+    check("rename: a name in the scheme stays", cams.rename(made[3], "P_side_07") == "P_side_07")
+    made[3].render_studio_camera.short_name = "detail"
+    check("rename field of the Render tab", made[3].name == "P_detail_01", made[3].name)
     scene.camera = made[2]
     bpy.ops.render_studio.duplicate_camera()
     copy = scene.camera
-    check("duplicate camera: _01, not .001", copy.name == "Ortho Front_01" and copy.data.name == "Ortho Front_01",
+    check("duplicate camera: next number, not .001", copy.name == "O_top_02" and copy.data.name == "O_top_02",
           copy.name)
-    light = mod("studio").lights.duplicate_light(scene, bpy.data.objects.new("Key", bpy.data.lights.new("Key", 'AREA')))
-    check("duplicate light: _01, not .001", light.name == "Key_01", light.name)
-    for obj in made + [copy, light]:
+    key = bpy.data.objects.new("Key", bpy.data.lights.new("Key", 'AREA'))
+    light = mod("studio").lights.duplicate_light(scene, key)
+    check("duplicate light: A_key_01, not .001", light.name == "A_key_01", light.name)
+    sun = bpy.data.objects.new("Sonne", bpy.data.lights.new("Sonne", 'SUN'))
+    scene.collection.objects.link(sun)
+    cams.tidy_names()
+    check("sun: D_", sun.name == "D_sun_01", sun.name)
+    made.append(sun)
+    prefs_studio.name_scheme = False
+    plain = bpy.data.objects.new("View.001", bpy.data.cameras.new("View.001"))
+    scene.collection.objects.link(plain)
+    cams.tidy_names()
+    check("scheme off: only .001 is fixed", plain.name == "View_01" and made[3].name == "P_detail_01", plain.name)
+    made.append(plain)
+    # collections of older versions lose their prefix
+    for old in ("AS_camera", "AS_camera | Packshot", "AS_archiv V2", "AS_set"):
+        bpy.data.collections.new(old)
+    cams.rename_old_collections()
+    check("collections without AS_", all(n in bpy.data.collections for n in
+                                         ("Camera", "Camera | Packshot", "Archive V2", "Set")),
+          [c.name for c in bpy.data.collections])
+    for name in ("Camera | Packshot", "Archive V2", "Set"):
+        bpy.data.collections.remove(bpy.data.collections[name])
+    # 1 mm steps
+    rna = bpy.types.RS_Settings.bl_rna.properties if hasattr(bpy.types, "RS_Settings") else scene.render_studio.bl_rna.properties
+    check("camera lengths in 1 mm steps", all(abs(rna[k].step - 0.05) < 1e-6 for k in
+          ("orbit_distance", "orbit_height", "orbit_side_offset", "cam_ortho_scale", "cam_focus_distance",
+           "cam_clip_start", "cam_clip_end", "light_orbit_distance")))
+    scene.camera = made[2]
+    scene.render_studio.cam_ortho_scale = 1.234
+    check("ortho scale field sets the camera", abs(made[2].data.ortho_scale - 1.234) < 1e-6)
+    for obj in made + [copy, light, key]:
         bpy.data.objects.remove(obj)
+    prefs_studio.name_scheme = False
+    for obj, (name, data_name) in before.items():
+        obj.name = name
+        if obj.data is not None:
+            obj.data.name = data_name
 
 
 @section
@@ -875,7 +933,7 @@ def feedback_tools():
     new = bpy.data.objects.new("Gabel <1>", bpy.data.meshes.new("Gabel2"))
     scene.collection.objects.link(new)
     info = api.cad_take_over([new])
-    archived = bpy.data.collections.get("AS_archiv")
+    archived = bpy.data.collections.get("Archive")
     check("new CAD version takes materials and collections", info["pairs"] == [["Gabel <1>", "Gabel"]]
           and new.active_material == mat and keep_coll in new.users_collection, info)
     check("old part archived, hidden", archived is not None and old.name in archived.objects
@@ -903,12 +961,16 @@ def feedback_tools():
           and abs(result["CAD"]["to_Scan_mm"]["max"] - 2.83) < 0.1 and "Section Scan" in bpy.data.objects, result)
     mod("core")._empty_temp()
     # light preset keeps the names of your lights
+    mod("studio").runner.prefs().name_scheme = True
     created = lights.apply_setup(scene, None, {"name": "A", "lights": [{"name": "Key"}, {"name": "Fill"}]})
-    created[0].name = "AS_lights Key"
+    check("setup lights in the scheme", [o.name for o in created] == ["A_key_01", "A_fill_01"],
+          [o.name for o in created])
+    mod("studio").cameras.rename(created[0], "back")
     again = lights.apply_setup(scene, None, {"name": "B", "lights": [{"name": "Area.Default"}]})
-    check("preset keeps your light names", [o.name for o in again] == ["AS_lights Key"]
-          and "Fill" not in bpy.data.objects and again[0].users_collection[0].name == "AS_lights",
+    check("preset keeps your light names", [o.name for o in again] == ["A_back_01"]
+          and "A_fill_01" not in bpy.data.objects and again[0].users_collection[0].name == "Light",
           [o.name for o in again])
+    mod("studio").runner.prefs().name_scheme = False
     # a new camera changes what the worker must load
     before = runner.scene_content(scene)
     cam = bpy.data.objects.new("New cam", bpy.data.cameras.new("New cam"))

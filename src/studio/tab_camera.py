@@ -50,7 +50,7 @@ class RS_OT_camera_back(Operator):
 class RS_OT_duplicate_camera(Operator):
     bl_idname = "render_studio.duplicate_camera"
     bl_label = "Duplicate Camera"
-    bl_description = "Duplicates the active camera into the camera collection (AS_camera) and makes the copy active"
+    bl_description = "Duplicates the active camera into the camera collection (Camera) and makes the copy active"
     bl_options = {'UNDO'}
 
     @classmethod
@@ -61,8 +61,7 @@ class RS_OT_duplicate_camera(Operator):
     def execute(self, context):
         scene = context.scene
         src = active_camera(scene)   # the user's camera, also while the queue renders a copy
-        from ..naming import numbered
-        name = numbered(src.name, bpy.data.objects.keys())   # "View_02", never ".001" (before the copy exists)
+        name = cameras.scheme_name('CAMERA', src.data.type, src.name)   # "P_side_02", never ".001"
         new = src.copy()
         new.data = src.data.copy()
         new.name = new.data.name = name
@@ -187,8 +186,11 @@ class RS_PT_camera(_SidebarPanel, Panel):
 
         # Camera bar, orbit object and lock
         box = layout.box()
-        row = box.row()
-        row.label(text="Camera", icon='CAMERA_DATA')
+        row = box.row(align=True)
+        if cam is not None and cam.type == 'CAMERA':
+            row.prop(cam.render_studio_camera, "short_name", text="", icon='CAMERA_DATA')   # rename right here
+        else:
+            row.label(text="Camera", icon='CAMERA_DATA')
         # Moved the camera by accident (e.g. with "Lock Camera to View", which ⌘Z does not undo)?
         steps = len(cameras.history(cam)) if cam is not None else 0
         back = row.row(align=True)
@@ -217,7 +219,7 @@ class RS_PT_camera(_SidebarPanel, Panel):
         col = box.column(align=True)
         row = col.row(align=True)
         if data.type == 'ORTHO':
-            row.prop(data, "ortho_scale", text="Ortho Scale")
+            row.prop(rq, "cam_ortho_scale", text="Ortho Scale")
         else:
             row.prop(data, "lens", text="Focal Length")
         if space is not None and space.type == 'VIEW_3D':
@@ -349,8 +351,8 @@ class RS_PT_frame(Panel):
         box.prop(p, "min_clipping")
         if cam is not None and cam.type == 'CAMERA' and not p.min_clipping:
             row = box.row(align=True)
-            row.prop(cam.data, "clip_start", text="Start")
-            row.prop(cam.data, "clip_end", text="End")
+            row.prop(context.scene.render_studio, "cam_clip_start", text="Start")
+            row.prop(context.scene.render_studio, "cam_clip_end", text="End")
 
         layout.label(text="Camera Frame", icon='SELECT_SET')
         layout.prop(p, "frame_auto")
@@ -396,7 +398,7 @@ def draw_dof(layout, cam, space):
     row.operator(RS_OT_dof_focus.bl_idname, text="", icon='PIVOT_CURSOR').target = "ORBIT"
     row.operator(RS_OT_dof_focus.bl_idname, text="", icon='RESTRICT_SELECT_OFF').target = "ACTIVE"
     if dof.focus_object is None:
-        col.prop(dof, "focus_distance", text="Distance")
+        col.prop(bpy.context.scene.render_studio, "cam_focus_distance", text="Distance")   # 1 mm steps
     hint = dof_hint(space)
     if hint:
         row = layout.row()

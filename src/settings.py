@@ -7,7 +7,9 @@ import os
 
 import bpy
 
-VERSION = 2
+VERSION = 3
+# Collection names before 1.3 (with the "AS_" prefix): saved as settings, they become the new defaults.
+OLD_COLLECTIONS = {"camera_collection": "AS_camera", "light_collection": "AS_lights", "archive_collection": "AS_archiv"}
 # Defaults that became neutral in 1.2 (new users are asked in the setup card): people who used
 # the add-on before keep what they had.
 OLD_DEFAULTS = {"project_folders": True, "autosave": True}
@@ -42,6 +44,10 @@ def apply_once():
                 if os.path.isfile(path):
                     prefs.studio.material_library = path
                     break
+    if prefs.settings_version < 3:
+        for key, old in OLD_COLLECTIONS.items():
+            if getattr(prefs.studio, key, "") == old:
+                prefs.studio.property_unset(key)
     prefs.settings_version = VERSION
     bpy.context.preferences.is_dirty = True   # saved with the preferences
     return None

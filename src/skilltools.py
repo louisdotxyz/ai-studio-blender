@@ -93,13 +93,14 @@ class M:
 
     @staticmethod
     def setup(path, name=None, from_camera=None):
-        """Camera 'Match <name>' with the photo as background, resolution in the photo's aspect."""
+        """Camera "P_match-<name>_01" with the photo as background, resolution in the photo's aspect."""
         scene = bpy.context.scene
         image = bpy.data.images.load(path, check_existing=True)
         width, height = image.size
         name = name or os.path.splitext(os.path.basename(path))[0][:24]
         source = from_camera or scene.camera
-        cam = bpy.data.objects.get("Match " + name)
+        cam = next((o for o in bpy.data.objects if o.type == 'CAMERA' and o.get("match_name") == name),
+                   None) or bpy.data.objects.get("Match " + name)   # by its mark: the name follows the scheme
         if cam is None:
             data = source.data.copy() if source else bpy.data.cameras.new("Match " + name)
             data.name = "Match " + name
@@ -107,6 +108,8 @@ class M:
             (bpy.data.collections.get(cameras.camera_collection_name()) or scene.collection).objects.link(cam)
             if source:
                 cam.matrix_world = source.matrix_world.copy()
+            cameras.rename(cam, "match " + name)
+        cam["match_name"] = name
         cd = cam.data
         cd.sensor_fit = 'AUTO'
         cd.background_images.clear()

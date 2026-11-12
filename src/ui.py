@@ -709,7 +709,7 @@ class CLAUDE_PT_help(bpy.types.Panel):
                      "Material library: click switches all objects with the current material",
                      "Shift-click: only the selection · Ctrl-click: select its objects",
                      "Right-click a material: favorite, rename, delete",
-                     "Replaced objects go into the archive collection (AS_archiv), you delete them",
+                     "Replaced objects go into the archive collection (Archive), you delete them",
                      "Claude's helper objects go into 'temp' and are removed after the answer"):
             col.label(text=tr(line))
         layout.prop(context.window_manager, "claude_show_setup", text="Show Setup", toggle=True, icon='TOOL_SETTINGS')

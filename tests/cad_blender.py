@@ -143,8 +143,8 @@ def take_over_with_sidecar():
           and (new_front.matrix_world.translation - Vector((0, -0.02, 0.05))).length < 1e-4,
           new_front.matrix_world.translation)
     check("property and visibility kept", new_front.get("finish") == "matt" and not new_front.visible_shadow)
-    archive = bpy.data.collections.get("AS_archiv")
-    v2 = bpy.data.collections.get("AS_archiv V2")
+    archive = bpy.data.collections.get("Archive")
+    v2 = bpy.data.collections.get("Archive V2")
     check("old parts archived by version", housing.name in v2.objects and front.name in archive.objects
           and archive.hide_render, [c.name for c in bpy.data.collections])
     check("new part: placeholder material named after the CAD", clip.active_material
@@ -169,7 +169,7 @@ def take_over_with_sidecar():
     report = cadimport.cad_import(path)
     bpy.context.view_layer.update()
     newest = next(o for o in bpy.data.objects if o.get("cad_id") == "Leuchte | Front" and o.get("cad_version") == "V4")
-    v3 = bpy.data.collections.get("AS_archiv V3")
+    v3 = bpy.data.collections.get("Archive V3")
     check("V3 archived, modifier still there", v3 and new_front.name in v3.objects and newest.modifiers
           and newest.active_material == mat, report)
     check("old part without partner reported", clip.name in report["old_without_partner"], report)
@@ -296,11 +296,11 @@ def check_views_place_cameras():
     cadimport.check_folder = lambda: os.path.join(TMP, "cad-check")
     cams = cadimport.check_views(views=("Iso", "Front"))
     result = cadimport.check_result()
-    front = bpy.data.objects["CAD Front_01"]
+    front = bpy.data.objects["P_cad-front_01"]
     forward = front.matrix_world.to_3x3() @ Vector((0, 0, -1))
-    check("check cameras look at the parts", cams == ["CAD Iso_01", "CAD Front_01"] and forward.y > 0.999,
+    check("check cameras look at the parts", cams == ["P_cad-iso_01", "P_cad-front_01"] and forward.y > 0.999,
           (cams, forward))
-    check("check cameras reused, not numbered on", cadimport.check_views(views=("Front",)) == ["CAD Front_01"])
+    check("check cameras reused, not numbered on", cadimport.check_views(views=("Front",)) == ["P_cad-front_01"])
     check("check images copied", result and sorted(result["images"]) == ["Front", "Iso"]
           and all(os.path.exists(p) for p in result["images"].values()), result)
 

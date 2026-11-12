@@ -328,12 +328,15 @@ def check_views(objects=None, views=("Iso", "Front"), size=900, samples=16, foca
         if view not in CHECK_VIEWS:
             raise ValueError("view must be one of %s" % ", ".join(CHECK_VIEWS))
         name = "CAD " + view
-        from ..naming import base_of
-        cam = next((o for o in bpy.data.objects if o.type == 'CAMERA' and o.get(CHECK_KEY)
-                    and base_of(o.name) == name), None) or bpy.data.objects.get(name)
-        if cam is None or cam.type != 'CAMERA':
-            cam = cameras._new_camera(scene, view_layer, name)   # "CAD Front_01"
-        cam[CHECK_KEY] = True
+        cam = next((o for o in bpy.data.objects if o.type == 'CAMERA' and o.get(CHECK_KEY) == view), None)
+        if cam is None:   # cameras of earlier versions: CHECK_KEY was True, the view in the name
+            from ..naming import role_of
+            want = role_of(name)
+            cam = next((o for o in bpy.data.objects if o.type == 'CAMERA' and o.get(CHECK_KEY) is not None
+                        and role_of(o.name) == want), None)
+        if cam is None:
+            cam = cameras._new_camera(scene, view_layer, name)   # "P_cad-front_01"
+        cam[CHECK_KEY] = view
         cam.data.lens = focal_length
         cam.data.clip_start = min(cam.data.clip_start, radius * 0.01)
         half = math.atan(cam.data.sensor_width / 2 / focal_length)

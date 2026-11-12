@@ -289,6 +289,16 @@ def unique_name(name, kind="objects"):
     return numbered(name, getattr(bpy.data, kind).keys())
 
 
+def rename(obj, name):
+    """Name a camera or light in the scheme: rename(cam, "side") → "P_side_01" (P/O from the
+    camera's type, A/P/S/D from the light's), the next free number. Returns the name."""
+    from . import cameras
+    obj = bpy.data.objects.get(obj) if isinstance(obj, str) else obj
+    if obj is None:
+        raise ValueError("No such object")
+    return cameras.rename(obj, name)
+
+
 def archive(objects):
     """Move objects (or names) into the hidden archive collection instead of deleting them; the user
     deletes them there. Returns how many were moved."""
@@ -322,7 +332,7 @@ def cad_import(path, take_over=True, materials=True, setup=True, delete_old=Fals
     text, STEP through OCP, OBJ, STL …) with its sidecar <name>.cad.json (see cadfiles): turns a
     Z-up glTF upright, tags parts (obj["cad_id"], "cad_material", "cad_version", "cad_file"), takes
     over from the old version (materials, collections, modifiers, settings; old parts into
-    "AS_archiv <version>"), gives new parts the base material their CAD material maps to, places
+    "Archive <version>"), gives new parts the base material their CAD material maps to, places
     the mounting empties "MOUNT | …", checks the sizes against the CAD (tolerance_mm) and writes the
     sidecar's variants into Varianten.json. Returns a report dict; print(api.cad_summary(report))."""
     from . import cadimport

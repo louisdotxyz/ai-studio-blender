@@ -86,7 +86,7 @@ def _camera(args):
     scene = bpy.context.scene
     view_layer = bpy.context.view_layer
     action = str(args.get("action") or "place").lower()
-    name = str(args.get("name") or "Cam")
+    name = str(args.get("name") or "")   # empty: named after where it looks from ("P_front_01")
     if action == "from_view":
         space = bpy.context.space_data
         if space is None or space.type != 'VIEW_3D':
@@ -253,7 +253,7 @@ def get_tools():
                         "render queue.",
          "inputSchema": {"type": "object", "properties": {
              "action": {"type": "string", "enum": ["from_view", "place"]},
-             "name": {"type": "string"},
+             "name": {"type": "string", "description": "What it shows: front, side, top, iso, detail … (becomes \"P_side_01\"/\"O_front_01\"); empty: named after where it looks from"},
              "horizontal": {"type": "number"}, "vertical": {"type": "number"},
              "distance": {"type": "number"}, "focal_length": {"type": "number"},
              "add_to_queue": {"type": "boolean"}},

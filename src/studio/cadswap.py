@@ -7,7 +7,7 @@ Parts are paired by their CAD id (obj["cad_id"], from the sidecar, see cadfiles)
 compared without the endings importers add: "Gabel.001", "Gabel <1>", "Gabel (2)". Older exports
 that had the material in the name ("Leuchte | Front PETG milchig") still pair with the id
 "Leuchte | Front". Replaced objects are never deleted unless asked: they go into the archive
-collection (Preferences › Studio, default "AS_archiv"), hidden in viewport and render.
+collection (Preferences › Studio, default "Archive"), hidden in viewport and render.
 The whole import with the sidecar is in cadimport.
 """
 
@@ -179,7 +179,7 @@ def archive_collection(scene=None):
 
 def archive(objects, scene=None, version=""):
     """Move objects into the archive collection (hidden; delete them there yourself), with a
-    version ("V2") into its child collection "AS_archiv V2". Returns how many were moved."""
+    version ("V2") into its child collection "Archive V2". Returns how many were moved."""
     coll = archive_collection(scene)
     target = coll
     if version:

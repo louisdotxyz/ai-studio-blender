@@ -26,18 +26,24 @@ render studio for product shots, all in the sidebar of the 3D viewport.
   (where renders go, backups, a folder per new file, whether Claude's code runs directly, updates,
   the model for new chats): nothing is decided for you until you choose. The **?** at the top shows
   shortcuts, clicks worth knowing, example prompts and the setup again.
-- **Short names**: new cameras, lights and render files get a two-digit number ("Ortho Top_01",
-  "Stuhl_Front_01.png"; three digits only past 99), no collection prefix and no ".001", also when
-  duplicated. Cameras and lights named by older versions or with Blender's ".001" ("AS_camera
-  View.001") get short names when a file is opened and after each Claude answer ("View_02"). Chats are
-  named after the first words of their first message.
+- **Name scheme** (Preferences › Studio, on by default): cameras `P_` (perspective) or `O_`
+  (orthographic), lights `A_` (area), `P_` (point), `S_` (spot) or `D_` (sun), then what they show or
+  do and a two-digit number: `P_side_01`, `O_front_01`, `A_key_01`. A camera whose name says nothing
+  is named after where it looks from (front, side, back, top, bottom, iso). Rename right in the
+  Render tab (the name field of the camera) or the Light tab: "Seite" becomes `P_side_01`. Older names
+  ("AS_camera Ortho Oben.001") follow the scheme when a file is opened and after each Claude answer; a
+  camera switched to orthographic goes from `P_` to `O_`. Off: only ".001" and old prefixes are
+  fixed. Render files get the same numbers ("Stuhl_Front_01.png"); chats are named after the first
+  words of their first message.
+- **Fine camera fields**: distance, height, left/right, ortho scale, focus distance and clipping move
+  in 1 mm steps (arrows and dragging), also in the camera settings (⚙).
 - **Updates** (installed from the install page): once a day the add-on looks for a new version and
   installs it by itself when Blender is idle; the chat says so. Or only a notice with an Install
   button, or off (Preferences › Chat).
 - **English** throughout, also in a German Blender; *Preferences › Chat › German Interface* shows
   the add-on in German.
 - Replaced objects are never deleted unless you say so: they go into a hidden archive
-  collection (`AS_archiv`). Claude's helper objects go into `temp`, removed after the answer.
+  collection (`Archive`). Claude's helper objects go into `temp`, removed after the answer.
 
 **Studio tab: render studio**
 - **Render:** camera bar, orbit around an object or the 3D cursor (straight top views),
@@ -55,7 +61,7 @@ render studio for product shots, all in the sidebar of the 3D viewport.
 - **CAD:** *Import CAD* (GLB incl. Onshape's glTF, STEP through a Python with OCP/build123d, OBJ, STL,
   FBX …) checks size, floor, names and triangles. *New Version* gives a re-exported model the
   materials, collections, modifiers and settings of the old parts with the same id or name ("Fork",
-  "Fork.001", "Fork <1>") and archives the old ones by version (`AS_archiv V2`). A sidecar
+  "Fork.001", "Fork <1>") and archives the old ones by version (`Archive V2`). A sidecar
   `<name>.cad.json` next to the export (written by the CAD side, see `src/studio/cadfiles.py`) adds part
   ids, CAD materials (mapped to base materials), mounting points (`MOUNT | …` empties that move with
   every version), sizes to check and variants. Claude: `studio_cad_import`, `studio_cad_check` (check
@@ -147,8 +153,9 @@ blender_screenshot, blender_image), an MCP server that comes with the add-on and
 app reads it at its next start. Set a fixed **Port** if a client needs one; the copy button puts
 instructions for any other session into the clipboard.
 
-The collection names (cameras `AS_camera`, lights `AS_lights`, archive `AS_archiv`, `temp`) are set in
-Preferences › Studio; older `RS_Cameras` / `RS_Lights` collections are renamed.
+The collection names (`Camera`, `Light`, `Archive`, `temp`; Claude's set pieces go into `Set`) are set
+in Preferences › Studio; collections of older versions (`AS_camera`, `AS_camera | Packshot`,
+`AS_lights`, `AS_archiv V2`, `AS_set`, `RS_Cameras`, `RS_Lights`) are renamed when a file is opened.
 
 `studio/make_base_materials.py` (run by itself the first time the Material tab needs it) creates a "Base Materials.blend" with 19 everyday materials
 (glass, metals, plastics, rubber, paint, speaker cloth …) as assets.

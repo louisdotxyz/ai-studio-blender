@@ -114,8 +114,7 @@ def add_light(scene, target):
 
 
 def duplicate_light(scene, src):
-    from ..naming import numbered
-    name = numbered(src.name, bpy.data.objects.keys())   # "Key_02", never ".001" (before the copy exists)
+    name = cameras.scheme_name('LIGHT', src.data.type, src.name)   # "A_key_02", never ".001"
     new = src.copy()
     new.data = src.data.copy()
     new.name = new.data.name = name
@@ -195,9 +194,11 @@ def apply_setup(scene, target, spec, replace=True, tag=True):
     center, radius = subject(scene, target)
     front = front_angle(scene, center)
     created = []
-    from ..naming import base_of, numbered
+    from ..naming import role_of
+    prefixes = cameras._prefixes()
     for item in spec["lights"]:
-        obj = next((o for o in old if base_of(o.name) == base_of(item["name"])), old[0] if old else None)
+        role = role_of(item["name"], prefixes, "light")
+        obj = next((o for o in old if role_of(o.name, prefixes, "light") == role), old[0] if old else None)
         if obj is not None:
             old.remove(obj)
             data = obj.data
@@ -205,7 +206,8 @@ def apply_setup(scene, target, spec, replace=True, tag=True):
             data.color = (1.0, 1.0, 1.0)
             data.use_temperature = False
         else:
-            data = bpy.data.lights.new(numbered(item["name"], bpy.data.lights.keys()), item["type"])
+            name = cameras.scheme_name('LIGHT', item["type"], item["name"])
+            data = bpy.data.lights.new(name, item["type"])
         distance = item["distance"] * radius
         if item["type"] == 'SUN':
             data.energy = item["power"] * SUN_STRENGTH
@@ -227,8 +229,10 @@ def apply_setup(scene, target, spec, replace=True, tag=True):
             data.use_temperature = True
             data.temperature = item["kelvin"]
         if obj is None:
-            obj = bpy.data.objects.new(numbered(item["name"], bpy.data.objects.keys()), data)
+            obj = bpy.data.objects.new(name, data)   # the data may be "….001" (an old one left over)
             light_collection(scene).objects.link(obj)
+        elif obj.name and cameras.scheme_on():
+            cameras.rename(obj, obj.name)   # a reused light that changed its type: A_ → S_ …
         if tag:
             obj[PRESET_KEY] = spec["name"]
         place(obj, center, front + math.radians(item["horizontal"]), math.radians(item["vertical"]), distance)

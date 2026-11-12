@@ -517,7 +517,7 @@ class RS_PT_lighting(_SidebarPanel, Panel):
             sub.active = on
             sub.operator(RS_OT_select_light.bl_idname, text="", depress=(obj == active),
                          icon=LIGHT_ICONS.get(obj.data.type, 'LIGHT')).name = obj.name
-            sub.prop(obj, "name", text="")
+            sub.prop(obj.render_studio_light, "short_name", text="")
             power = sub.row(align=True)
             power.ui_units_x = 4.5
             power.prop(obj.data, "energy", text="")

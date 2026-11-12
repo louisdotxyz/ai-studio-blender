@@ -8,7 +8,7 @@ photo 1:1. Use M (photo match helper, ready in execute_python).
 1. Read the photo: horizon (eye height = vanishing point of floor lines) as a share from the bottom, focal
    length (wide interior 18-28 mm, normal 35-50 mm), camera height (doors ~2.0-2.1 m, window sill ~0.9 m),
    light direction and hardness.
-2. M.setup(path, name="<short name>")  -> camera "Match <name>" in RS_Cameras, the photo as camera background,
+2. M.setup(path, name="<short name>")  -> camera "P_match-<name>_01" in Camera, the photo as camera background,
    resolution in the photo's aspect (the old one is kept on the camera).
    cam.data.lens = …; M.set_horizon(cam, share_from_bottom, height=camera_height)   # straight verticals
    Move the camera in x/y so the product stands where it makes sense in the photo (ask_user if unclear:
@@ -21,5 +21,5 @@ photo 1:1. Use M (photo match helper, ready in execute_python).
 5. Final: M.final(cam) -> full resolution PNG in ~/Downloads (folder="…" for another one). Back to the normal format: M.restore(cam) and the
    previous scene camera.
 Extend (wider view or another angle): build proxy geometry after the photo (floor, back wall, side walls as boxes
-in AS_set, marked obj["as_env"] = True, measured from the match camera), then M.project(cam, [objects]) projects the photo onto them.
+in Set, marked obj["as_env"] = True, measured from the match camera), then M.project(cam, [objects]) projects the photo onto them.
 Fill outside the photo with materials as in the ENV skill.

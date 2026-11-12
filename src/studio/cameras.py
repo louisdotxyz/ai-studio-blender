@@ -2,9 +2,12 @@
 """Camera collection, hiding cameras in the viewport and the movement lock.
 
 - New cameras (the "+" in the camera bar) go into the camera collection, new lights
-  into the light collection (names in Preferences › Studio, default AS_camera and
-  AS_lights). Collections with older names (RS_Cameras, RS_Lights, "Render Studio
-  Cameras/Lights") are renamed when a file is opened.
+  into the light collection (names in Preferences › Studio, default Camera and
+  Light). Collections with older names (AS_camera, AS_lights, AS_archiv, AS_set, RS_Cameras,
+  RS_Lights, also "AS_camera | Packshot") are renamed when a file is opened.
+- Names (Preferences › Studio › Name Scheme): cameras P_/O_ (perspective/orthographic) and
+  lights A_/P_/S_/D_ (area/point/spot/sun), then what they show or do, then the number:
+  "P_side_01", "O_front_01", "A_key_01".
 - Cameras are hidden in the viewport by default: once per scene (when a file
   is opened or the extension is enabled) all cameras are hidden. Looking
   through a hidden camera works as usual; the eye in the Render tab shows them
@@ -17,8 +20,11 @@
 import bpy
 
 # Names of earlier versions, renamed to the collection names set in the preferences.
-OLD_CAMERAS = ("Render Studio Cameras", "RS_Cameras")
-OLD_LIGHTS = ("Render Studio Lights", "RS_Lights")
+OLD_CAMERAS = ("Render Studio Cameras", "RS_Cameras", "AS_camera")
+OLD_LIGHTS = ("Render Studio Lights", "RS_Lights", "AS_lights")
+OLD_ARCHIVES = ("AS_archiv",)
+OLD_SETS = ("AS_set",)
+SET_COLLECTION = "Set"
 
 
 def _pref(key, default):
@@ -28,19 +34,28 @@ def _pref(key, default):
 
 
 def camera_collection_name():
-    return _pref("camera_collection", "AS_camera")
+    return _pref("camera_collection", "Camera")
 
 
 def light_collection_name():
-    return _pref("light_collection", "AS_lights")
+    return _pref("light_collection", "Light")
 
 
 def archive_collection_name():
-    return _pref("archive_collection", "AS_archiv")
+    return _pref("archive_collection", "Archive")
 
 
 def temp_collection_name():
     return _pref("temp_collection", "temp")
+
+
+def active_camera(scene):
+    """The user's active camera, also while the queue renders a temporary copy."""
+    from .runner import RUN, TEMP_KEY
+    cam = RUN.original("camera", scene.camera)
+    if cam is not None and TEMP_KEY in cam:
+        cam = bpy.data.objects.get(cam[TEMP_KEY])
+    return cam if cam is not None and cam.type == 'CAMERA' else None
 
 
 def scene_cameras(scene):
@@ -50,13 +65,21 @@ def scene_cameras(scene):
 
 
 def rename_old_collections():
-    """Renames the collections of older versions (RS_Cameras, RS_Lights …) to the names set in
-    the preferences, unless one of that name exists already."""
-    for olds, new in ((OLD_CAMERAS, camera_collection_name()), (OLD_LIGHTS, light_collection_name())):
-        for old in olds:
-            coll = bpy.data.collections.get(old)
-            if coll is not None and old != new and coll.library is None and bpy.data.collections.get(new) is None:
-                coll.name = new
+    """Renames the collections of older versions (AS_camera, RS_Cameras …, also "AS_camera |
+    Packshot") to the names set in the preferences, unless one of that name exists already."""
+    pairs = [(old, new) for olds, new in ((OLD_CAMERAS, camera_collection_name()),
+                                          (OLD_LIGHTS, light_collection_name()),
+                                          (OLD_ARCHIVES, archive_collection_name()),
+                                          (OLD_SETS, SET_COLLECTION)) for old in olds if old != new]
+    for coll in list(bpy.data.collections):
+        if coll.library is not None:
+            continue
+        for old, new in pairs:
+            if coll.name == old or coll.name.startswith(old + " "):
+                target = new + coll.name[len(old):]
+                if bpy.data.collections.get(target) is None:
+                    coll.name = target
+                break
 
 
 def named_collection(scene, name):
@@ -165,25 +188,105 @@ def _on_load_post(*_args):
         print("Render Studio: clipping:", ex)
 
 
+def scheme_on():
+    from . import runner
+    p = runner.prefs()
+    return p is None or getattr(p, "name_scheme", True)
+
+
+def _prefixes():
+    return ((camera_collection_name(), light_collection_name(), "AS", "RS")
+            + OLD_CAMERAS + OLD_LIGHTS)
+
+
+def letter_of(obj, data_type=None):
+    """P/O for a camera, A/P/S/D for a light."""
+    from ..naming import CAMERA_LETTERS, LIGHT_LETTERS
+    kind = data_type or (obj.data.type if obj is not None and obj.data is not None else "")
+    if obj is None or obj.type == 'CAMERA':
+        return CAMERA_LETTERS.get(kind, "P")
+    return LIGHT_LETTERS.get(kind, "A")
+
+
+def fallback_role(obj_type, data_type=""):
+    if obj_type == 'CAMERA':
+        return "view"
+    return "sun" if data_type == 'SUN' else "light"
+
+
+def scheme_name(obj_type, data_type, name, exclude=None):
+    """The next free name for a new camera or light ("P_side_01"); without the scheme the
+    short name with a number ("Side_01")."""
+    from ..naming import numbered, role_of, scheme_base, CAMERA_LETTERS, LIGHT_LETTERS
+    taken = [n for n in bpy.data.objects.keys() if n != exclude]
+    if not scheme_on():
+        return numbered(name, taken)
+    letters = CAMERA_LETTERS if obj_type == 'CAMERA' else LIGHT_LETTERS
+    role = role_of(name, _prefixes(), fallback_role(obj_type, data_type))
+    return numbered(scheme_base(letters.get(data_type, "P" if obj_type == 'CAMERA' else "A"), role), taken)
+
+
+def rename(obj, name):
+    """Rename a camera or light (Render tab, Claude): in the scheme when it is on – "side"
+    becomes "P_side_01" – and its data with it."""
+    from ..naming import in_scheme, role_of
+    name = (name or "").strip()
+    if not name or obj is None:
+        return obj.name if obj is not None else ""
+    if scheme_on() and obj.type in {'CAMERA', 'LIGHT'}:
+        letter = letter_of(obj)
+        role = role_of(name, _prefixes(), fallback_role(obj.type, obj.data.type if obj.data else ""))
+        free = name not in bpy.data.objects or bpy.data.objects[name] == obj
+        if not (in_scheme(name, letter, role) and free):
+            name = obj.name if in_scheme(obj.name, letter, role) else \
+                scheme_name(obj.type, obj.data.type if obj.data else "", name, exclude=obj.name)
+    obj.name = name
+    if obj.data is not None and obj.data.users == 1 and obj.data.library is None:
+        obj.data.name = obj.name
+    return obj.name
+
+
+def view_role(matrix):
+    """Where a camera looks from: front, back, side, top, bottom or iso (world axes,
+    Blender's front looks along +Y)."""
+    import math
+    back = matrix.to_3x3().col[2].normalized()   # the camera looks along −Z: this points to it
+    elevation = math.degrees(math.asin(max(-1.0, min(1.0, back.z))))
+    if elevation > 60.0:
+        return "top"
+    if elevation < -60.0:
+        return "bottom"
+    azimuth = math.degrees(math.atan2(back.x, -back.y)) % 360.0   # 0 = in front of it (−Y)
+    for angle, role in ((0.0, "front"), (90.0, "side"), (180.0, "back"), (270.0, "side"), (360.0, "front")):
+        if abs(azimuth - angle) <= 22.5:
+            return role
+    return "iso"
+
+
 def tidy_names():
-    """Cameras and lights with names of older versions or Blender's ".001" get short ones:
-    "AS_camera View.001" → "View_02", "AS_1" → "Camera_01". Returns {old: new}."""
-    from ..naming import tidy
-    prefixes = (camera_collection_name(), light_collection_name(), "AS", "RS") + OLD_CAMERAS + OLD_LIGHTS
+    """Every camera and light in the scheme ("AS_camera Ortho Oben.001" → "O_top_01", a camera
+    switched to orthographic "P_front_01" → "O_front_01"); with the scheme off only the bad
+    names of older versions and Blender's ".001" are fixed. Returns {old: new}."""
+    from ..naming import scheme_names, tidy
+    objects = [o for o in bpy.data.objects if o.type in {'CAMERA', 'LIGHT'} and o.library is None
+               and "render_studio_temp_camera" not in o and o.data is not None]
+    if scheme_on():
+        # a camera whose name says nothing ("Camera", "View") is named after where it looks from
+        names = scheme_names([(o.name, letter_of(o), view_role(o.matrix_world) if o.type == 'CAMERA'
+                               else fallback_role(o.type, o.data.type)) for o in objects], _prefixes())
+    else:
+        names = {}
+        for kind, fallback in (('CAMERA', "Camera"), ('LIGHT', "Light")):
+            names.update(tidy([o.name for o in objects if o.type == kind], _prefixes(), fallback))
+    plan = [(o, o.name, names[o.name]) for o in objects if o.name in names]
+    for i, (obj, _old, _new) in enumerate(plan):   # out of the way first: no "….001" on the way
+        obj.name = "ai_studio_rename_%d" % i
     done = {}
-    for kind, fallback in (('CAMERA', "Camera"), ('LIGHT', "Light")):
-        objects = [o for o in bpy.data.objects if o.type == kind and o.library is None
-                   and "render_studio_temp_camera" not in o]
-        names = tidy([o.name for o in objects], prefixes, fallback)
-        for obj in objects:
-            new = names.get(obj.name)
-            if not new:
-                continue
-            old = obj.name
-            obj.name = new
-            if obj.data is not None and obj.data.users == 1 and obj.data.library is None:
-                obj.data.name = new
-            done[old] = obj.name
+    for obj, old, new in plan:
+        obj.name = new
+        if obj.data.users == 1 and obj.data.library is None:
+            obj.data.name = new
+        done[old] = obj.name
     return done
 
 
@@ -268,8 +371,7 @@ def apply_min_clipping(scene=None, force=False):
 
 
 def _new_camera(scene, view_layer, name):
-    from ..naming import numbered
-    name = numbered(name, bpy.data.objects.keys())   # "Ortho Top_01", never "….001"
+    name = scheme_name('CAMERA', 'PERSP', name)   # "P_top_01" (or "Top_01"), never "….001"
     data = bpy.data.cameras.new(name)
     cam = bpy.data.objects.new(name, data)
     from .runner import prefs
@@ -283,7 +385,18 @@ def _new_camera(scene, view_layer, name):
     return cam
 
 
-def camera_from_view(scene, space, view_layer, name="View"):
+def _named(cam, name):
+    """After placing a new camera: its letter (P/O) and, when the name says nothing, where it
+    looks from ("P_front_01")."""
+    from ..naming import role_of
+    if not scheme_on():
+        return cam
+    role = role_of(name, _prefixes(), "")
+    rename(cam, role if role and role not in {"view"} else view_role(cam.matrix_world))
+    return cam
+
+
+def camera_from_view(scene, space, view_layer, name=""):
     """A new camera that shows what the 3D viewport shows right now."""
     rv3d = space.region_3d
     from .runner import RUN
@@ -296,7 +409,7 @@ def camera_from_view(scene, space, view_layer, name="View"):
         cam.data.type, cam.data.lens, cam.data.ortho_scale = src.data.type, src.data.lens, src.data.ortho_scale
         cam.data.sensor_width = src.data.sensor_width
         cam.matrix_world = src.matrix_world.copy()
-        return cam
+        return _named(cam, name)
     cam = _new_camera(scene, view_layer, name)
     cam.matrix_world = rv3d.view_matrix.inverted()
     if rv3d.view_perspective == 'ORTHO':
@@ -305,7 +418,7 @@ def camera_from_view(scene, space, view_layer, name="View"):
     else:
         # The viewport's "focal length" uses a 72 mm sensor; camera default is 36 mm.
         cam.data.lens = space.lens / 2.0
-    return cam
+    return _named(cam, name)
 
 
 def camera_around(scene, view_layer, name, horizontal, vertical, distance, focal_length=50.0):
@@ -319,7 +432,7 @@ def camera_around(scene, view_layer, name, horizontal, vertical, distance, focal
     cam.data.lens = max(1.0, float(focal_length))
     lights.place(cam, center, front + math.radians(horizontal), math.radians(vertical),
                  max(0.3, float(distance)) * radius)
-    return cam
+    return _named(cam, name)
 
 
 # ---------------------------------------------------------------------------

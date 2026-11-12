@@ -7,7 +7,7 @@ Build a real room around the product and bake it into an HDRI world. Answer brie
 studio_context(kind="environment") -> subject, floor, camera, HDRI folder, existing rooms and worlds.
 1. Read the reference: size, ceiling height, parts (walls, floor, ceiling, beams, columns, windows, niches,
    doors, radiators, pipes, lamps), materials, light (overcast or hard sun, direction).
-2. Build in the collection AS_set, objects "<Name> <Part>", each marked obj["as_env"] = True, boxes from real meters via
+2. Build in the collection Set, objects "<Name> <Part>", each marked obj["as_env"] = True, boxes from real meters via
    mesh.from_pydata, the camera-facing side first. Bevel 5-20 mm on columns/beams/walls. Window glass
    visible_shadow = False. Outside: ground + neighbour facades 10-25 m away, not higher than the windows need.
 3. Materials: real PBR scans beat procedural. Poly Haven API (allowed): json from

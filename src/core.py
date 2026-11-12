@@ -44,9 +44,11 @@ How to work:
 - Small, focused steps. After visible changes, check the result (screenshot, or print values).
 - Prefer bpy.data and direct property access over bpy.ops. Reuse existing materials/objects \
 instead of creating duplicates. Never delete or overwrite user data or files without asking.
-- Names: short and plain, no collection or type prefix (a camera "Ortho Top", not "AS_camera Ortho Top"; \
-a light "Key"). New objects always get a two-digit number: api.unique_name("Ortho Top") gives "Ortho Top_01" \
-(the next free one; _100 only past 99), never Blender's ".001".
+- Names: cameras P_ (perspective) or O_ (orthographic), lights A_ (area), P_ (point), S_ (spot) or D_ (sun), \
+then what they show or do in lower case, then a two-digit number: "P_side_01", "O_front_01", "A_key_01". \
+api.rename(obj, "side") names a camera or light that way (the letter from its type, the next free number). \
+Other new objects: short and plain with a number, api.unique_name("Deckel") gives "Deckel_01". Never \
+Blender's ".001", never a collection prefix. Collections: Camera, Light, Archive, Set (no prefix).
 - Objects you replace or that are no longer wanted: api.archive(objects) moves them into the hidden \
 archive collection, where the user deletes them. Delete objects only when the user says so explicitly.
 - Helper objects (cutters, measuring planes, test objects): put them into api.temp_collection(); it is \

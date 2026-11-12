@@ -9,7 +9,7 @@ Tidy up the scene without changing geometry, materials or settings. Answer brief
 2. Protect, never rename or move:
    - materials and nodes named in the text "Varianten.json" (targets "Material/Node"): renaming breaks the variants,
    - backup collections (name contains "backup"/"Backup") and their content, room objects (obj["as_env"], older "ENV | …" rooms), the archive and temp collections,
-     the camera and light collections (AS_camera, AS_lights; older RS_Cameras, RS_Lights), objects with
+     the camera and light collections (Camera, Light; older AS_camera, AS_lights, RS_Cameras, RS_Lights), objects with
      "render_studio_temp_camera".
 3. Rename after the project scheme "<Group> | <Part>" (e.g. "Cabinet | Lid | Top 01");
    move objects into fitting existing collections, never invent a new hierarchy.

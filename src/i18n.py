@@ -247,7 +247,7 @@ DE = {
     'Material library: click switches all objects with the current material': 'Material-Library: Klick tauscht alle Objekte mit dem aktuellen Material',
     'Shift-click: only the selection · Ctrl-click: select its objects': 'Shift-Klick: nur die Auswahl · Strg-Klick: seine Objekte auswählen',
     'Right-click a material: favorite, rename, delete': 'Rechtsklick auf ein Material: Favorit, umbenennen, löschen',
-    'Replaced objects go into the archive collection (AS_archiv), you delete them': 'Ersetzte Objekte kommen in die Archiv-Collection (AS_archiv), löschen tust du sie',
+    'Replaced objects go into the archive collection (Archive), you delete them': 'Ersetzte Objekte kommen in die Archiv-Collection (Archive), löschen tust du sie',
     "Claude's helper objects go into 'temp' and are removed after the answer": "Claudes Hilfsobjekte kommen in 'temp' und werden nach der Antwort entfernt",
     'Port': 'Port',
     'Fixed port for the Live Connection (0 = a free one each start). Takes effect when Blender starts': 'Fester Port für die Live Connection (0 = bei jedem Start ein freier). Gilt ab dem nächsten Blender-Start',
