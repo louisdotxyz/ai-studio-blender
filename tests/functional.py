@@ -277,7 +277,8 @@ def settings_for_earlier_users():
               (prefs.project_folders, prefs.autosave))
         prefs.property_unset("project_folders")
         prefs.property_unset("autosave")
-        check("new users: neutral (no project folders, no backups)", not prefs.project_folders and not prefs.autosave)
+        check("new users: no project folders, backups on (good defaults, fewer questions)",
+              not prefs.project_folders and prefs.autosave)
     finally:
         prefs.settings_version, prefs.backup_dir, prefs.main_suffix, prefs.studio.low_dir = keep
         if made:
@@ -539,6 +540,34 @@ def short_names():
         obj.name = name
         if obj.data is not None:
             obj.data.name = data_name
+
+
+@section
+def product_render_setup():
+    rs = mod("studio").render_setup
+    scene = bpy.context.scene
+    before = (scene.render.engine, scene.cycles.samples, scene.view_settings.view_transform,
+              scene.unit_settings.length_unit, scene.cycles.max_bounces)
+    cprefs = bpy.context.preferences.addons["cycles"].preferences
+    device_before = cprefs.compute_device_type
+    scene.render.engine = 'BLENDER_EEVEE' if 'BLENDER_EEVEE' in [i.identifier for i in
+                                                                 scene.render.bl_rna.properties["engine"].enum_items] else 'BLENDER_WORKBENCH'
+    start = (scene.render.engine, scene.cycles.samples, scene.view_settings.view_transform,
+             scene.unit_settings.length_unit, scene.cycles.max_bounces)
+    said = rs.apply(scene)
+    check("product setup: Cycles, GPU, AgX, mm, denoise", scene.render.engine == 'CYCLES'
+          and scene.cycles.device == 'GPU' and scene.view_settings.view_transform == 'AgX'
+          and scene.unit_settings.length_unit == 'MILLIMETERS' and scene.cycles.use_denoising
+          and scene.cycles.samples == 512 and scene.cycles.max_bounces == 12, said)
+    check("product setup: Metal for Cycles on this Mac", cprefs.compute_device_type == 'METAL'
+          and any(d.use and d.type != 'CPU' for d in cprefs.devices), cprefs.compute_device_type)
+    check("product setup explains itself", len(said) >= 8 and any("millimeters" in s for s in said))
+    rs.apply(scene)   # pressed twice: Undo still goes back to the very first state
+    check("undo: everything as before", rs.undo(scene) and (scene.render.engine, scene.cycles.samples,
+          scene.view_settings.view_transform, scene.unit_settings.length_unit, scene.cycles.max_bounces) == start
+          and cprefs.compute_device_type == device_before and not rs.is_set(scene))
+    scene.render.engine, scene.cycles.samples, scene.view_settings.view_transform, \
+        scene.unit_settings.length_unit, scene.cycles.max_bounces = before
 
 
 @section
@@ -1095,9 +1124,9 @@ def release_1_0():
                             env=dict(os.environ, AI_STUDIO_LIVE_FILE=live.LIVE_FILE))
     answers = [json.loads(x) for x in result.stdout.splitlines() if x.strip()]
     status = answers[2]["result"]["content"][0]["text"] if len(answers) == 3 else ""
-    check("MCP bridge: initialize, 6 tools, status from Blender",
+    check("MCP bridge: initialize, 7 tools, status from Blender",
           len(answers) == 3 and answers[0]["result"]["serverInfo"]["name"] == "ai-studio"
-          and len(answers[1]["result"]["tools"]) == 6 and status.startswith("Blender " + bpy.app.version_string[:3]),
+          and len(answers[1]["result"]["tools"]) == 7 and status.startswith("Blender " + bpy.app.version_string[:3]),
           (result.stdout[-500:], result.stderr[-500:]))
     prefs.live_connection = on
 

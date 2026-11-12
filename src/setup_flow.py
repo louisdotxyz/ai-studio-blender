@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Setup in one click (setup card › Set Up Everything): online access, Claude Code, login,
-Live Connection for the other Claude apps. The base materials are made on their own the first
-time the Material tab needs them (step "materials"). Each step that is already done is
-skipped. The slow steps (download, login, Blender in the background) run in a thread, the
+the base materials, Live Connection for the other Claude apps. Each step that is already done
+is skipped. The slow steps (download, login, Blender in the background) run in a thread, the
 steps that touch Blender's data run on the main thread (core's timer calls ``tick``).
 
 The single buttons of the card use the same steps (Install = install + log in).
@@ -19,7 +18,7 @@ import bpy
 from . import claude_cli, core, live_clients
 from .i18n import tr
 
-ALL = ("online", "install", "login", "connect")
+ALL = ("online", "install", "login", "materials", "connect")
 LOGIN_WAIT = 600.0     # seconds the login window gets
 LOGIN_POLL = 3.0
 
@@ -36,9 +35,11 @@ def missing():
     state = core.setup_state()
     prefs = core.get_prefs()
     live = bool(prefs and prefs.live_connection)
+    from .studio import tab_material
     return (state["online"] == 'OFF' or not state["cli"] or state["login"] is False
             or live and state["cli"] and not state["live_code"]
-            or live and state["live_desktop"] is False)
+            or live and state["live_desktop"] is False
+            or not tab_material.base_library_file())
 
 
 def status():

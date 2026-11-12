@@ -80,7 +80,7 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
     autosave: BoolProperty(
         name="Auto Save",
         description="Save regularly and right before risky moments (model code, renders, low memory)",
-        default=False,
+        default=True,
     )
     autosave_mode: EnumProperty(
         name="Auto Save Mode",

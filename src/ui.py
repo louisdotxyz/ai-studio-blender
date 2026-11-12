@@ -1204,6 +1204,11 @@ class CLAUDE_PT_settings(bpy.types.Panel):
         layout.operator("preferences.addon_show", text="All Settings…", icon='PREFERENCES').module = __package__
 
 
+def _wrap_text(text, width):
+    import textwrap
+    return textwrap.wrap(text, width) or [text]
+
+
 def _setup_steps_open(context, prefs, state=None):
     """Online access, Claude Code, login: until the chat worked once, or when one goes missing."""
     if prefs is None:
@@ -1416,6 +1421,20 @@ class CLAUDE_PT_chat(bpy.types.Panel):
             self._draw_setup_steps(box, prefs, state)
         if _setup_questions_open(context, prefs):
             self._draw_setup_questions(box, context, prefs)
+        if prefs.live_connection and state["live_desktop"]:
+            # The last step happens in the Claude app (its names as of app 5.12, see README)
+            sub = box.column(align=True)
+            sub.separator(factor=0.5)
+            sub.label(text=tr("Last step, in the Claude app:"), icon='INFO', translate=False)
+            for line in _wrap_text(tr("Set the permission switch under the message box to Auto: the Blender "
+                                      "tools then run without asking each time (or Customize › Connectors › "
+                                      "ai-studio › Tool permissions › Always allow)."), 52):
+                row = sub.row()
+                row.active = False
+                row.label(text=line, translate=False)
+        from .studio import render_setup
+        box.separator(factor=0.5)
+        render_setup.draw(box, context.scene)
         box.operator("claude.setup_done", text=tr("Done"), icon='CHECKMARK')
 
     @staticmethod
@@ -1454,6 +1473,10 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         if state["cli"]:
             line(state["login"], {True: tr("Logged in"), False: tr("Not logged in"),
                                   None: tr("Checking the login…")}[state["login"]], "claude.login", tr("Log in"))
+        from .studio import tab_material
+        has_materials = bool(tab_material.base_library_file())
+        line(has_materials, tr("Base materials ready") if has_materials else tr("Base materials missing"),
+             "claude.make_base_materials", tr("Create"))
         row = col.row(align=True)
         row.prop(prefs, "live_connection", text=tr("Live Connection for Cowork / Claude Code"))
         sub = row.row(align=True)
@@ -1488,6 +1511,15 @@ class CLAUDE_PT_chat(bpy.types.Panel):
                 op = buttons.operator("claude.setup_choice", text=text, depress=active, translate=False)
                 op.key, op.value = key, value
 
+        if not context.window_manager.claude_show_setup:
+            # Only what is really the user's to decide; the rest has good defaults (Preferences, or the ?)
+            choice(tr("Claude's code"), [(tr("Ask first"), "code", "ask", not prefs.auto_approve),
+                                         (tr("Run directly"), "code", "auto", prefs.auto_approve)])
+            hint = col.row()
+            hint.active = False
+            hint.label(text=tr("Run directly: Claude changes the scene without asking each time (Undo works)"),
+                       translate=False)
+            return
         if studio is not None:
             folder = bool(studio.output_root)
             choice(tr("Renders"), [(tr("Next to the file"), "renders", "next", not folder),
