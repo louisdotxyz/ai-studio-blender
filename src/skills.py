@@ -23,6 +23,9 @@ import re
 # belong to the user – never rewritten, and not brought back after being deleted.
 DEFAULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "skills_default")
 INSTALLED = ".installed.json"
+ACTIVE = ".active.json"   # the checked skills, kept between Blender sessions
+# Earlier shipped versions (sha1 of the file): a copy the user never changed gets the new text.
+UPGRADES = {"cad": {"e7b3d80ae27d22995023a36ddcaab3b3761f1b97"}}
 _FRONT = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.S)
 
 
@@ -55,13 +58,51 @@ def install_defaults(folder):
     for name in sorted(set(names) - installed):
         target = os.path.join(folder, name + ".md")
         if not os.path.exists(target):
-            with open(os.path.join(DEFAULTS_DIR, name + ".md"), encoding="utf-8") as src, \
-                    open(target, "w", encoding="utf-8") as dst:
-                dst.write(src.read())
+            _copy_default(name, target)
         installed.add(name)
+    for name, old in UPGRADES.items():
+        target = os.path.join(folder, name + ".md")
+        if name in names and _sha1(target) in old:
+            _copy_default(name, target)
     try:
         with open(record, "w", encoding="utf-8") as f:
             json.dump(sorted(installed), f)
+    except OSError:
+        pass
+
+
+def _copy_default(name, target):
+    with open(os.path.join(DEFAULTS_DIR, name + ".md"), encoding="utf-8") as src, \
+            open(target, "w", encoding="utf-8") as dst:
+        dst.write(src.read())
+
+
+def _sha1(path):
+    import hashlib
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha1(f.read()).hexdigest()
+    except OSError:
+        return ""
+
+
+def load_active(workdir):
+    """The skills that were checked when Blender closed (only the ones that still exist)."""
+    import json
+    try:
+        with open(os.path.join(skills_dir(workdir), ACTIVE), encoding="utf-8") as f:
+            names = json.load(f)
+    except (OSError, ValueError):
+        return []
+    known = {s["name"] for s in list_skills(workdir)}
+    return [n for n in names if isinstance(n, str) and n in known] if isinstance(names, list) else []
+
+
+def save_active(workdir, names):
+    import json
+    try:
+        with open(os.path.join(skills_dir(workdir), ACTIVE), "w", encoding="utf-8") as f:
+            json.dump(list(names), f)
     except OSError:
         pass
 

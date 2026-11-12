@@ -189,7 +189,13 @@ link = jobs.chat_link(job, "new")[0]
 check("new chat with the text", link.startswith("claude://claude.ai/new?q=CAD%20job") and "Wand%202.4%20mm" in link)
 text = jobs.message(dict(job, path=job["path"]))
 check("message names its chat and works without blender_jobs", "for the chat 'Leuchte'" in text
-      and "no blender_jobs tool" in text and job["path"] in text and "linked to the Mac" in text, text)
+      and "no blender_jobs tool" in text and "blender_python" in text and "cadjobs.claim(%r" % job["id"] in text
+      and "linked to the Mac" in text, text)
+check("export goes straight into Blender", "OS.exportPackage" in jobs.message(dict(job, cad_folder="/x/CAD")))
+here = os.path.dirname(os.path.abspath(jobs.__file__))
+ns = {}
+exec("import sys; sys.path.insert(0, %r); import cadjobs as fallback" % here, ns)
+check("the fallback snippet imports cadjobs on its own", hasattr(ns["fallback"], "claim"))
 temp_image = os.path.join(TMP, "tool-result.png")
 open(temp_image, "wb").write(b"\x89PNG fake")
 with_image = jobs.new_job("Radius 2 mm", images=[temp_image, os.path.join(TMP, "missing.png")], jobs_dir=jobs_dir)
@@ -235,6 +241,25 @@ now = datetime.datetime(2026, 11, 12, 12, 0, 0)
 check("ago", jobs.ago("2026-11-12T11:57:00", now) == (3, "min") and jobs.ago("2026-11-12T07:00:00", now) == (5, "h")
       and jobs.ago("2026-11-09T12:00:00", now) == (3, "d") and jobs.ago("", now) is None)
 check("instructions ask the chat for its name", "chat's name" in mcp.INSTRUCTIONS)
+
+# the CAD skill: an unchanged old copy gets the new text, a changed one stays; the switch is kept
+import subprocess
+sk = load("skills", "skills.py")
+old = subprocess.run(["git", "show", "9d2a4b0:src/skills_default/cad.md"], cwd=os.path.join(ROOT, ".."),
+                     capture_output=True).stdout
+if old:
+    for case, text in (("unchanged", old), ("changed", old + b"\nmeine Notiz\n")):
+        work = os.path.join(TMP, "work_" + case)
+        os.makedirs(os.path.join(work, "skills"))
+        open(os.path.join(work, "skills", "cad.md"), "wb").write(text)
+        json.dump(sorted(n[:-3] for n in os.listdir(sk.DEFAULTS_DIR) if n.endswith(".md")),
+                  open(os.path.join(work, "skills", sk.INSTALLED), "w"))
+        body = sk.find(work, "cad")["body"]
+        check("old CAD skill %s: %s" % (case, "new text" if case == "unchanged" else "kept"),
+              ("studio_cad_job" in body) == (case == "unchanged"), body[:80])
+work = os.path.join(TMP, "work_active")
+sk.save_active(work, ["cad", "gone"])
+check("checked skills kept, deleted ones dropped", sk.load_active(work) == ["cad"], sk.load_active(work))
 
 ok = all(results)
 print("CAD_UNIT_OK" if ok else "CAD_UNIT_FAIL", "%d/%d" % (sum(results), len(results)))

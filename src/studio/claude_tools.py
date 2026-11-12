@@ -186,13 +186,18 @@ def _cad_feedback(args):
 def _cad_job(args):
     from . import cadimport
     from .. import cadjobs
+    from .cad_link import chats_text, jobs_on
+    if not jobs_on():
+        raise ValueError("The CAD skill is off in Blender's chat: ask the user to switch it on (skill row)")
     if not args.get("text"):
         found = cadjobs.jobs()
-        return "CAD jobs:\n" + ("\n".join("- " + cadjobs.summary(j) for j in found[-15:]) if found else "none")
-    from .onshape_ops import jobs_on
-    if not jobs_on():
-        raise ValueError("CAD jobs are switched off in Blender (switch in the CAD box of the chat): ask the user "
-                         "to switch them on, or note it with studio_cad_feedback instead")
+        try:
+            default = (cadimport.job_chat(None, cadimport.feedback_folder()) or {}).get("name")
+        except ValueError:
+            default = None
+        return ("CAD jobs:\n" + ("\n".join("- " + cadjobs.summary(j) for j in found[-15:]) if found else "none")
+                + "\n\nKnown CAD chats (last active first):\n" + chats_text()
+                + ("\nThe chat of the current CAD model: %s" % default if default else ""))
     target = "new" if str(args.get("target") or "").lower() == "new" else "origin"
     job, how = cadimport.send_job(str(args["text"]), args.get("part") or None, target, args.get("image") or None,
                                   chat_name=str(args.get("chat") or ""))
@@ -203,7 +208,16 @@ def _cad_job(args):
 _SETUP = {"type": "object", "description": "The setup as described by studio_context"}
 
 
+CAD_SKILL_TOOLS = ("studio_cad_job", "studio_cad_feedback")   # only while the CAD skill is checked
+
+
 def get_tools():
+    from .cad_link import jobs_on
+    on = jobs_on()
+    return [t for t in _tools() if on or t["name"] not in CAD_SKILL_TOOLS]
+
+
+def _tools():
     return [
         {"name": "studio_context", "label": "Render Studio: looked at the setup",
          "description": "Render Studio: get the setup format and the current scene (subject size, camera, "
@@ -311,15 +325,14 @@ def get_tools():
              "folder": {"type": "string", "description": "Folder of the CAD export, if no part is given"}}},
          "handler": _cad_feedback},
         {"name": "studio_cad_job", "label": "Render Studio: CAD job",
-         "description": "Send a change to the CAD side as a job for a Claude chat that works in the CAD program "
-                        "(e.g. Onshape in the Claude app): saved in ~/.config/ai-studio/jobs; a new chat opens "
-                        "with the job, a known chat gets a notification and takes it. The chat: the one the user names ('chat', e.g. "
-                        "'CAD 5'; remembered for this CAD export), else the chat the export came from or the last "
-                        "job of this export went to (target 'origin'); none known or target 'new': a new chat. "
-                        "When a chat is known and the user did not say where, ask first (ask_user: that chat or "
-                        "a new one). That chat takes it with blender_jobs. Only when the user asks to send it. "
-                        "Report exactly what the result says (e.g. that the Claude app must be reopened once). "
-                        "Without 'text': list the jobs and their status.",
+         "description": "CAD skill: send a change to the CAD side as a job for a Claude chat that works on the CAD "
+                        "model (e.g. Onshape in the Claude app). Saved in ~/.config/ai-studio/jobs; a new chat "
+                        "opens with the job, a known chat gets a notification and takes it with blender_jobs. "
+                        "Which chat: the one the user names ('chat', e.g. 'CAD 5'). If the user named none, "
+                        "first call this tool without 'text' (lists the jobs and the known CAD chats, last active "
+                        "first) and ask with ask_user: up to 3 known chats (the export's chat first if known) and "
+                        "'New chat' (target 'new'). Only when the user asks to send it. Report what the result "
+                        "says in one sentence; the chat shows by itself when the job is taken and done.",
          "inputSchema": {"type": "object", "properties": {
              "text": {"type": "string", "description": "What to change, with numbers, in the user's language"},
              "part": {"type": "string", "description": "Object name of the part (optional)"},

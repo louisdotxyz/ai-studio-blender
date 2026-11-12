@@ -351,7 +351,23 @@ def _toggle_skill(name):
         core.active_skills.remove(name)
     else:
         core.active_skills.append(name)
+    _save_skills()
     core.mark_dirty()
+
+
+def _save_skills():
+    """Checked skills stay checked after a restart (e.g. the CAD skill as the switch for the CAD link)."""
+    skills.save_active(core.workdir(), core.active_skills)
+
+
+def _restore_skills():
+    try:
+        if not core.active_skills:
+            core.active_skills[:] = skills.load_active(core.workdir())
+            core.mark_dirty()
+    except (OSError, AttributeError, ValueError):
+        pass
+    return None
 
 
 def _skill_execute(self, context):
@@ -439,6 +455,7 @@ class CLAUDE_OT_use_skill(bpy.types.Operator):
             core.active_skills.remove(self.name)
         else:
             core.active_skills.append(self.name)
+        _save_skills()
         core.mark_dirty()
         return {'FINISHED'}
 
@@ -476,6 +493,7 @@ class CLAUDE_OT_new_skill(bpy.types.Operator):
         name = skills.create(core.workdir(), self.title, self.description, self.body, icon)
         if name not in core.active_skills:
             core.active_skills.append(name)
+            _save_skills()
         if self.open_file:
             bpy.ops.wm.path_open(filepath=os.path.join(skills.skills_dir(core.workdir()), name + ".md"))
         core.mark_dirty()
@@ -1269,7 +1287,6 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         self._draw_actions(layout)
         self._draw_live(layout)
         self._draw_render(layout)
-        self._draw_cad(layout, context)
         self._draw_questions(layout, context)
         self._draw_pending(layout, context)
         self._draw_input(layout, context, prefs)
@@ -1306,8 +1323,6 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         from . import updates
         if updates.state["available"] and updates.mode() == 'ASK':
             h += 1.5
-        from .studio import cadswap
-        h += cadswap.chat_height(bpy.context)
         for task in core.questions:
             h += 4 + len(task.options) + (1 if task.multi_select else 0)
         for task in core.pending:
@@ -1570,12 +1585,6 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         row.progress(factor=runner.RUN.list_progress, type='BAR',
                      text=text if text.startswith("Preview") else "Render " + text)
         row.operator("render_studio.cancel", text="", icon='X')
-
-    @staticmethod
-    def _draw_cad(layout, context):
-        """CAD: import, new version, comments and jobs for the CAD side (Onshape chat)."""
-        from .studio import cadswap
-        cadswap.draw_chat(layout, context)
 
     def _draw_live(self, layout):
         text = core.live_status()
@@ -1919,9 +1928,8 @@ def register():
         set=lambda self, value: core.set_current_title(value),
         options={'SKIP_SAVE'},
     )
-    bpy.types.WindowManager.claude_show_cad = BoolProperty(
-        name="CAD Comments and Jobs", description="Show the CAD comments and jobs for the CAD side",
-        default=False)
+    if not bpy.app.timers.is_registered(_restore_skills):
+        bpy.app.timers.register(_restore_skills, first_interval=1.0)
     bpy.types.WindowManager.claude_show_setup = BoolProperty(
         name="Show Setup", description="Show the setup card in the chat", default=False, options={'SKIP_SAVE'})
     bpy.types.WindowManager.claude_use_selection = BoolProperty(
@@ -1943,10 +1951,11 @@ def unregister():
     if bpy.app.timers.is_registered(sync_skill_operators):
         bpy.app.timers.unregister(sync_skill_operators)
     _unregister_skill_operators()
+    if bpy.app.timers.is_registered(_restore_skills):
+        bpy.app.timers.unregister(_restore_skills)
     del bpy.types.WindowManager.claude_prompt
     del bpy.types.WindowManager.claude_use_selection
     del bpy.types.WindowManager.claude_show_setup
-    del bpy.types.WindowManager.claude_show_cad
     del bpy.types.WindowManager.claude_chat_title
     chatview.unregister()
     for cls in reversed(classes):

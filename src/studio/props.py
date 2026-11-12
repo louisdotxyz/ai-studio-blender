@@ -593,12 +593,6 @@ class RS_Preferences(PropertyGroup):
         description="macOS notification with sound when a queue with several cameras is done",
         default=True,
     )
-    cad_jobs: BoolProperty(
-        name="CAD Jobs",
-        description="Send changes from Blender to a Claude chat that works on the CAD model (Send CAD Job). "
-                    "Off: the CAD box only imports versions and notes comments",
-        default=True,
-    )
     hdri_folder: StringProperty(
         name="HDRI Folder",
         description="HDRI files (.hdr, .exr) in this folder and its subfolders appear in the Light tab "
@@ -620,13 +614,12 @@ class RS_Preferences(PropertyGroup):
         col.prop(self, "notify")
 
     def draw_studio(self, layout):
-        """Preferences › Studio: HDRIs, base materials, names, CAD jobs."""
+        """Preferences › Studio: HDRIs, base materials, names."""
         col = layout.column()
         col.use_property_split = True
         col.prop(self, "hdri_folder")
         col.prop(self, "material_library")
         col.prop(self, "name_scheme")
-        col.prop(self, "cad_jobs")
 
     def draw_advanced(self, layout):
         """Preferences › Advanced: the Studio part (folder names, collections, shortcuts)."""

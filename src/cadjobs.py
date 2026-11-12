@@ -211,7 +211,8 @@ def claim(job_id, by="", jobs_dir=None):
     job = load(job_id, jobs_dir)
     if job.get("status") == "done":
         raise ValueError("Job %s is done already" % job_id)
-    return _update(job_id, jobs_dir, status="claimed", claimed_by=str(by or "a Claude chat"), claimed_at=_now())
+    seen_chat(by, jobs_dir)
+    return _update(job_id, jobs_dir, status="claimed", claimed_by=_name(by) or "a Claude chat", claimed_at=_now())
 
 
 def done(job_id, note="", jobs_dir=None):
@@ -227,20 +228,23 @@ def message(job):
     if job.get("part"):
         lines.append("Part: %s" % job["part"])
     if job.get("source"):
-        lines.append("Onshape: %s" % job["source"])
+        lines.append("Onshape: %s (where the version in Blender came from: change the newest version of that model)"
+                     % job["source"])
     if job.get("cad_folder"):
-        lines.append("Export the new version into: %s (GLB + .cad.json, same part names)" % job["cad_folder"])
+        lines.append("Send the new version straight into Blender with OS.exportPackage (GLB + .cad.json, same part "
+                     "names; no Mac folder needed); Blender keeps it in: %s" % job["cad_folder"])
     if job.get("images"):
         lines.append("Images (on the Mac): %s" % ", ".join(job["images"]))
     lines.append("Steps: blender_jobs action claim (id %s, by: this chat's name) → change the CAD model → export "
                  "again → blender_jobs action done with a short note." % job["id"])
     lines.append("Needs: a chat in the Claude desktop app that is linked to the Mac (for Onshape in the built-in "
                  "browser, signed in: check the sign-in first and tell the user if it is missing).")
-    lines.append("If this chat has no blender_jobs tool, it is not connected to Blender: say so and ask the user to "
-                 "click Connect next to the Claude app in Blender (setup card, or the add-on's preferences › Live "
-                 "Connection) and then quit and reopen Claude once. "
-                 "Until then the job file can be read through the link to the Mac: %s"
-                 % (job.get("path") or os.path.join(JOBS_DIR, job["id"] + ".json")))
+    here = os.path.dirname(os.path.abspath(__file__))
+    lines.append("If this chat has no blender_jobs tool but has blender_python (the Mac's 'blender' tools), use it "
+                 "instead: claim with `import sys; sys.path.insert(0, %r); import cadjobs; "
+                 "print(cadjobs.message(cadjobs.claim(%r, '<this chat's name>')))` and finish with "
+                 "`cadjobs.done(%r, '<short note>')` the same way. With neither tool, say so and ask the user to "
+                 "quit and reopen the Claude app once (Cmd+Q)." % (here, job["id"], job["id"]))
     return "\n".join(lines)
 
 

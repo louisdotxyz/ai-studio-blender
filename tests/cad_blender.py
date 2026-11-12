@@ -200,35 +200,9 @@ def comments_box():
         path, note = cadimport.feedback(part, "Wand 2.4 mm statt 2.0 mm", image=image)
         check("feedback only into the file, with its image", note == "" and os.path.dirname(path) == folder
               and ("image: %s" % image) in cadfiles.open_feedback(folder)[0], cadfiles.open_feedback(folder))
-        ops = mod("studio.onshape_ops")
-        check("no Onshape keys or sync any more", not hasattr(ops, "cached_keys") and not hasattr(cadimport, "sync_feedback"))
-        for cls in ops.classes:   # the add-on is loaded, not enabled
-            bpy.utils.register_class(cls)
-        before = cadimport._last["file"]
-        cadimport._last["file"] = part["cad_file"]
-        try:
-            result = bpy.ops.render_studio.cad_comment(part="Deckel_01", text="  Fase   0.5 mm  ")
-            state = ops.comment_state(bpy.context, force=True)
-            mine = [p for p in state["open"] if "Fase 0.5 mm" in p]
-            check("CAD comment from the box", result == {'FINISHED'} and mine, (result, state["open"]))
-
-            class Layout:   # takes every drawing call
-                def __getattr__(self, name):
-                    return lambda *a, **k: self
-                def __setattr__(self, name, value):
-                    pass
-            ops.draw_comments(Layout(), bpy.context)
-            check("box lists the open points", len(state["open"]) == 2, state["open"])
-            result = bpy.ops.render_studio.cad_comment_done(point=mine[0])
-            state = ops.comment_state(bpy.context, force=True)
-            check("done: ticked off", result == {'FINISHED'} and not any("Fase" in p for p in state["open"]),
-                  state["open"])
-            check("done in Blender noted in the file", "Fase 0.5 mm (Blender) · done in Blender" in
-                  open(os.path.join(folder, cadfiles.FEEDBACK_FILE), encoding="utf-8").read())
-        finally:
-            cadimport._last["file"] = before
-            for cls in ops.classes:
-                bpy.utils.unregister_class(cls)
+        check("no Onshape keys or sync any more", not hasattr(cadimport, "sync_feedback"))
+        check("no CAD box, no import buttons", not hasattr(cadswap, "draw_chat")
+              and not hasattr(cadswap, "RS_OT_cad_import"))
     finally:
         bpy.data.objects.remove(part)
 
@@ -271,52 +245,49 @@ def cad_job_to_its_chat():
                   (cadimport.job_chat(lonely, lonely_folder) or {}).get("name") == "CAD 5")
         finally:
             bpy.data.objects.remove(lonely)
-        ops = mod("studio.onshape_ops")
-        for cls in ops.classes:
-            bpy.utils.register_class(cls)
+        # the CAD skill is the switch: off, Claude in Blender has no CAD job / feedback tools
+        link, tools_mod, core = mod("studio.cad_link"), mod("studio.claude_tools"), mod("core")
+        core.active_skills[:] = []
+        names = {t["name"] for t in tools_mod.get_tools()}
+        check("skill off: no CAD job or feedback tools, import still there", "studio_cad_job" not in names
+              and "studio_cad_feedback" not in names and "studio_cad_import" in names, names)
+        core.active_skills[:] = ["cad"]
+        tools = {t["name"]: t for t in tools_mod.get_tools()}
+        check("skill on: the CAD tools are there", "studio_cad_job" in tools and "studio_cad_feedback" in tools)
+        cadjobs.seen_chat("CAD 7")
+        listing = tools["studio_cad_job"]["handler"]({})
+        chats = listing.partition("Known CAD chats")[2]
+        check("listing: the known chats for ask_user, last active first", chats
+              and chats.index("CAD 7") < chats.index("CAD 5") and "active just now" in chats, listing)
+        text = tools["studio_cad_job"]["handler"]({"text": "Loch 4 mm", "part": "Griff", "chat": "CAD 7"})
+        job = next(j for j in cadjobs.jobs() if j["text"] == "Loch 4 mm")
+        check("job from the chat to the named chat", job["chat"]["name"] == "CAD 7" and "CAD 7" in text, text)
+        text = tools["studio_cad_job"]["handler"]({"text": "Nut 1 mm", "target": "new"})
+        check("job for a new chat", "(new chat)" in text, text)
+        # the chat says when a CAD chat takes a job and finishes it
+        seen = {}
+        check("first look: nothing to say", link.job_news(cadjobs.jobs(), seen, started=False) == [])
+        cadjobs.claim(job["id"], "CAD 7")
+        news = link.job_news(cadjobs.jobs(), seen)
+        check("taken: one line", news == ["CAD job taken by CAD 7: Loch 4 mm"], news)
+        cadjobs.done(job["id"], "Loch sitzt jetzt bei 4 mm")
+        news = link.job_news(cadjobs.jobs(), seen)
+        check("done: with the note", news == ["CAD job done (CAD 7): Loch 4 mm – Loch sitzt jetzt bei 4 mm"], news)
+        check("nothing new: nothing said", link.job_news(cadjobs.jobs(), seen) == [])
+        before = len(core.messages)
+        link._started[0] = False
+        link._seen.clear()
+        link._poll()
+        cadjobs.claim(cadjobs.new_job("Fase 2 mm")["id"], "CAD 7")
+        link._poll()
+        check("the timer writes it into the chat", len(core.messages) == before + 1
+              and "Fase 2 mm" in core.messages[-1]["text"], core.messages[before:])
+        core.active_skills[:] = []
         try:
-            bpy.context.view_layer.objects.active = None
-            result = bpy.ops.render_studio.cad_job(part="Griff", text="Radius 2 mm", target='NEW')
-            check("Send CAD Job button", result == {'FINISHED'}
-                  and any(j["text"] == "Radius 2 mm" and j["chat"] is None for j in cadjobs.jobs()), result)
-            # the dropdown: the known chats, last active first; the export's own chat is always in it
-            cadjobs.seen_chat("CAD 7")
-            choices = ops.chat_choices("Leuchte V22")
-            names = [c["name"] for c in choices]
-            check("dropdown: the active chat first, the export's and the remembered ones in it", names[0] == "CAD 7"
-                  and "Leuchte V22" in names and "CAD 5" in names, names)
-            check("dropdown: an unknown default chat is added", ops.chat_choices("CAD 11")[0]["name"] == "CAD 11")
-            ops._choices[:] = choices
-            items = [i[0] for i in ops._job_targets(None, bpy.context)]
-            check("dropdown items: new chat, the chats, other", items[0] == 'NEW' and items[-1] == 'OTHER'
-                  and len(items) == len(choices) + 2, items)
-            result = bpy.ops.render_studio.cad_job(part="Griff", text="Loch 4 mm", target='CHAT%d' % names.index("CAD 7"))
-            job = next(j for j in cadjobs.jobs() if j["text"] == "Loch 4 mm")
-            check("chosen chat from the dropdown", result == {'FINISHED'} and job["chat"]["name"] == "CAD 7", job)
-            result = bpy.ops.render_studio.cad_job(part="Griff", text="Nut 1 mm", target='OTHER', other=" CAD  9 ")
-            job = next(j for j in cadjobs.jobs() if j["text"] == "Nut 1 mm")
-            check("other chat typed in", result == {'FINISHED'} and job["chat"]["name"] == "CAD 9", job)
-            check("ago text", ops.ago_text("") == "not seen yet" and ops.ago_text(cadjobs.known_chats()[0]["last"])
-                  == "active just now")
-            # switched off: no button, no tool
-            runner = mod("studio.runner")
-            real_prefs = runner.prefs
-            runner.prefs = lambda: type("P", (), {"cad_jobs": False})()
-            try:
-                check("switched off: Send CAD Job not available", not bpy.ops.render_studio.cad_job.poll())
-                tools = {t["name"]: t for t in mod("studio.claude_tools").get_tools()}
-                try:
-                    tools["studio_cad_job"]["handler"]({"text": "x"})
-                    check("switched off: the chat's tool says so", False)
-                except ValueError as exc:
-                    check("switched off: the chat's tool says so", "switched off" in str(exc), str(exc))
-                check("switched off: listing still works", tools["studio_cad_job"]["handler"]({}).startswith("CAD jobs"))
-            finally:
-                runner.prefs = real_prefs
-            check("switched on again", bpy.ops.render_studio.cad_job.poll())
-        finally:
-            for cls in ops.classes:
-                bpy.utils.unregister_class(cls)
+            tools["studio_cad_job"]["handler"]({"text": "x"})
+            check("skill off: the tool says so", False)
+        except ValueError as exc:
+            check("skill off: the tool says so", "CAD skill is off" in str(exc), str(exc))
     finally:
         bpy.data.objects.remove(part)
 

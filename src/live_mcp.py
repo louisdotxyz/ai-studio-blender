@@ -118,7 +118,6 @@ def jobs_tool(arguments):
             text = "\n\n".join("%s\n%s" % (cadjobs.summary(j), cadjobs.message(j)) for j in found)
         elif action == "claim":
             job = cadjobs.claim(arguments.get("id", ""), arguments.get("by", ""))
-            cadjobs.seen_chat(arguments.get("by"))
             text = "Claimed.\n" + cadjobs.message(job) + ("\nCAD export folder: %s" % job["cad_folder"]
                                                          if job.get("cad_folder") else "")
         elif action == "done":

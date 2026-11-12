@@ -708,6 +708,10 @@ DE = {
     'Note a change for the CAD side in CAD-Feedback.md next to the export (the CAD chat reads it)':
         'Eine Änderung für die CAD-Seite in CAD-Feedback.md neben dem Export notieren (der CAD-Chat liest sie)',
     'Tick this point off': 'Diesen Punkt abhaken',
+    # -- 2.0: the CAD link is a skill ------------------------------------------
+    'CAD job taken by {}: {}': 'CAD-Auftrag übernommen von {}: {}',
+    'a chat': 'einem Chat',
+    'CAD job done{}: {}': 'CAD-Auftrag erledigt{}: {}',
 }
 
 # Blender looks up operator names in the "Operator" context and everything else

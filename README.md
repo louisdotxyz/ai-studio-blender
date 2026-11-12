@@ -76,24 +76,20 @@ never used Blender get a clean product image from a CAD model.
   ids, CAD materials (mapped to base materials), mounting points (`MOUNT | …` empties that move with
   every version), sizes to check and variants. Claude: `studio_cad_import`, `studio_cad_check` (check
   images), `studio_cad_feedback` (`CAD-Feedback.md` next to the export for the CAD side), skill */cad*.
-- **CAD box** (Claude tab, under the chat): *Import*, *New Version*, and once a CAD export is known
-  **Send CAD Job** and the link button that switches CAD jobs on and off (off: only import and
-  comments). The line under it says where the next job goes ("→ CAD 5 · active 3 min ago", "→ new
-  chat") or that the Claude app is not connected yet (*Connect*, then quit and reopen Claude once).
-  *Send CAD Job* asks what should change and which chat does it: a dropdown with **New Chat**, the
-  known chats (last active first; the export's own chat or the last one of this export is chosen)
-  and **Other Chat…** to type a name. A chat is known once it called **blender_jobs** with its name
-  (the MCP tool asks for it), a job went to it, or the export names it in its sidecar (`"chat":
-  {"name", "url"}`, set by `OS.exportPackage({… chat})`). The job is a file in
-  `~/.config/ai-studio/jobs/`. A new chat opens with the text filled in
-  (`claude://claude.ai/new?q=…`); a known chat gets a notification ("write «CAD job» in that chat")
-  and takes the job with **blender_jobs** (list / claim / done, works without Blender open). Blender
-  shows their status in the box. Claude in Blender can send one too (`studio_cad_job`).
+- **CAD skill** (skill row of the chat, on/off, stays as set after a restart): the link to the
+  Claude chats that build the CAD model, all in the chat, no box of its own. New versions come in
+  from the CAD chat in the Claude app (Live Connection), so there are no import buttons. Say what
+  should change ("Wand 2.4 mm, an CAD 5"); without a chat Claude asks with buttons: the known CAD
+  chats (last active first, the current model's chat first) or a new chat. A chat is known once it
+  called **blender_jobs** with its name, a job went to it, or the export names it in its sidecar
+  (`"chat": {"name", "url"}`). The job is a file in `~/.config/ai-studio/jobs/`: a new chat opens
+  with the text filled in (`claude://claude.ai/new?q=…`), a known chat gets a notification and takes
+  the job with **blender_jobs** (list / claim / done; a chat without it can use `blender_python` of
+  the Mac's `blender` tools, the job text says how). The chat here says when the job is taken and
+  when it is done. Remarks for later go into `CAD-Feedback.md` next to the export
+  (`studio_cad_feedback`). Off: Claude in Blender has no CAD job or feedback tools.
 - **Onshape sign-in:** `OS.session()` in the browser helpers checks the sign-in before anything else
   and says "sign in to Onshape in the browser pane of the Claude app" instead of failing with 401.
-  **CAD Comments** (arrow of the CAD box): the open points of `CAD-Feedback.md` next to the export,
-  *Add CAD Comment* (part = the selected object), ✓ ticks a point off, and open the file. The CAD
-  chat reads the file.
   Onshape sends the package straight into Blender with `tools/onshape/onshape-helpers.js`
   (`POST /cad` on the Live Connection, see below).
 - **For Claude:** sections through a scan and the CAD part with measurements

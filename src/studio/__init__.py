@@ -44,9 +44,8 @@ from .tab_queue import (RS_OT_add, RS_OT_cancel, RS_OT_clear, RS_OT_low_scale, R
                         RS_OT_preview_step, RS_OT_remove, RS_OT_render_queue, RS_OT_show_render,
                         RS_OT_view_camera, RS_PT_output, RS_PT_render_queue, draw_statusbar)
 from .runner import RUN
-from . import onshape_ops, render_setup
+from . import cad_link, render_setup
 from .look import RS_OT_look_preset
-from .cadswap import RS_OT_cad_import, RS_OT_cad_take_over
 
 
 class RS_OT_open_chat(Operator):
@@ -82,7 +81,7 @@ class RS_PT_tabs(Panel):
 
 # ------------------------------------------------------------------ Register
 
-classes = onshape_ops.classes + render_setup.classes + (
+classes = render_setup.classes + (
     RS_LightSettings,
     RS_OT_studio_prompt_send,
     RS_OT_studio_prompt_confirm,
@@ -140,8 +139,6 @@ classes = onshape_ops.classes + render_setup.classes + (
     RS_OT_material_preset_save,
     RS_OT_material_preset_delete,
     RS_OT_look_preset,
-    RS_OT_cad_import,
-    RS_OT_cad_take_over,
     RS_OT_material_assign,
     RS_OT_material_variant,
     RS_OT_material_select,
@@ -223,6 +220,7 @@ def register():
     cameras.register_history()
     background.register()
     foreign.register()
+    cad_link.register()
 
     register_keymaps()
     # Cameras of the file that is already open (load_post covers files opened later).
@@ -240,6 +238,7 @@ def unregister():
     if tab_queue.on_live_image in runner.on_live_image:
         runner.on_live_image.remove(tab_queue.on_live_image)
 
+    cad_link.unregister()
     foreign.unregister()
     background.unregister()
     cameras.unregister_history()
