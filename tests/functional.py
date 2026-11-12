@@ -70,8 +70,30 @@ def execute_python_keeps_values():
     out, ok = bt.execute_python("g = 5\nv = Vector((1, 2, 3))\nobj = bpy.data.objects['Cube']\n"
                                 "def twice(x): return x * 2\nprint(np.__name__, re.__name__)", chat=1)
     check("imports preloaded", ok and "numpy re" in out, out)
-    out, ok = bt.execute_python("print(g, tuple(v), twice(4), 'obj' in globals())", chat=1)
-    check("plain values kept, Blender data not", ok and out.strip() == "5 (1.0, 2.0, 3.0) 8 False", out)
+    out, ok = bt.execute_python("print(g, tuple(v), twice(4), obj.name)", chat=1)
+    check("plain values and data blocks kept (looked up again)", ok and out.strip() == "5 (1.0, 2.0, 3.0) 8 Cube",
+          out)
+    # the lessons: imports, `from math import`, scene, collections, renamed objects, helpers using them
+    out, ok = bt.execute_python("import zipfile\nfrom math import cos, radians\nsc = bpy.context.scene\n"
+                                "col = bpy.data.collections.new('Lesson Test')\nsc.collection.children.link(col)\n"
+                                "cube = bpy.data.objects['Cube']\nkeep = [cube, 3]\n"
+                                "def where(): return col.name + ':' + cube.name\n"
+                                "tree = bmesh.new()\nprint(glob.__name__, shutil.__name__, inspect.__name__)", chat=1)
+    check("more modules preloaded", ok and out.strip() == "glob shutil inspect", out)
+    bpy.data.objects["Cube"].name = "Cube Renamed"
+    bpy.ops.ed.undo_push(message="user step")
+    out, ok = bt.execute_python("print(zipfile.__name__, round(cos(radians(60)), 2), sc.name == bpy.context.scene.name, "
+                                "where(), keep[0].name, keep[1])", chat=1)
+    check("imports, from-imports, scene, collection, renamed object and helper kept",
+          ok and out.strip() == "zipfile 0.5 True Lesson Test:Cube Renamed Cube Renamed 3", out)
+    out, ok = bt.execute_python("print(tree)", chat=1)
+    check("a value that does not carry over says why", not ok and "does not carry over" in out, out)
+    out, ok = bt.execute_python("print(nothing_here)", chat=1)
+    check("an unknown name gets the hint", not ok and "Kept from earlier calls" in out, out)
+    bpy.data.objects["Cube Renamed"].name = "Cube"
+    bpy.data.collections.remove(bpy.data.collections["Lesson Test"])
+    out, ok = bt.execute_python("print('col' in globals(), cube.name)", chat=1)
+    check("a deleted data block is gone, the others stay", ok and out.strip() == "False Cube", out)
     out, ok = bt.execute_python("print('g' in globals())", chat=2)
     check("other chat starts empty", ok and out.strip() == "False", out)
 

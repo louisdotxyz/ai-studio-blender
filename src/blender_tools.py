@@ -243,13 +243,77 @@ UNDO_MARKER = "_claude_step"  # scene ID property; "_" hides it in the UI
 
 
 # Values the model's code keeps between execute_python calls of one chat (see _keep).
-_kept = {"chat": None, "values": {}}
-_kept_live = {"values": {}}     # the same for the Live Connection, independent of the chat
+_kept = {"chat": None, "values": {}, "dropped": []}
+_kept_live = {"values": {}, "dropped": []}     # the same for the Live Connection, independent of the chat
+
+# Blender data blocks are kept by name (and session uid) and looked up again before the next call:
+# a kept reference could point to freed memory after an undo step, a name lookup cannot.
+_ID_COLLECTIONS = {
+    'OBJECT': 'objects', 'MESH': 'meshes', 'MATERIAL': 'materials', 'COLLECTION': 'collections',
+    'SCENE': 'scenes', 'IMAGE': 'images', 'NODETREE': 'node_groups', 'CAMERA': 'cameras', 'LIGHT': 'lights',
+    'WORLD': 'worlds', 'CURVE': 'curves', 'TEXT': 'texts', 'FONT': 'fonts', 'ACTION': 'actions',
+    'TEXTURE': 'textures', 'LATTICE': 'lattices', 'ARMATURE': 'armatures', 'VOLUME': 'volumes',
+    'POINTCLOUD': 'pointclouds', 'CURVES': 'hair_curves', 'GREASEPENCIL': 'grease_pencils',
+}
+
+
+class _IDRef:
+    """A Blender data block kept between calls: found again by session uid (survives renames), else by name."""
+    __slots__ = ("attr", "name", "uid")
+
+    def __init__(self, attr, name, uid):
+        self.attr, self.name, self.uid = attr, name, uid
+
+    def resolve(self):
+        data = getattr(bpy.data, self.attr, None)
+        if data is None:
+            return None
+        found = data.get(self.name)
+        if found is not None and (not self.uid or getattr(found, "session_uid", 0) == self.uid):
+            return found
+        if self.uid:
+            other = next((d for d in data if getattr(d, "session_uid", 0) == self.uid), None)
+            if other is not None:
+                return other
+        return found
+
+
+def _restore(value, depth=0):
+    """A kept value for the next call: data blocks looked up again (None when gone)."""
+    if isinstance(value, _IDRef):
+        return value.resolve()
+    if depth < 4 and isinstance(value, (list, tuple, set)):
+        return type(value)(_restore(v, depth + 1) for v in value)
+    if depth < 4 and isinstance(value, dict):
+        return {k: _restore(v, depth + 1) for k, v in value.items()}
+    return value
+
+
+def _rebind(function, namespace):
+    """A function kept from an earlier call, now seeing this call's names (data blocks looked up
+    again, not the stale ones of the call it was written in)."""
+    import types
+    new = types.FunctionType(function.__code__, namespace, function.__name__, function.__defaults__,
+                             function.__closure__)
+    new.__kwdefaults__ = function.__kwdefaults__
+    new.__dict__.update(function.__dict__)
+    new.__doc__ = function.__doc__
+    return new
+
+
+def _name_hint(name, store):
+    """A sentence after a NameError: why the name is missing and what to do."""
+    if name and name in store.get("dropped", ()):
+        return (f"[Note: '{name}' held a value that does not carry over to the next call (e.g. a BVH tree, "
+                "depsgraph, bmesh or a node/socket): build or fetch it again in this call.]")
+    return (f"[Note: '{name}' is not defined in this call. Kept from earlier calls: numbers, text, lists, "
+            "imports, functions and data blocks (objects, materials, collections, scenes … looked up again by "
+            "name). Define everything else again; a data block that was deleted or renamed by the user is gone.]")
 
 
 def forget_values():
     """A new or another chat: start with an empty namespace."""
-    _kept.update(chat=None, values={})
+    _kept.update(chat=None, values={}, dropped=[])
 
 
 def _plain(value, depth=0):
@@ -258,6 +322,14 @@ def _plain(value, depth=0):
     (objects, materials …) is not: undo frees it, a kept reference could crash Blender."""
     if value is None or isinstance(value, (bool, int, float, complex, str, bytes)):
         return True, value
+    if isinstance(value, bpy.types.ID):
+        try:
+            attr = _ID_COLLECTIONS.get(value.id_type)
+            if attr and value.library is None:
+                return True, _IDRef(attr, value.name, getattr(value, "session_uid", 0))
+        except (ReferenceError, AttributeError):
+            pass
+        return False, None
     if isinstance(value, (mathutils.Vector, mathutils.Matrix, mathutils.Euler, mathutils.Quaternion,
                           mathutils.Color)):
         return True, value.copy()
@@ -276,36 +348,53 @@ def _plain(value, depth=0):
 
 
 def _keep(namespace, base, store=None):
-    """After a call: keep the model's plain values and functions for the next call."""
+    """After a call: keep the model's plain values, data blocks (by name), functions and imports
+    (also `from math import cos`) for the next call."""
     import types
     kept, dropped = {}, []
     for name, value in namespace.items():
-        if name.startswith("__") or name in base or isinstance(value, types.ModuleType):
+        if name.startswith("__") or name in base:
             continue
-        if isinstance(value, (types.FunctionType, type)):
+        if isinstance(value, (types.FunctionType, type, types.ModuleType)):
             kept[name] = value
+            continue
+        if isinstance(value, types.BuiltinFunctionType) and isinstance(getattr(value, "__self__", None),
+                                                                       (types.ModuleType, type(None))):
+            kept[name] = value   # math.cos, os.path.join … (not methods bound to Blender data)
             continue
         ok, copy = _plain(value)
         if ok:
             kept[name] = copy
         else:
             dropped.append(name)
-    (_kept if store is None else store)["values"] = kept
+    target = _kept if store is None else store
+    earlier = [n for n in target.get("dropped", ()) if n not in kept and n not in dropped and n not in namespace]
+    target["values"], target["dropped"] = kept, (dropped + earlier)[-50:]
     return dropped
 
 
 def _base_namespace():
     """Names every call starts with: Blender modules, common imports, skill helpers."""
+    import collections
+    import colorsys
+    import functools
+    import glob
+    import inspect
+    import itertools
     import json
     import os
+    import pathlib
     import random
     import re
+    import shutil
     import sys
     import time
     namespace = {
         "__name__": "__claude__",
         "bpy": bpy, "bmesh": bmesh, "mathutils": mathutils, "math": math,
         "os": os, "sys": sys, "re": re, "json": json, "time": time, "random": random,
+        "glob": glob, "shutil": shutil, "inspect": inspect, "itertools": itertools,
+        "functools": functools, "collections": collections, "colorsys": colorsys, "Path": pathlib.Path,
         "Vector": mathutils.Vector, "Matrix": mathutils.Matrix, "Euler": mathutils.Euler,
         "Quaternion": mathutils.Quaternion, "Color": mathutils.Color,
         "C": bpy.context, "D": bpy.data,
@@ -336,7 +425,18 @@ def execute_python(code, undo_message="Claude", step=None, max_output=6000, chat
     if chat is not None and _kept["chat"] != chat:
         forget_values()
         _kept["chat"] = chat
-    namespace.update((_kept_live if live else _kept)["values"])
+    store = _kept_live if live else _kept
+    for name, value in store["values"].items():
+        try:
+            value = _restore(value)
+        except ReferenceError:
+            continue
+        if value is not None or not isinstance(store["values"][name], _IDRef):
+            namespace[name] = value
+    import types
+    for name, value in list(namespace.items()):
+        if name not in base and isinstance(value, types.FunctionType):
+            namespace[name] = _rebind(value, namespace)
     buffer = io.StringIO()
     ok = True
     wm = bpy.context.window_manager
@@ -355,6 +455,8 @@ def execute_python(code, undo_message="Claude", step=None, max_output=6000, chat
         # Hide this module's own frame, show only the frames of Claude's code.
         tb = exc.__traceback__.tb_next or exc.__traceback__
         buffer.write("\n" + "".join(traceback.format_exception(type(exc), exc, tb)))
+        if isinstance(exc, NameError):
+            buffer.write("\n" + _name_hint(getattr(exc, "name", "") or "", store))
     finally:
         view.render_display_type = render_display
         closed = _close_new_windows(windows_before)

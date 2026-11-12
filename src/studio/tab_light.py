@@ -10,7 +10,7 @@ from bpy.types import Menu, Operator, Panel
 
 from . import api, background, hdri, lights, runner
 from .ui_common import (LIGHT_TAB_ORDER, _SidebarPanel, _report_value_error, _select_only, _unpin,
-                        draw_claude_prompt, studio_tab)
+                        studio_tab)
 
 
 class RS_OT_select_light(Operator):
@@ -480,8 +480,6 @@ class RS_PT_lighting(_SidebarPanel, Panel):
         scene = context.scene
         rs = scene.render_studio
         layout = self.layout
-        draw_claude_prompt(layout.box(), context, 'LIGHT')
-
         # Presets: dropdown with the current one, + saves the lights as a new preset
         box = layout.box()
         row = box.row()

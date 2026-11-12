@@ -8,7 +8,7 @@ from bpy.types import Operator, Panel
 from . import background, cameras, look, runner, sync
 from .props import FORMAT_PRESETS, PPI
 from .ui_common import (RENDER_TAB_ORDER, _SidebarPanel, _look_through, _unpin,
-                        active_camera, draw_claude_prompt, studio_tab)
+                        active_camera, studio_tab)
 
 
 class RS_OT_set_camera(Operator):
@@ -178,7 +178,6 @@ class RS_PT_camera(_SidebarPanel, Panel):
     def draw(self, context):
         _unpin(self)
         layout = self.layout
-        draw_claude_prompt(layout.box(), context, 'RENDER')
         scene = context.scene
         # Set Up for Product Renders is in the chat's setup card, the CAD box in the chat (Claude tab)
         rq = scene.render_studio

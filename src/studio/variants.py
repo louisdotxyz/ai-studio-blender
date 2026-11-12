@@ -22,6 +22,7 @@ import bpy
 
 TEXT = "Varianten.json"
 LOG = "varianten.txt"
+QUALITY_ALIASES = {"HQ": "HIGH", "LQ": "LOW", "PREVIEW": "LOW", "FINAL": "HIGH"}   # what models write
 NCS_HUE = {"Y": 0, "R": 100, "B": 200, "G": 300}
 
 
@@ -186,11 +187,14 @@ class V:
         from . import core, runner
         root = runner.settings_from_prefs()[0]
         rq = bpy.context.scene.render_studio
-        return core.quality_dir(root, core.project_name(None, rq.output_name), quality or rq.quality)
+        quality = QUALITY_ALIASES.get(str(quality or "").upper(), quality) or rq.quality
+        return core.quality_dir(root, core.project_name(None, rq.output_name), quality)
 
     @staticmethod
     def renders(quality=None, last=None):
-        """[(file, variant)] from varianten.txt in the preview/HQ folder, newest last."""
+        """[(file, variant)] from varianten.txt in the preview/HQ folder, newest last. Without
+        varianten.txt (a queue without variants, an unsaved file): the images in that folder by
+        time, variant ""."""
         folder = V.folder(quality)
         path = os.path.join(folder, LOG)
         rows = []
@@ -199,6 +203,10 @@ class V:
                 for line in f:
                     file, _, variant = line.rstrip("\n").partition("\t")
                     rows.append((os.path.join(folder, file), variant))
+        if not rows and os.path.isdir(folder):
+            images = [os.path.join(folder, n) for n in os.listdir(folder)
+                      if n.lower().endswith((".png", ".jpg", ".jpeg", ".exr", ".tif", ".tiff"))]
+            rows = [(p, "") for p in sorted(images, key=os.path.getmtime)]
         return rows[-last:] if last else rows
 
     @staticmethod

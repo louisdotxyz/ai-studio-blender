@@ -24,6 +24,9 @@ import re
 DEFAULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "skills_default")
 INSTALLED = ".installed.json"
 ACTIVE = ".active.json"   # the checked skills, kept between Blender sessions
+# In the chat's skill row also when an older copy of the file says only studio_tab (2.1: no
+# Claude line in the Light and Material tabs any more, these skills are used from the chat).
+IN_CHAT = {"light", "material"}
 # Earlier shipped versions (sha1 of the file): a copy the user never changed gets the new text.
 UPGRADES = {"cad": {"e7b3d80ae27d22995023a36ddcaab3b3761f1b97"}}
 _FRONT = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.S)
@@ -131,7 +134,8 @@ def _parse(path):
         # Studio tab whose Claude chat uses this skill (RENDER, LIGHT, MATERIAL, QUEUE) …
         "studio_tab": meta.get("studio_tab", "").upper(),
         # … and whether it is in the chat's skill row anyway (else only via its tab)
-        "in_chat": meta.get("chat", "").lower() in {"yes", "true", "1"} or not meta.get("studio_tab"),
+        "in_chat": meta.get("chat", "").lower() in {"yes", "true", "1"} or not meta.get("studio_tab")
+                   or name.lower() in IN_CHAT,
         "body": text.strip(),
         "path": path,
     }

@@ -20,8 +20,7 @@ from . import background, cameras, claude_link, core, foreign, hdri, lights, run
 # sys.modules; api and variants are the helpers in execute_python.
 from . import api, baselib, claude_tools, variants  # noqa: F401
 from .props import RS_CameraSettings, RS_Item, RS_LightSettings, RS_Preferences, RS_Settings, _apply_clipping
-from .ui_common import (STUDIO_TABS, _queue_progress_text, _unpin, RS_OT_studio_prompt_confirm,
-                        RS_OT_studio_prompt_send, register_prompts, unregister_prompts)
+from .ui_common import STUDIO_TABS, _queue_progress_text, _unpin
 from .keymaps import register_keymaps, unregister_keymaps
 from .tab_camera import (RS_OT_camera_back, RS_OT_camera_from_view, RS_OT_dof_focus, RS_OT_duplicate_camera,
                          RS_OT_fit_frame, RS_OT_reset_frame, RS_OT_set_camera, RS_OT_set_fstop,
@@ -83,8 +82,6 @@ class RS_PT_tabs(Panel):
 
 classes = render_setup.classes + (
     RS_LightSettings,
-    RS_OT_studio_prompt_send,
-    RS_OT_studio_prompt_confirm,
     RS_PT_tabs,
     RS_OT_low_scale,
     RS_PT_output,
@@ -210,7 +207,6 @@ def register():
     bpy.types.STATUSBAR_HT_header.append(draw_statusbar)
     if tab_queue.on_live_image not in runner.on_live_image:
         runner.on_live_image.append(tab_queue.on_live_image)
-    register_prompts()
     bpy.app.timers.register(_keep_old_hdri_folder, first_interval=0.2)
     lights.register()
     runner.register()
@@ -256,6 +252,5 @@ def unregister():
     del bpy.types.WindowManager.render_studio_mat_open
     del bpy.types.WindowManager.render_studio_mat_search
     bpy.types.UI_MT_button_context_menu.remove(draw_tile_menu)
-    unregister_prompts()
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

@@ -3,6 +3,7 @@ title: LIGHT
 description: Studio light setup for the product
 icon: LIGHT
 studio_tab: LIGHT
+chat: yes
 ---
 Light setup with Render Studio's tools. Answer in 1-2 sentences.
 1. studio_context(kind="light") -> setup format, subject size, camera, current lights.

@@ -712,6 +712,9 @@ DE = {
     'CAD job taken by {}: {}': 'CAD-Auftrag übernommen von {}: {}',
     'a chat': 'einem Chat',
     'CAD job done{}: {}': 'CAD-Auftrag erledigt{}: {}',
+    # -- 2.1 -------------------------------------------------------------------
+    'Upload': 'Hochladen',
+    'Claude or Local Model': 'Claude oder lokales Modell',
 }
 
 # Blender looks up operator names in the "Operator" context and everything else

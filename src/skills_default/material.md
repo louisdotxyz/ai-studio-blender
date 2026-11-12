@@ -3,6 +3,7 @@ title: MATERIAL
 description: Create or change the active material
 icon: MATERIAL
 studio_tab: MATERIAL
+chat: yes
 ---
 Material of the active object (the one in the Studio Material tab). Answer in 1-2 sentences.
 - obj = bpy.context.active_object and its active material (create one if there is none).

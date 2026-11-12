@@ -320,6 +320,7 @@ class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
         sub = col.column(heading="Claude")
         sub.prop(self, "auto_approve")
         sub.prop(self, "auto_screenshot", text="Sees the Viewport")
+        col.row().prop(self, "backend", expand=True)
         col.prop(self, "default_model")
         sub = col.row()
         sub.enabled = self.default_model != 'LOCAL'

@@ -1200,6 +1200,10 @@ class CLAUDE_PT_settings(bpy.types.Panel):
         col.prop(prefs, "send_selection", toggle=True, icon='RESTRICT_SELECT_OFF')
 
         box = layout.box()
+        box.label(text="Claude or Local Model", icon='WORLD')
+        box.row(align=True).prop(prefs, "backend", expand=True)
+
+        box = layout.box()
         box.label(text="New Chats Start With", icon='OUTLINER_DATA_LIGHTPROBE')
         row = box.row(align=True)
         row.prop(prefs, "default_model", text="")
@@ -1694,14 +1698,15 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         if busy:
             row.operator("claude.stop", text="", icon='SNAP_FACE')
 
-        # [Upload] [Skills]  [Cloud|Local] [Model] [Effort] [Auto]
+        # [Upload]  [Model] [Effort] [Auto]   (Claude or Local: in the settings)
         col.separator(factor=0.6)
         bar = col.row(align=False)
         tools = bar.row(align=True)
-        tools.operator("claude.attach_files", text="", icon='EXPORT')
+        tools.scale_y = 1.25
+        tools.operator("claude.attach_files", text="Upload", icon='EXPORT')
         if prefs:
             opts = bar.row(align=True)
-            opts.prop(prefs, "backend", expand=True, icon_only=True)
+            opts.scale_y = 1.25
             if prefs.backend == 'LOCAL':
                 name = lmstudio.display_name(prefs.local_model) if prefs.local_model else tr("Choose Model")
                 opts.menu("CLAUDE_MT_local_models", text=name, translate=False)
