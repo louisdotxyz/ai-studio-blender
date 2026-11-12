@@ -76,30 +76,24 @@ never used Blender get a clean product image from a CAD model.
   ids, CAD materials (mapped to base materials), mounting points (`MOUNT | …` empties that move with
   every version), sizes to check and variants. Claude: `studio_cad_import`, `studio_cad_check` (check
   images), `studio_cad_feedback` (`CAD-Feedback.md` next to the export for the CAD side), skill */cad*.
-- **CAD box** (Render tab, up front): *Import CAD*, *New Version*, and once a CAD export is known the
-  CAD comments and **Send CAD Job**: a change for the CAD side goes to the Claude chat the export came
-  from. The export names that chat in its sidecar (`"chat": {"name", "url", "session"}`, set by
-  `OS.exportPackage({… chat})`); Blender asks "Send to <chat>?" or starts a new chat. The job is a file
-  in `~/.config/ai-studio/jobs/`, its text goes to the clipboard and the Claude app opens at that chat
-  (`claude://claude.ai/chat/<id>`; with only a name, at Recents to paste it) or at a new chat with the
-  text filled in (`claude://claude.ai/new?q=…`). A chat in the app cannot read its own link: ask
-  once and pass it. An open **Claude Code** session named in `session` also gets the job directly
-  (cross-session messages). The chat takes jobs with the MCP tool **blender_jobs** (list / claim /
-  done, works without Blender open); Blender shows their status in the CAD box. Claude in Blender
-  can send one too (`studio_cad_job`).
+- **CAD box** (Claude tab, under the chat): *Import*, *New Version*, and once a CAD export is known
+  **Send CAD Job** and the link button that switches CAD jobs on and off (off: only import and
+  comments). The line under it says where the next job goes ("→ CAD 5 · active 3 min ago", "→ new
+  chat") or that the Claude app is not connected yet (*Connect*, then quit and reopen Claude once).
+  *Send CAD Job* asks what should change and which chat does it: a dropdown with **New Chat**, the
+  known chats (last active first; the export's own chat or the last one of this export is chosen)
+  and **Other Chat…** to type a name. A chat is known once it called **blender_jobs** with its name
+  (the MCP tool asks for it), a job went to it, or the export names it in its sidecar (`"chat":
+  {"name", "url"}`, set by `OS.exportPackage({… chat})`). The job is a file in
+  `~/.config/ai-studio/jobs/`. A new chat opens with the text filled in
+  (`claude://claude.ai/new?q=…`); a known chat gets a notification ("write «CAD job» in that chat")
+  and takes the job with **blender_jobs** (list / claim / done, works without Blender open). Blender
+  shows their status in the box. Claude in Blender can send one too (`studio_cad_job`).
 - **Onshape sign-in:** `OS.session()` in the browser helpers checks the sign-in before anything else
   and says "sign in to Onshape in the browser pane of the Claude app" instead of failing with 401.
-  With saved API keys Blender checks them in the background when the CAD box shows and before a
-  sync, and shows a plain hint (keys refused, Onshape not reachable) instead of an error.
-- **Onshape:** a feedback point for a part that came from Onshape also becomes a **comment on its
-  Onshape element** (with a check image or render if given), so the CAD side sees it there and gets
-  a notification. Comments resolved in Onshape tick their point off in `CAD-Feedback.md` (on *Sync
-  CAD Feedback* and at every import of a new version). Needs Onshape API keys once
-  (dev-portal.onshape.com/keys, read and write): *Preferences › Studio › Onshape › Add Keys…*; they are
-  kept in the macOS keychain, not in the preferences.
-  **CAD Comments** (Render tab, CAD box, once a CAD export is known): the open points,
-  *Add CAD Comment* (part = the selected object), ✓ ticks a point off (and resolves its comment in
-  Onshape), sync and open `CAD-Feedback.md`.
+  **CAD Comments** (arrow of the CAD box): the open points of `CAD-Feedback.md` next to the export,
+  *Add CAD Comment* (part = the selected object), ✓ ticks a point off, and open the file. The CAD
+  chat reads the file.
   Onshape sends the package straight into Blender with `tools/onshape/onshape-helpers.js`
   (`POST /cad` on the Live Connection, see below).
 - **For Claude:** sections through a scan and the CAD part with measurements

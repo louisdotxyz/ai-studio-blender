@@ -209,16 +209,22 @@ class PrefsProxy:
         return getattr(addon_prefs, name)
 
 
-# the CAD Comments box of the Material tab (with open points, one of them sent to Onshape)
+# the chat's CAD box: comments, jobs, the status line (connected or not, a known chat or a new one)
 onshape_ops = importlib.import_module(PKG + ".studio.onshape_ops")
-onshape_ops._points.update(time=1e12, folder="/nowhere", open=["2026-11-11 · Deckel · Wand 2.4 mm (Blender)"] * 7,
-                           sent={"2026-11-11 · Deckel · Wand 2.4 mm (Blender)": {"cid": "c1", "base": "x"}})
-onshape_ops._found.update(time=1e12, keys=("AKEY", "SECRET"))
-try:
-    onshape_ops.draw_comments(Fake("CAD Comments"), ctx)
-except Exception:
-    errors.append("CAD Comments: " + traceback.format_exc(limit=3).strip().splitlines()[-1])
-onshape_ops._points["time"] = onshape_ops._found["time"] = -10.0
+cadswap = importlib.import_module(PKG + ".studio.cadswap")
+for app, chat in (("ok", {"name": "CAD 5", "last": "2026-11-12T10:00:00"}), ("ok", None), ("off", None),
+                  ("missing", {"name": "CAD 5", "last": ""})):
+    onshape_ops._points.update(time=1e12, folder="/nowhere", open=["2026-11-11 · Deckel · Wand 2.4 mm (Blender)"] * 7,
+                               jobs=[{"status": "claimed", "text": "Wand", "claimed_by": "CAD 5"}], app=app, chat=chat)
+    for show in (False, True):
+        wm.claude_show_cad = show
+        try:
+            cadswap.draw_chat(Fake("CAD box"), ctx)
+            cadswap.chat_height(ctx)
+        except Exception:
+            errors.append("CAD box: " + traceback.format_exc(limit=3).strip().splitlines()[-1])
+wm.claude_show_cad = False
+onshape_ops._points["time"] = -10.0
 
 # defaults (1.5): auto mode and the viewport screenshot are on for new users
 rna = addon_prefs.bl_rna.properties

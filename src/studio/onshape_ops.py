@@ -1,130 +1,59 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Preferences › Studio › Onshape: API keys into the keychain, test them, sync CAD feedback."""
+"""The CAD box of the chat: CAD comments (CAD-Feedback.md next to the export) and CAD jobs for a
+Claude chat that works on the CAD model (cadjobs). CAD jobs can be switched off (Studio preference
+cad_jobs, the link button of the box); the comments and the import stay."""
 
 import bpy
 from bpy.props import EnumProperty, StringProperty
 from bpy.types import Operator
 
-from . import onshape
+from ..i18n import tr
 
-KEYS_URL = "https://dev-portal.onshape.com/keys"
-_status = {"text": ""}   # the last test, shown under the keys
-_found = {"time": -10.0, "keys": None}   # the keychain is asked at most every few seconds (drawn often)
-
-
-def cached_keys():
-    import time
-    if time.monotonic() - _found["time"] > 5.0:
-        _found.update(time=time.monotonic(), keys=onshape.keys())
-    return _found["keys"]
+_points = {"time": -10.0, "folder": None, "open": [], "jobs": [], "app": "ok", "chat": None}   # read at most every 2 s
+_choices = []   # [{"name", "last"}]: the chats of the open job dialog (its enum items point into it)
+MAX_CHATS = 8
 
 
-class RS_OT_onshape_keys(Operator):
-    bl_idname = "render_studio.onshape_keys"
-    bl_label = "Save Onshape Keys"
-    bl_description = ("Keep the Onshape API keys in the macOS keychain (not in the preferences) and test them. "
-                      "Create them at dev-portal.onshape.com/keys with read and write access")
-
-    access: StringProperty(name="Access Key", options={'SKIP_SAVE'})
-    secret: StringProperty(name="Secret Key", subtype='PASSWORD', options={'SKIP_SAVE'})
-
-    def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self, width=420)
-
-    def draw(self, context):
-        col = self.layout.column()
-        col.prop(self, "access")
-        col.prop(self, "secret")
-        col.operator("wm.url_open", text="Create keys at dev-portal.onshape.com", icon='URL').url = KEYS_URL
-
-    def execute(self, context):
-        try:
-            name = onshape.whoami(credentials=(self.access.strip(), self.secret.strip()))
-            onshape.save_keys(self.access, self.secret)
-        except (onshape.OnshapeError, ValueError, RuntimeError) as exc:
-            _status["text"] = str(exc)
-            self.report({'ERROR'}, str(exc))
-            return {'CANCELLED'}
-        _status["text"] = "Keys work: Onshape user %s" % name
-        _found["time"] = -10.0
-        self.report({'INFO'}, _status["text"])
-        return {'FINISHED'}
+def jobs_on():
+    """CAD jobs are switched on (default)."""
+    from .runner import prefs
+    p = prefs()
+    return p is None or bool(getattr(p, "cad_jobs", True))
 
 
-class RS_OT_onshape_forget(Operator):
-    bl_idname = "render_studio.onshape_forget"
-    bl_label = "Remove Onshape Keys"
-    bl_description = "Remove the Onshape API keys from the keychain"
-
-    def execute(self, context):
-        onshape.forget_keys()
-        _status["text"] = ""
-        _found["time"] = -10.0
-        return {'FINISHED'}
-
-
-class RS_OT_onshape_sync(Operator):
-    bl_idname = "render_studio.onshape_sync"
-    bl_label = "Sync CAD Feedback"
-    bl_description = ("Open points of CAD-Feedback.md that are not in Onshape yet become comments there; points "
-                      "whose comment was resolved in Onshape are ticked off")
-
-    def execute(self, context):
-        from . import cadimport
-        try:
-            text = cadimport.sync_feedback()
-        except (ValueError, onshape.OnshapeError) as exc:
-            self.report({'ERROR'}, str(exc))
-            return {'CANCELLED'}
-        _refresh()
-        self.report({'INFO'}, text)
-        return {'FINISHED'}
-
-
-def draw_prefs(layout, studio):
-    """The Onshape box of Preferences › Studio."""
-    box = layout.box()
-    box.label(text="Onshape", icon='MOD_BUILD')
-    col = box.column()
-    found = cached_keys()
-    row = col.row(align=True)
-    row.label(text=("API keys in the keychain (%s…)" % found[0][:6]) if found else "No API keys yet",
-              icon='CHECKMARK' if found else 'INFO')
-    row.operator(RS_OT_onshape_keys.bl_idname, text="Change" if found else "Add Keys…")
-    if found:
-        row.operator(RS_OT_onshape_forget.bl_idname, text="", icon='X')
-    if _status["text"]:
-        sub = col.row()
-        sub.active = False
-        sub.label(text=_status["text"])
-    col.prop(studio, "onshape_comments")
-    sub = col.row()
-    sub.enabled = bool(found)
-    sub.operator(RS_OT_onshape_sync.bl_idname, icon='FILE_REFRESH')
-
-
-# ---------------------------------------------------------------- CAD comments (Material tab › CAD)
-
-_points = {"time": -10.0, "folder": None, "open": [], "sent": {}}   # read from disk at most every 2 s
+def _app_state():
+    """"ok" (the Claude app has Blender's tools), "off" (installed, not connected) or "missing"."""
+    from .. import live_clients
+    try:
+        if not live_clients.desktop_installed():
+            return "missing"
+        return "ok" if live_clients.desktop_connected() else "off"
+    except (OSError, ValueError, RuntimeError):
+        return "ok"
 
 
 def comment_state(context, force=False):
-    """{"folder", "open", "sent"} of the last CAD import's CAD-Feedback.md (folder None: no import)."""
+    """{"folder", "open", "jobs", "app", "chat"} of the last CAD import (folder None: no import).
+    chat: {"name", "last"} of the chat the next job goes to, None for a new chat."""
     import time
     if force or time.monotonic() - _points["time"] > 2.0:
         from . import cadfiles, cadimport
+        from .. import cadjobs
         try:
             folder = cadimport.feedback_folder()
         except (ValueError, AttributeError):
             folder = None
-        from .. import cadjobs
         try:
             jobs = [j for j in cadjobs.jobs() if folder and j.get("cad_folder") == folder]
+            chat = cadimport.job_chat(None, folder) if folder else None
+            known = {c["name"].lower(): c for c in cadjobs.known_chats()}
         except OSError:
-            jobs = []
+            jobs, chat, known = [], None, {}
+        name = (chat or {}).get("name") or ""
         _points.update(time=time.monotonic(), folder=folder,
-                       open=cadfiles.open_feedback(folder) if folder else [],
-                       sent=cadfiles.feedback_comments(folder) if folder else {}, jobs=jobs)
+                       open=cadfiles.open_feedback(folder) if folder else [], jobs=jobs,
+                       app=_app_state() if folder and jobs_on() else "ok",
+                       chat=(known.get(name.lower()) or {"name": name, "last": ""}) if name else None)
     return _points
 
 
@@ -132,34 +61,39 @@ def _refresh():
     _points["time"] = -10.0
 
 
-_key_check = {"time": -1e9, "ok": True, "text": "", "thread": None}
-KEY_CHECK_EVERY = 600.0   # seconds
+def ago_text(stamp):
+    """"active 3 min ago" (translated), or "not seen yet" for a chat that never called blender_jobs."""
+    from .. import cadjobs
+    age = cadjobs.ago(stamp)
+    if age is None:
+        return tr("not seen yet")
+    number, unit = age
+    return {"now": tr("active just now"), "min": tr("active {} min ago"), "h": tr("active {} h ago"),
+            "d": tr("active {} days ago")}[unit].format(number)
 
 
-def key_hint(base):
-    """A sentence when the saved Onshape keys do not work (checked in the background at most every
-    10 minutes, when the CAD box is shown), else ""."""
-    import threading
-    import time
-    if not cached_keys():
-        return ""
-    running = _key_check["thread"] is not None and _key_check["thread"].is_alive()
-    if not running and time.monotonic() - _key_check["time"] > KEY_CHECK_EVERY:
-        _key_check["time"] = time.monotonic()
+class RS_OT_cad_connect(Operator):
+    bl_idname = "render_studio.cad_connect"
+    bl_label = "Connect"
+    bl_description = ("Give the chats of the Claude app Blender's tools (blender_jobs), so they can take CAD jobs. "
+                      "Quit and reopen Claude once afterwards")
 
-        def run():
-            ok, text = onshape.check(base)
-            _key_check.update(ok=ok, text=text)
-        _key_check["thread"] = threading.Thread(target=run, name="ai-studio-onshape-check", daemon=True)
-        _key_check["thread"].start()
-    return "" if _key_check["ok"] else _key_check["text"]
+    def execute(self, context):
+        from .. import live_clients
+        try:
+            live_clients.connect_desktop()
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        _refresh()
+        self.report({'INFO'}, tr("Connected: quit Claude (Cmd+Q) and open it again"))
+        return {'FINISHED'}
 
 
 class RS_OT_cad_comment(Operator):
     bl_idname = "render_studio.cad_comment"
     bl_label = "Add CAD Comment"
-    bl_description = ("Note a change for the CAD side: into CAD-Feedback.md next to the export and, when the "
-                      "part came from Onshape, as a comment there")
+    bl_description = "Note a change for the CAD side in CAD-Feedback.md next to the export (the CAD chat reads it)"
 
     part: StringProperty(name="Part", options={'SKIP_SAVE'})
     text: StringProperty(name="Comment", options={'SKIP_SAVE'})
@@ -175,13 +109,6 @@ class RS_OT_cad_comment(Operator):
         col = self.layout.column()
         col.prop(self, "part")
         col.prop(self, "text")
-        from . import cadimport
-        source = cadimport.onshape_source(context.active_object) if comment_state(context)["folder"] else ""
-        if source and onshape.parse_source(source):
-            sub = col.row()
-            sub.active = False
-            sub.label(text="Also goes to Onshape as a comment" if cached_keys() else
-                      "Onshape: add API keys in Preferences › Studio to send it there", icon='INFO')
 
     def execute(self, context):
         from . import cadimport
@@ -196,33 +123,25 @@ class RS_OT_cad_comment(Operator):
         except ValueError as exc:
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
-        _path, note = cadimport.feedback(obj if obj is not None else part, text, folder=folder)
+        cadimport.feedback(obj if obj is not None else part, text, folder=folder)
         _refresh()
-        self.report({'WARNING'} if note.startswith("not in") else {'INFO'},
-                    "CAD comment noted" + (": " + note if note else ""))
+        self.report({'INFO'}, "CAD comment noted")
         return {'FINISHED'}
 
 
 class RS_OT_cad_comment_done(Operator):
     bl_idname = "render_studio.cad_comment_done"
     bl_label = "Done"
-    bl_description = "Tick this point off (and resolve its comment in Onshape)"
+    bl_description = "Tick this point off"
     bl_options = {'INTERNAL'}
 
     point: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
 
     def execute(self, context):
         from . import cadfiles
-        state = comment_state(context, force=True)
-        folder = state["folder"]
+        folder = comment_state(context, force=True)["folder"]
         if not folder or not cadfiles.tick_feedback(folder, self.point, note="done in Blender"):
             return {'CANCELLED'}
-        known = state["sent"].get(self.point)
-        if known:
-            try:
-                onshape.resolve_comment(known["base"], known["cid"])
-            except onshape.OnshapeError as exc:
-                self.report({'WARNING'}, "Ticked off; Onshape: %s" % exc)
         _refresh()
         return {'FINISHED'}
 
@@ -245,23 +164,45 @@ class RS_OT_cad_comments_open(Operator):
 
 
 def _job_targets(self, context):
-    items = [('CHAT', "To Chat", "The Claude chat named below (the chat of the export or of the last job)"),
-             ('NEW', "New Chat", "Start a new chat in the Claude app with the job")]
-    _job_targets.items = items   # Blender needs the list to live on
+    items = [('NEW', tr("New Chat"), tr("Start a new chat in the Claude app with the job"), 'ADD', 0)]
+    for i, chat in enumerate(_choices):
+        items.append(("CHAT%d" % i, chat["name"], ago_text(chat["last"]), 'USER', i + 1))
+    items.append(('OTHER', tr("Other Chat…"), tr("Type the name of the chat"), 'TEXT', len(_choices) + 1))
+    _job_targets.items = items   # Blender needs the strings to live on
     return items
+
+
+def chat_choices(default_name=""):
+    """The chats for the dialog: the known ones, last active first; the default one is always in it."""
+    from .. import cadjobs
+    try:
+        chats = cadjobs.known_chats()[:MAX_CHATS]
+    except OSError:
+        chats = []
+    if default_name and not any(c["name"].lower() == default_name.lower() for c in chats):
+        chats.insert(0, {"name": default_name, "last": ""})
+    return chats
 
 
 class RS_OT_cad_job(Operator):
     bl_idname = "render_studio.cad_job"
     bl_label = "Send CAD Job"
-    bl_description = ("Ask the CAD side for a change: the Claude app opens at the chat that made the CAD export "
-                      "(or a new chat) with the job, the text is also in the clipboard")
+    bl_description = ("Ask the CAD side for a change: a new chat in the Claude app opens with the job, or a "
+                      "chat that knows the model gets it (a notification; it takes the job from Blender)")
 
     part: StringProperty(name="Part", options={'SKIP_SAVE'})
     text: StringProperty(name="Change", description="What should change, with numbers", options={'SKIP_SAVE'})
-    target: EnumProperty(name="To", items=_job_targets, options={'SKIP_SAVE'})
-    chat: StringProperty(name="Chat", description="Name of the Claude chat that works on this CAD model, e.g. "
-                         "'CAD 5' (remembered for this export)", options={'SKIP_SAVE'})
+    target: EnumProperty(name="Chat", description="Which Claude chat does it", items=_job_targets,
+                         options={'SKIP_SAVE'})
+    other: StringProperty(name="Name", description="Name of the chat in the Claude app, e.g. 'CAD 5' "
+                          "(remembered for this CAD export)", options={'SKIP_SAVE'})
+
+    @classmethod
+    def poll(cls, context):
+        if not jobs_on():
+            cls.poll_message_set("CAD jobs are switched off (link button of the CAD box)")
+            return False
+        return True
 
     def invoke(self, context, event):
         from . import cadimport
@@ -269,36 +210,50 @@ class RS_OT_cad_job(Operator):
         if obj is not None and obj.select_get():
             from . import cadswap
             self.part = obj.get(cadswap.CAD_ID) or obj.name
+        else:
+            obj = None
         known = cadimport.job_chat(obj, comment_state(context)["folder"])
-        self.chat = (known or {}).get("name") or ""
-        self.target = 'CHAT' if self.chat else 'NEW'
+        name = (known or {}).get("name") or ""
+        _choices[:] = chat_choices(name)
+        index = next((i for i, c in enumerate(_choices) if name and c["name"].lower() == name.lower()), None)
+        self.target = "CHAT%d" % index if index is not None else 'NEW'
         return context.window_manager.invoke_props_dialog(self, width=480, confirm_text="Send")
 
     def draw(self, context):
         col = self.layout.column()
         col.prop(self, "part")
         col.prop(self, "text")
-        col.row().prop(self, "target", expand=True)
-        if self.target == 'CHAT':
-            col.prop(self, "chat")
-        from .. import live_clients
-        if live_clients.desktop_installed() and not live_clients.desktop_connected():
+        col.prop(self, "target")
+        if self.target == 'OTHER':
+            col.prop(self, "other")
+        if comment_state(context)["app"] == "off":
             sub = col.row()
             sub.active = False
             sub.label(text="The Claude app gets Blender's tools now; reopen Claude once", icon='INFO')
+
+    def chat_name(self):
+        """"" for a new chat, else the chosen chat's name (None: Other without a name)."""
+        if self.target == 'NEW':
+            return ""
+        if self.target == 'OTHER':
+            return " ".join(self.other.split()) or None
+        try:
+            return _choices[int(self.target[4:])]["name"]
+        except (ValueError, IndexError):
+            return ""
 
     def execute(self, context):
         from . import cadimport
         if not self.text.strip():
             self.report({'WARNING'}, "Write what should change first")
             return {'CANCELLED'}
-        if self.target == 'CHAT' and not self.chat.strip():
+        name = self.chat_name()
+        if name is None:
             self.report({'WARNING'}, "Name the chat (e.g. CAD 5) or choose New Chat")
             return {'CANCELLED'}
         try:
-            job, how = cadimport.send_job(self.text, self.part.strip() or None,
-                                          "origin" if self.target == 'CHAT' else "new",
-                                          chat_name=self.chat if self.target == 'CHAT' else "")
+            job, how = cadimport.send_job(self.text, self.part.strip() or None, "origin" if name else "new",
+                                          chat_name=name)
         except (OSError, ValueError) as exc:
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
@@ -310,13 +265,31 @@ class RS_OT_cad_job(Operator):
 SHOWN = 5
 
 
-def _wrap(text, width):
-    import textwrap
-    return textwrap.wrap(text, width) or [text]
+def draw_status(layout, context):
+    """One line under the CAD box's buttons: where the next job goes, or what is missing."""
+    state = comment_state(context)
+    if not state["folder"] or not jobs_on():
+        return 0
+    row = layout.row(align=True)
+    if state["app"] == "off":
+        row.alert = True
+        row.label(text=tr("Claude app not connected to Blender"), icon='ERROR', translate=False)
+        row.operator(RS_OT_cad_connect.bl_idname, text="Connect")
+        return 1
+    row.active = False
+    chat = state["chat"]
+    if chat:
+        text = "→ %s · %s" % (chat["name"], ago_text(chat["last"]))
+    else:
+        text = "→ " + tr("new chat")
+    if state["app"] == "missing":
+        text += " · " + tr("Claude app not found")
+    row.label(text=text, icon='LINKED', translate=False)
+    return 1
 
 
 def draw_comments(layout, context):
-    """The CAD comments under Import CAD (only once a CAD export is known)."""
+    """The CAD comments and jobs under the CAD box's buttons (only once a CAD export is known)."""
     state = comment_state(context)
     if not state["folder"]:
         return
@@ -325,22 +298,11 @@ def draw_comments(layout, context):
     points = state["open"]
     row.label(text="CAD Comments · %d open" % len(points) if points else "CAD Comments", icon='WORDWRAP_ON')
     row.operator(RS_OT_cad_comments_open.bl_idname, text="", icon='TEXT')
-    from . import cadimport
-    where = onshape.parse_source(cadimport.onshape_source(None, state["folder"]))
-    hint = key_hint(where["base"]) if where else ""
-    if cached_keys() and where:
-        row.operator(RS_OT_onshape_sync.bl_idname, text="", icon='FILE_REFRESH')
-    if hint:
-        sub = box.column(align=True)
-        sub.alert = True
-        for part in _wrap(hint, 60):
-            sub.label(text=part, translate=False)
     col = box.column(align=True)
     for point in points[-SHOWN:]:
         _day, _sep, rest = point.partition(" · ")
         line = col.row(align=True)
-        line.label(text=rest or point, translate=False,
-                   icon='URL' if point in state["sent"] else 'DOT')
+        line.label(text=rest or point, translate=False, icon='DOT')
         line.operator(RS_OT_cad_comment_done.bl_idname, text="", icon='CHECKMARK').point = point
     if len(points) > SHOWN:
         sub = col.row()
@@ -348,7 +310,8 @@ def draw_comments(layout, context):
         sub.label(text="… and %d earlier ones" % (len(points) - SHOWN))
     row = box.row(align=True)
     row.operator(RS_OT_cad_comment.bl_idname, icon='ADD')
-    row.operator(RS_OT_cad_job.bl_idname, text="Send CAD Job", icon='EXPORT')
+    if jobs_on():
+        row.operator(RS_OT_cad_job.bl_idname, text="Send CAD Job", icon='EXPORT')
     jobs = state.get("jobs") or []
     if jobs:
         col = box.column(align=True)
@@ -357,8 +320,9 @@ def draw_comments(layout, context):
             line = col.row()
             line.active = job.get("status") != "done"
             note = (" · " + job["note"]) if job.get("note") else ""
-            line.label(text="%s%s" % (job.get("text", ""), note), icon=icon, translate=False)
+            who = job.get("claimed_by") if job.get("status") == "claimed" else ""
+            line.label(text="%s%s%s" % (job.get("text", ""), " · " + who if who else "", note), icon=icon,
+                       translate=False)
 
 
-classes = (RS_OT_onshape_keys, RS_OT_onshape_forget, RS_OT_onshape_sync,
-           RS_OT_cad_comment, RS_OT_cad_comment_done, RS_OT_cad_comments_open, RS_OT_cad_job)
+classes = (RS_OT_cad_connect, RS_OT_cad_comment, RS_OT_cad_comment_done, RS_OT_cad_comments_open, RS_OT_cad_job)

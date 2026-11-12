@@ -675,6 +675,39 @@ DE = {
     'Camera and the point it looks at move up or down in the picture together (also in a straight top view; 0 = centered)': 'Kamera und Blickpunkt wandern zusammen im Bild nach oben oder unten (auch in der Draufsicht; 0 = mittig)',
     'CAD Comments and Jobs': 'CAD-Kommentare und -Aufträge',
     'Show the CAD comments and jobs for the CAD side': 'Die CAD-Kommentare und -Aufträge für die CAD-Seite zeigen',
+    # -- 1.9: simpler CAD connection --------------------------------------------
+    'CAD Jobs': 'CAD-Aufträge',
+    'Send changes from Blender to a Claude chat that works on the CAD model (Send CAD Job). Off: the CAD box only imports versions and notes comments':
+        'Änderungen aus Blender an einen Claude-Chat schicken, der am CAD-Modell arbeitet (CAD-Auftrag senden). Aus: Die CAD-Box importiert nur Versionen und notiert Kommentare',
+    'New Chat': 'Neuer Chat',
+    'Start a new chat in the Claude app with the job': 'Einen neuen Chat in der Claude-App mit dem Auftrag starten',
+    'Other Chat…': 'Anderer Chat …',
+    'Type the name of the chat': 'Den Namen des Chats eintippen',
+    'Chat': 'Chat',
+    'Which Claude chat does it': 'Welcher Claude-Chat es macht',
+    'Name': 'Name',
+    "Name of the chat in the Claude app, e.g. 'CAD 5' (remembered for this CAD export)":
+        "Name des Chats in der Claude-App, z. B. «CAD 5» (wird für diesen CAD-Export gemerkt)",
+    'not seen yet': 'noch nicht gemeldet',
+    'active just now': 'gerade aktiv',
+    'active {} min ago': 'aktiv vor {} min',
+    'active {} h ago': 'aktiv vor {} h',
+    'active {} days ago': 'aktiv vor {} Tagen',
+    'new chat': 'neuer Chat',
+    'Claude app not found': 'Claude-App nicht gefunden',
+    'Claude app not connected to Blender': 'Claude-App nicht mit Blender verbunden',
+    'Connect': 'Verbinden',
+    "Give the chats of the Claude app Blender's tools (blender_jobs), so they can take CAD jobs. Quit and reopen Claude once afterwards":
+        'Den Chats der Claude-App die Blender-Tools geben (blender_jobs), damit sie CAD-Aufträge holen können. Danach Claude einmal beenden und neu öffnen',
+    'Connected: quit Claude (Cmd+Q) and open it again': 'Verbunden: Claude beenden (Cmd+Q) und wieder öffnen',
+    'CAD job for {}': 'CAD-Auftrag für {}',
+    'Write «CAD job» in that chat: it takes it from Blender': 'Schreib «CAD-Auftrag» in diesen Chat: Er holt ihn aus Blender',
+    'Ask the CAD side for a change: a new chat in the Claude app opens with the job, or a chat that knows the model gets it (a notification; it takes the job from Blender)':
+        'Die CAD-Seite um eine Änderung bitten: Ein neuer Chat in der Claude-App öffnet sich mit dem Auftrag, oder ein Chat, der das Modell kennt, bekommt ihn (Mitteilung; er holt den Auftrag aus Blender)',
+    'CAD jobs are switched off (link button of the CAD box)': 'CAD-Aufträge sind ausgeschaltet (Verbindungs-Knopf der CAD-Box)',
+    'Note a change for the CAD side in CAD-Feedback.md next to the export (the CAD chat reads it)':
+        'Eine Änderung für die CAD-Seite in CAD-Feedback.md neben dem Export notieren (der CAD-Chat liest sie)',
+    'Tick this point off': 'Diesen Punkt abhaken',
 }
 
 # Blender looks up operator names in the "Operator" context and everything else

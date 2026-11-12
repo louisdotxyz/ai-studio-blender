@@ -180,74 +180,28 @@ def take_over_with_sidecar():
 @section
 def feedback_next_to_export():
     part = next(o for o in bpy.data.objects if o.get("cad_version") == "V4")
-    path, _note = cadimport.feedback(part.name, "Kollision 1.2 mm mit dem Lenker", send=False)
+    path, _note = cadimport.feedback(part.name, "Kollision 1.2 mm mit dem Lenker")
     check("feedback next to the export", os.path.dirname(path) == TMP and
           cadfiles.open_feedback(TMP)[0].endswith("· Kollision 1.2 mm mit dem Lenker (Blender)"), path)
 
 
 @section
-def feedback_to_onshape():
-    """A feedback point for a part from Onshape becomes a comment there; resolved there, it is ticked off."""
-    import http.server
-    import threading
-    onshape = mod("studio.onshape")
-    comments = {}
-    posts = []
-
-    class Fake(http.server.BaseHTTPRequestHandler):
-        def log_message(self, *args):
-            pass
-
-        def _json(self, data):
-            body = json.dumps(data).encode()
-            self.send_response(200)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def do_POST(self):
-            data = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
-            posts.append(self.path)
-            if self.path.endswith("/resolve"):
-                comments[self.path.split("/")[-2]]["resolvedAt"] = "2026-11-12T08:00:00Z"
-                return self._json({})
-            cid = "c%d" % (len(comments) + 1)
-            comments[cid] = dict(data, id=cid)
-            self._json({"id": cid})
-
-        def do_GET(self):
-            self._json(comments.get(self.path.rsplit("/", 1)[-1], {}))
-
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Fake)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    real_keys = onshape.keys
-    onshape.keys = lambda: ("AKEY", "SECRET")   # never the real keychain in tests
+def comments_box():
+    """The CAD comments of the chat's CAD box: add, list, tick off (only the file, no Onshape)."""
     folder = os.path.join(TMP, "from_onshape")
     os.makedirs(folder)
     part = bpy.data.objects.new("Deckel_01", None)
     bpy.context.scene.collection.objects.link(part)
     part["cad_file"] = os.path.join(folder, "Leuchte V5.glb")
-    part["cad_source"] = "http://127.0.0.1:%d/documents/d9/w/w9/e/e9" % server.server_address[1]
+    part["cad_source"] = "https://cad.onshape.com/documents/d9/w/w9/e/e9"
+    image = os.path.join(TMP, "look.png")
+    open(image, "wb").write(b"\x89PNG fake")
     try:
-        path, note = cadimport.feedback(part, "Wand 2.4 mm statt 2.0 mm", send=True)
-        made = next(iter(comments.values()), {})
-        check("feedback goes to Onshape as a comment", note == "also as a comment in Onshape"
-              and made.get("elementId") == "e9" and "Wand 2.4 mm" in made.get("message", ""), (note, made))
-        cadfiles.add_feedback(folder, "Deckel_01", "Radius 1 mm", today="2026-11-11")   # e.g. written by hand
-        text = cadimport.sync_feedback(folder)
-        check("sync sends what is missing", len(comments) == 2 and "1 sent" in text, text)
-        for comment in comments.values():
-            comment["resolvedAt"] = "2026-11-11T12:00:00Z"
-        text = cadimport.sync_feedback(folder)
-        check("resolved in Onshape: ticked off", cadfiles.open_feedback(folder) == [] and "2 resolved" in text, text)
-        onshape.keys = lambda: None
-        path, note = cadimport.feedback(part, "noch etwas", send=True)
-        check("no keys: only the file, says why", "no API keys" in note, note)
-
-        # The CAD Comments box (Material tab › CAD): add, list, tick off.
-        onshape.keys = lambda: ("AKEY", "SECRET")
+        path, note = cadimport.feedback(part, "Wand 2.4 mm statt 2.0 mm", image=image)
+        check("feedback only into the file, with its image", note == "" and os.path.dirname(path) == folder
+              and ("image: %s" % image) in cadfiles.open_feedback(folder)[0], cadfiles.open_feedback(folder))
         ops = mod("studio.onshape_ops")
-        ops._found.update(time=1e12, keys=("AKEY", "SECRET"))
+        check("no Onshape keys or sync any more", not hasattr(ops, "cached_keys") and not hasattr(cadimport, "sync_feedback"))
         for cls in ops.classes:   # the add-on is loaded, not enabled
             bpy.utils.register_class(cls)
         before = cadimport._last["file"]
@@ -256,8 +210,7 @@ def feedback_to_onshape():
             result = bpy.ops.render_studio.cad_comment(part="Deckel_01", text="  Fase   0.5 mm  ")
             state = ops.comment_state(bpy.context, force=True)
             mine = [p for p in state["open"] if "Fase 0.5 mm" in p]
-            check("CAD comment from the box: file and Onshape", result == {'FINISHED'} and mine
-                  and mine[0] in state["sent"], (result, state["open"]))
+            check("CAD comment from the box", result == {'FINISHED'} and mine, (result, state["open"]))
 
             class Layout:   # takes every drawing call
                 def __getattr__(self, name):
@@ -268,19 +221,15 @@ def feedback_to_onshape():
             check("box lists the open points", len(state["open"]) == 2, state["open"])
             result = bpy.ops.render_studio.cad_comment_done(point=mine[0])
             state = ops.comment_state(bpy.context, force=True)
-            check("done: ticked off and resolved in Onshape", result == {'FINISHED'}
-                  and not any("Fase" in p for p in state["open"]) and posts[-1].endswith("/resolve"),
-                  (state["open"], posts[-1:]))
+            check("done: ticked off", result == {'FINISHED'} and not any("Fase" in p for p in state["open"]),
+                  state["open"])
             check("done in Blender noted in the file", "Fase 0.5 mm (Blender) · done in Blender" in
                   open(os.path.join(folder, cadfiles.FEEDBACK_FILE), encoding="utf-8").read())
         finally:
             cadimport._last["file"] = before
-            ops._found["time"] = -10.0
             for cls in ops.classes:
                 bpy.utils.unregister_class(cls)
     finally:
-        onshape.keys = real_keys
-        server.shutdown()
         bpy.data.objects.remove(part)
 
 
@@ -302,8 +251,8 @@ def cad_job_to_its_chat():
         job, how = cadimport.send_job("Griff 5 mm länger", part, "origin", open_app=False)
         check("job saved with its chat and folder", job["chat"]["name"] == "Leuchte V22" and job["cad_folder"] == folder
               and job["part"] == "Griff" and "saved as" in how, (job, how))
-        check("job text into the clipboard (Blender without a window keeps no clipboard)",
-              "text in the clipboard" in how, how)
+        check("known chat: the job waits for it, nothing in the clipboard",
+              "waits for the chat 'Leuchte V22'" in how and "clipboard" not in how, how)
         job, _how = cadimport.send_job("Fase 1 mm", part, "new", open_app=False)
         check("new chat: no chat in the job", job["chat"] is None)
         # a part whose export names no chat: the chat the user names is used and remembered
@@ -329,7 +278,42 @@ def cad_job_to_its_chat():
             bpy.context.view_layer.objects.active = None
             result = bpy.ops.render_studio.cad_job(part="Griff", text="Radius 2 mm", target='NEW')
             check("Send CAD Job button", result == {'FINISHED'}
-                  and any(j["text"] == "Radius 2 mm" for j in cadjobs.jobs()), result)
+                  and any(j["text"] == "Radius 2 mm" and j["chat"] is None for j in cadjobs.jobs()), result)
+            # the dropdown: the known chats, last active first; the export's own chat is always in it
+            cadjobs.seen_chat("CAD 7")
+            choices = ops.chat_choices("Leuchte V22")
+            names = [c["name"] for c in choices]
+            check("dropdown: the active chat first, the export's and the remembered ones in it", names[0] == "CAD 7"
+                  and "Leuchte V22" in names and "CAD 5" in names, names)
+            check("dropdown: an unknown default chat is added", ops.chat_choices("CAD 11")[0]["name"] == "CAD 11")
+            ops._choices[:] = choices
+            items = [i[0] for i in ops._job_targets(None, bpy.context)]
+            check("dropdown items: new chat, the chats, other", items[0] == 'NEW' and items[-1] == 'OTHER'
+                  and len(items) == len(choices) + 2, items)
+            result = bpy.ops.render_studio.cad_job(part="Griff", text="Loch 4 mm", target='CHAT%d' % names.index("CAD 7"))
+            job = next(j for j in cadjobs.jobs() if j["text"] == "Loch 4 mm")
+            check("chosen chat from the dropdown", result == {'FINISHED'} and job["chat"]["name"] == "CAD 7", job)
+            result = bpy.ops.render_studio.cad_job(part="Griff", text="Nut 1 mm", target='OTHER', other=" CAD  9 ")
+            job = next(j for j in cadjobs.jobs() if j["text"] == "Nut 1 mm")
+            check("other chat typed in", result == {'FINISHED'} and job["chat"]["name"] == "CAD 9", job)
+            check("ago text", ops.ago_text("") == "not seen yet" and ops.ago_text(cadjobs.known_chats()[0]["last"])
+                  == "active just now")
+            # switched off: no button, no tool
+            runner = mod("studio.runner")
+            real_prefs = runner.prefs
+            runner.prefs = lambda: type("P", (), {"cad_jobs": False})()
+            try:
+                check("switched off: Send CAD Job not available", not bpy.ops.render_studio.cad_job.poll())
+                tools = {t["name"]: t for t in mod("studio.claude_tools").get_tools()}
+                try:
+                    tools["studio_cad_job"]["handler"]({"text": "x"})
+                    check("switched off: the chat's tool says so", False)
+                except ValueError as exc:
+                    check("switched off: the chat's tool says so", "switched off" in str(exc), str(exc))
+                check("switched off: listing still works", tools["studio_cad_job"]["handler"]({}).startswith("CAD jobs"))
+            finally:
+                runner.prefs = real_prefs
+            check("switched on again", bpy.ops.render_studio.cad_job.poll())
         finally:
             for cls in ops.classes:
                 bpy.utils.unregister_class(cls)

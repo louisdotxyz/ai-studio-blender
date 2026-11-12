@@ -281,7 +281,6 @@ def cad_import(path, take_over=True, materials=True, collections=True, setup=Tru
     report["size_off"], report["missing_parts"] = size_check(objects, sidecar, tolerance_mm)
     report["variants"] = write_variants((sidecar or {}).get("variants"), meshes)
     folder = os.path.dirname(_last["file"])
-    report["onshape"] = _sync_after_import(folder)
     report["feedback_open"] = cadfiles.open_feedback(folder)
     for obj in bpy.context.view_layer.objects:
         obj.select_set(obj in objects)
@@ -437,8 +436,9 @@ def job_chat(obj=None, folder=None):
 
 
 def send_job(text, part=None, target="origin", image=None, open_app=True, chat_name=""):
-    """A CAD job for the chat: a file in ~/.config/ai-studio/jobs (images copied next to it), its
-    text in the clipboard and the Claude app opened at the chat. The chat is the one the user names
+    """A CAD job for the chat: a file in ~/.config/ai-studio/jobs (images copied next to it). A new
+    chat opens with its text; a known chat gets a notification and takes it with blender_jobs
+    (its own link opens it, else the app opens at Recents). The chat is the one the user names
     (chat_name, e.g. "CAD 5"), else the export's chat or the one the last job of this CAD folder
     went to (target "origin"); target "new" or no known chat: a new chat. A named chat is remembered
     for the folder. Returns (job, how it was delivered)."""
@@ -465,22 +465,18 @@ def send_job(text, part=None, target="origin", image=None, open_app=True, chat_n
     connected = ensure_claude_app_tools()
     if connected:
         how.append(connected)
-    try:
-        bpy.context.window_manager.clipboard = cadjobs.message(job)
-        how.append("text in the clipboard")
-    except (AttributeError, RuntimeError):
-        pass
+    if chat:
+        how.append("waits for the chat '%s' (it takes it with blender_jobs)" % chat.get("name"))
     if open_app:
+        from ..i18n import tr
         link, said = cadjobs.chat_link(job, "origin" if chat else "new")
         if deliver_link(link):
             how.append(said)
-            if chat and link == cadjobs.RECENTS:
-                notify("CAD job ready", "Paste it into the chat '%s' (it is in the clipboard)" % chat.get("name"))
             if not chat:
                 how.append("a new chat only has Onshape and Blender when it is a task linked to your Mac")
-    if chat and chat.get("session"):
-        _notify_session_later(chat["session"], job)
-        how.append("also sent to the Claude Code session '%s' if it is open" % chat["session"])
+        if chat:
+            notify(tr("CAD job for {}").format(chat.get("name")),
+                   tr("Write «CAD job» in that chat: it takes it from Blender"))
     return job, ", ".join(how)
 
 
@@ -513,31 +509,6 @@ def notify(title, text):
         pass
 
 
-def _notify_session_later(session, job):
-    """The open Claude Code session named in the export gets the job as a message (in a thread:
-    `claude agents` and a short `claude -p` take a few seconds). The chat says how it went."""
-    import threading
-    from .. import cadjobs, claude_cli, core
-    prefs = core.get_prefs()
-    path = claude_cli.find_claude(prefs.claude_path if prefs else "")
-    if not path:
-        return
-
-    def run():
-        from ..setup_flow import _on_main
-        found = cadjobs.find_session(cadjobs.code_sessions(path), session)
-        if found is None:
-            text = "CAD job %s: the Claude Code session '%s' is not open (the job waits in blender_jobs)" % (
-                job["id"], session)
-        elif cadjobs.notify_session(path, found.get("name") or session, job):
-            text = "CAD job %s: sent to the open Claude Code session '%s'" % (job["id"], found.get("name") or session)
-        else:
-            text = "CAD job %s: could not message '%s' (the job waits in blender_jobs)" % (job["id"], session)
-        _on_main(core.add_message, "info", text)
-
-    threading.Thread(target=run, name="ai-studio-cad-job", daemon=True).start()
-
-
 def deliver_link(link):
     """Open a claude:// link in the Claude app (False when it is not installed)."""
     import subprocess
@@ -553,78 +524,16 @@ def deliver_link(link):
         return False
 
 
-def _send_to_onshape():
-    from .runner import prefs
-    p = prefs()
-    return p is None or p.onshape_comments
-
-
-def feedback(part, problem, folder=None, image=None, send=None):
-    """Note an open point for the CAD side in CAD-Feedback.md next to the export and, when the
-    export came from Onshape and API keys are set, as a comment there. Returns (path, note)."""
-    from . import onshape
+def feedback(part, problem, folder=None, image=None):
+    """Note an open point for the CAD side in CAD-Feedback.md next to the export (with the image
+    it refers to, if any). Returns (path, note)."""
     obj = bpy.data.objects.get(part) if isinstance(part, str) else part
     label = (obj.get(cadswap.CAD_ID) or obj.name) if obj is not None else str(part or "")
     folder = folder or feedback_folder(obj)
-    path = cadfiles.add_feedback(folder, label, problem)
-    send = _send_to_onshape() if send is None else send
-    source = onshape_source(obj, folder) if send else ""
-    if not source or onshape.parse_source(source) is None:
-        return path, ""
-    if not onshape.keys():
-        return path, "not in Onshape: no API keys (Preferences › Studio › Onshape)"
-    point = cadfiles.open_feedback(folder)[-1]
-    message = "AI Studio (Blender) · %s: %s" % (label or "general", " ".join(str(problem).split()))
-    try:
-        cid = onshape.post_comment(source, message, image=image if image and os.path.isfile(image) else None)
-    except onshape.OnshapeError as exc:
-        return path, "not in Onshape: %s" % exc
-    cadfiles.remember_comment(folder, point, cid, onshape.parse_source(source)["base"])
-    return path, "also as a comment in Onshape"
-
-
-def _sync_after_import(folder):
-    """A new version from Onshape: what was resolved there is ticked off (and missing points sent)."""
-    from . import onshape
-    if not _send_to_onshape() or not cadfiles.open_feedback(folder):
-        return ""
-    source = onshape_source(None, folder)
-    if not source or onshape.parse_source(source) is None or not onshape.keys():
-        return ""
-    try:
-        return sync_feedback(folder)
-    except (onshape.OnshapeError, ValueError) as exc:
-        return "Onshape: %s" % exc
-
-
-def sync_feedback(folder=None):
-    """Both ways with Onshape: open points that are not there yet become comments, points whose
-    comment was resolved in Onshape are ticked off. Returns a short text."""
-    from . import onshape
-    folder = folder or feedback_folder()
-    source = onshape_source(None, folder)
-    if not source or onshape.parse_source(source) is None:
-        return "The CAD export did not come from Onshape"
-    if not onshape.keys():
-        return "No Onshape API keys (Preferences › Studio › Onshape)"
-    ok, sentence = onshape.check(onshape.parse_source(source)["base"])   # a clear hint instead of an error
-    if not ok:
-        return sentence
-    sent = cadfiles.feedback_comments(folder)
-    posted = resolved = 0
-    for point in cadfiles.open_feedback(folder):
-        known = sent.get(point)
-        if known:
-            if onshape.comment_resolved(known["base"], known["cid"]):
-                cadfiles.tick_feedback(folder, point)
-                resolved += 1
-            continue
-        _day, _sep, rest = point.partition(" · ")
-        cid = onshape.post_comment(source, "AI Studio (Blender) · " + rest)
-        cadfiles.remember_comment(folder, point, cid, onshape.parse_source(source)["base"])
-        posted += 1
-    left = len(cadfiles.open_feedback(folder))
-    return "Onshape: %d sent, %d resolved there and ticked off, %d open" % (posted, resolved, left)
+    text = " ".join(str(problem).split())
+    if image and os.path.isfile(image):
+        text += " (image: %s)" % image
+    return cadfiles.add_feedback(folder, label, text), ""
 
 
 def summary(report):
@@ -653,8 +562,6 @@ def summary(report):
         lines.append("mounts: " + ", ".join(report["mounts"]))
     if report.get("variants"):
         lines.append("variants: " + ", ".join(report["variants"]))
-    if report.get("onshape"):
-        lines.append(report["onshape"])
     if report.get("feedback_open"):
         lines.append("open CAD feedback: %d point(s)" % len(report["feedback_open"]))
     return "\n".join(lines)

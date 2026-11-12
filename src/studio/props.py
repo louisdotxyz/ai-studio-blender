@@ -593,10 +593,10 @@ class RS_Preferences(PropertyGroup):
         description="macOS notification with sound when a queue with several cameras is done",
         default=True,
     )
-    onshape_comments: BoolProperty(
-        name="CAD Feedback as Onshape Comments",
-        description="A feedback point for a part from Onshape also becomes a comment on its Onshape element "
-                    "(needs API keys); comments resolved in Onshape tick the point off",
+    cad_jobs: BoolProperty(
+        name="CAD Jobs",
+        description="Send changes from Blender to a Claude chat that works on the CAD model (Send CAD Job). "
+                    "Off: the CAD box only imports versions and notes comments",
         default=True,
     )
     hdri_folder: StringProperty(
@@ -620,14 +620,13 @@ class RS_Preferences(PropertyGroup):
         col.prop(self, "notify")
 
     def draw_studio(self, layout):
-        """Preferences › Studio: HDRIs, base materials, Onshape, names."""
+        """Preferences › Studio: HDRIs, base materials, names, CAD jobs."""
         col = layout.column()
         col.use_property_split = True
         col.prop(self, "hdri_folder")
         col.prop(self, "material_library")
         col.prop(self, "name_scheme")
-        from .onshape_ops import draw_prefs
-        draw_prefs(layout, self)
+        col.prop(self, "cad_jobs")
 
     def draw_advanced(self, layout):
         """Preferences › Advanced: the Studio part (folder names, collections, shortcuts)."""

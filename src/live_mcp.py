@@ -25,7 +25,9 @@ INSTRUCTIONS = (
     "approve the code in Blender. Never save the .blend file. Objects you replace go into the archive "
     "with api.archive(objects) instead of being deleted, unless the user says to delete them. "
     "CAD jobs (changes Blender asks the CAD side for): blender_jobs list / claim / done – this works "
-    "without Blender being open.")
+    "without Blender being open. Always give your chat's name (its title in the Claude app, e.g. 'CAD 5'; "
+    "ask the user once if you do not know it): as chat in list, as by in claim. Blender then offers this "
+    "chat for its next jobs. When the user says there is a CAD job (or 'hol den Auftrag'), call list.")
 
 TOOLS = [
     {"name": "blender_status",
@@ -60,15 +62,16 @@ TOOLS.append(
     {"name": "blender_jobs",
      "description": "CAD jobs from Blender: changes to make in the CAD model (e.g. in Onshape). list shows the "
                     "open ones; claim takes one (others see it is being worked on); done marks it finished with "
-                    "a short note for Blender. Works without Blender being open.",
+                    "a short note for Blender. Works without Blender being open. Give your chat's name (chat, "
+                    "by): Blender lists this chat for its next jobs.",
      "inputSchema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": ["list", "claim", "done"]},
          "id": {"type": "string", "description": "The job id (claim, done)"},
          "status": {"type": "string", "enum": ["open", "claimed", "done", "all"],
                     "description": "list: which ones (default open)"},
-         "chat": {"type": "string", "description": "list: only the jobs for this chat (its name, e.g. 'CAD 5') "
-                  "and the ones for no chat in particular"},
-         "by": {"type": "string", "description": "claim: who takes it, e.g. the chat's name"},
+         "chat": {"type": "string", "description": "list: this chat's name (e.g. 'CAD 5'): its jobs and the ones "
+                  "for no chat in particular"},
+         "by": {"type": "string", "description": "claim: this chat's name"},
          "note": {"type": "string", "description": "done: what was changed"}},
          "required": ["action"]}})
 
@@ -107,6 +110,7 @@ def jobs_tool(arguments):
             found = cadjobs.jobs(None if status == "all" else status)
             wanted = " ".join(str(arguments.get("chat") or "").split()).lower()
             if wanted:
+                cadjobs.seen_chat(arguments.get("chat"))
                 found = [j for j in found if not (j.get("chat") or {}).get("name")
                          or str(j["chat"]["name"]).lower() == wanted]
             if not found:
@@ -114,6 +118,7 @@ def jobs_tool(arguments):
             text = "\n\n".join("%s\n%s" % (cadjobs.summary(j), cadjobs.message(j)) for j in found)
         elif action == "claim":
             job = cadjobs.claim(arguments.get("id", ""), arguments.get("by", ""))
+            cadjobs.seen_chat(arguments.get("by"))
             text = "Claimed.\n" + cadjobs.message(job) + ("\nCAD export folder: %s" % job["cad_folder"]
                                                          if job.get("cad_folder") else "")
         elif action == "done":

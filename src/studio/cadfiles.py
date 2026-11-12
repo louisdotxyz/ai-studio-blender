@@ -70,11 +70,11 @@ def _vec(value, name):
 
 
 def clean_chat(chat):
-    """The sidecar's "chat" (where the export came from) as {"name", "url", "session"}, or None.
-    url: only links into Claude; session: a Claude Code session's name (cross-session messages)."""
+    """The sidecar's "chat" (where the export came from) as {"name", "url"}, or None.
+    url: only links into Claude."""
     if not isinstance(chat, dict):
         return None
-    out = {key: str(chat.get(key) or "").strip()[:200] for key in ("name", "url", "session")}
+    out = {key: str(chat.get(key) or "").strip()[:200] for key in ("name", "url")}
     if out["url"] and not out["url"].startswith(("https://claude.ai/", "claude://")):
         out["url"] = ""
     return out if any(out.values()) else None
@@ -367,28 +367,8 @@ def add_feedback(folder, part, problem, source="Blender", today=None):
     return path
 
 
-ONSHAPE_FILE = ".cad_feedback_onshape.json"   # point → its comment in Onshape
-
-
-def feedback_comments(folder):
-    """{point text: {"cid", "base"}} of the points that went to Onshape as comments."""
-    try:
-        with open(os.path.join(folder, ONSHAPE_FILE), encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
-        return {}
-
-
-def remember_comment(folder, point, cid, base):
-    data = feedback_comments(folder)
-    data[point] = {"cid": cid, "base": base}
-    with open(os.path.join(folder, ONSHAPE_FILE), "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=1, ensure_ascii=False)
-
-
-def tick_feedback(folder, point, note="resolved in Onshape"):
-    """Mark an open point done ("- [x] … · resolved in Onshape"). True when it was found."""
+def tick_feedback(folder, point, note="done"):
+    """Mark an open point done ("- [x] … · done"). True when it was found."""
     path = os.path.join(folder, FEEDBACK_FILE)
     try:
         with open(path, encoding="utf-8") as f:

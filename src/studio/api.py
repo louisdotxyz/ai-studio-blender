@@ -371,17 +371,10 @@ def cad_check_result():
 
 def cad_feedback(part, problem, folder=None, image=None):
     """An open point for the CAD side (collision, wrong size, a change to make) in CAD-Feedback.md
-    next to the part's CAD export and, for an export from Onshape (with API keys), as a comment on
-    its element (+ image). Returns the file's path. Open points: api.cad_feedback_open(); both
-    ways with Onshape: api.cad_feedback_sync()."""
+    next to the part's CAD export (with the image it refers to). Returns the file's path. Open
+    points: api.cad_feedback_open(). For a change a chat should make now: studio_cad_job."""
     from . import cadimport
     return cadimport.feedback(part, problem, folder, image=image)[0]
-
-
-def cad_feedback_sync(folder=None):
-    """Send open points that are not in Onshape yet, tick off the ones resolved there."""
-    from . import cadimport
-    return cadimport.sync_feedback(folder)
 
 
 def cad_feedback_open(folder=None):

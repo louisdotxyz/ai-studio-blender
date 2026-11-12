@@ -178,8 +178,6 @@ def _cad_feedback(args):
         path, note = cadimport.feedback(args.get("part") or "", str(args["problem"]), args.get("folder") or None,
                                         image=args.get("image") or None)
         return "Noted for the CAD side in " + path + (" (%s)" % note if note else "")
-    if args.get("sync"):
-        return cadimport.sync_feedback(args.get("folder") or None)
     folder = args.get("folder") or cadimport.feedback_folder(args.get("part") or None)
     points = cadfiles.open_feedback(folder)
     return "Open CAD feedback:\n" + ("\n".join("- " + p for p in points) if points else "none")
@@ -191,6 +189,10 @@ def _cad_job(args):
     if not args.get("text"):
         found = cadjobs.jobs()
         return "CAD jobs:\n" + ("\n".join("- " + cadjobs.summary(j) for j in found[-15:]) if found else "none")
+    from .onshape_ops import jobs_on
+    if not jobs_on():
+        raise ValueError("CAD jobs are switched off in Blender (switch in the CAD box of the chat): ask the user "
+                         "to switch them on, or note it with studio_cad_feedback instead")
     target = "new" if str(args.get("target") or "").lower() == "new" else "origin"
     job, how = cadimport.send_job(str(args["text"]), args.get("part") or None, target, args.get("image") or None,
                                   chat_name=str(args.get("chat") or ""))
@@ -299,22 +301,19 @@ def get_tools():
         {"name": "studio_cad_feedback", "label": "Render Studio: CAD feedback",
          "description": "Feedback for the CAD side: with 'problem', note an open point (collision, size, "
                         "a look that needs a geometry change, a change to make) in CAD-Feedback.md next to "
-                        "the part's CAD export; when the export came from Onshape it also becomes a comment "
-                        "on the Onshape element (with 'image', e.g. a check image or render). sync=true: "
-                        "send missing points to Onshape and tick off the ones resolved there. Without "
-                        "either, list the open points. Geometry problems go here, not into a Blender fix "
-                        "of the CAD mesh.",
+                        "the part's CAD export ('image': a check image or render it refers to). Without "
+                        "'problem', list the open points. Geometry problems go here, not into a Blender fix "
+                        "of the CAD mesh. To have a chat change the CAD model right away, use studio_cad_job.",
          "inputSchema": {"type": "object", "properties": {
              "part": {"type": "string", "description": "Object name of the part (or empty for the whole model)"},
              "problem": {"type": "string", "description": "One sentence with numbers, in the user's language"},
-             "image": {"type": "string", "description": "PNG/JPEG to attach in Onshape (optional)"},
-             "sync": {"type": "boolean", "description": "Sync with Onshape both ways"},
+             "image": {"type": "string", "description": "PNG/JPEG it refers to (optional)"},
              "folder": {"type": "string", "description": "Folder of the CAD export, if no part is given"}}},
          "handler": _cad_feedback},
         {"name": "studio_cad_job", "label": "Render Studio: CAD job",
          "description": "Send a change to the CAD side as a job for a Claude chat that works in the CAD program "
-                        "(e.g. Onshape in the Claude app): saved in ~/.config/ai-studio/jobs, its text copied, "
-                        "and the Claude app opened at that chat. The chat: the one the user names ('chat', e.g. "
+                        "(e.g. Onshape in the Claude app): saved in ~/.config/ai-studio/jobs; a new chat opens "
+                        "with the job, a known chat gets a notification and takes it. The chat: the one the user names ('chat', e.g. "
                         "'CAD 5'; remembered for this CAD export), else the chat the export came from or the last "
                         "job of this export went to (target 'origin'); none known or target 'new': a new chat. "
                         "When a chat is known and the user did not say where, ask first (ask_user: that chat or "

@@ -418,9 +418,10 @@ class RS_OT_cad_take_over(bpy.types.Operator):
 
 
 def draw_chat(layout, context):
-    """The CAD box of the chat (Claude tab): one row with Import CAD, New Version and Send CAD Job;
-    opened (arrow) the CAD comments and jobs."""
+    """The CAD box of the chat (Claude tab): one row with Import CAD, New Version, Send CAD Job and
+    the switch for CAD jobs; under it where the next job goes; opened (arrow) the comments and jobs."""
     from . import onshape_ops
+    from .runner import prefs
     wm = context.window_manager
     show = bool(getattr(wm, "claude_show_cad", False))
     state = onshape_ops.comment_state(context)
@@ -435,7 +436,13 @@ def draw_chat(layout, context):
     row.operator(RS_OT_cad_import.bl_idname, text="Import", icon='IMPORT')
     row.operator(RS_OT_cad_take_over.bl_idname, text="New Version", icon='FILE_REFRESH')
     if state["folder"]:
-        row.operator(onshape_ops.RS_OT_cad_job.bl_idname, text="", icon='EXPORT')
+        p = prefs()
+        on = onshape_ops.jobs_on()
+        if on:
+            row.operator(onshape_ops.RS_OT_cad_job.bl_idname, text="", icon='EXPORT')
+        if p is not None:
+            row.prop(p, "cad_jobs", text="", icon='LINKED' if on else 'UNLINKED')
+        onshape_ops.draw_status(box, context)
         if show:
             onshape_ops.draw_comments(box, context)
 
@@ -445,6 +452,8 @@ def chat_height(context):
     from . import onshape_ops
     state = onshape_ops.comment_state(context)
     rows = 1.6
+    if state["folder"] and onshape_ops.jobs_on():
+        rows += 1
     if state["folder"] and getattr(context.window_manager, "claude_show_cad", False):
         rows += 3.2 + min(len(state["open"]), onshape_ops.SHOWN) + min(len(state.get("jobs") or []), 3)
         rows += 1 if len(state["open"]) > onshape_ops.SHOWN else 0
