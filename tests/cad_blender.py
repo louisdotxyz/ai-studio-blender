@@ -248,10 +248,10 @@ def cad_job_to_its_chat():
         # the CAD skill is the switch: off, Claude in Blender has no CAD job / feedback tools
         link, tools_mod, core = mod("studio.cad_link"), mod("studio.claude_tools"), mod("core")
         core.active_skills[:] = []
-        names = {t["name"] for t in tools_mod.get_tools()}
-        check("skill off: no CAD job or feedback tools, import still there", "studio_cad_job" not in names
-              and "studio_cad_feedback" not in names and "studio_cad_import" in names, names)
+        names_off = [t["name"] for t in tools_mod.get_tools()]
         core.active_skills[:] = ["cad"]
+        check("same tools with the skill on or off (a running chat keeps its tool list)",
+              names_off == [t["name"] for t in tools_mod.get_tools()] and "studio_cad_job" in names_off)
         tools = {t["name"]: t for t in tools_mod.get_tools()}
         check("skill on: the CAD tools are there", "studio_cad_job" in tools and "studio_cad_feedback" in tools)
         cadjobs.seen_chat("CAD 7")

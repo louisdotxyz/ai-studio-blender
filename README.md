@@ -87,7 +87,8 @@ never used Blender get a clean product image from a CAD model.
   the job with **blender_jobs** (list / claim / done; a chat without it can use `blender_python` of
   the Mac's `blender` tools, the job text says how). The chat here says when the job is taken and
   when it is done. Remarks for later go into `CAD-Feedback.md` next to the export
-  (`studio_cad_feedback`). Off: Claude in Blender has no CAD job or feedback tools.
+  (`studio_cad_feedback`). Off: Claude in Blender sends no CAD jobs (it asks to switch the skill on). On
+  by default for whoever used CAD jobs before.
 - **Onshape sign-in:** `OS.session()` in the browser helpers checks the sign-in before anything else
   and says "sign in to Onshape in the browser pane of the Claude app" instead of failing with 401.
   Onshape sends the package straight into Blender with `tools/onshape/onshape-helpers.js`

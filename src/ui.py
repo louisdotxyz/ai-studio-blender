@@ -363,7 +363,14 @@ def _save_skills():
 def _restore_skills():
     try:
         if not core.active_skills:
-            core.active_skills[:] = skills.load_active(core.workdir())
+            names = skills.load_active(core.workdir())
+            if names is None:   # first start of 2.0: the CAD skill is on for whoever used CAD jobs before
+                from . import cadjobs
+                used = os.path.isdir(cadjobs.JOBS_DIR) and skills.find(core.workdir(), "cad")
+                names = ["cad"] if used else []
+                if names:
+                    skills.save_active(core.workdir(), names)
+            core.active_skills[:] = names
             core.mark_dirty()
     except (OSError, AttributeError, ValueError):
         pass

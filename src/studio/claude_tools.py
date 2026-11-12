@@ -188,7 +188,8 @@ def _cad_job(args):
     from .. import cadjobs
     from .cad_link import chats_text, jobs_on
     if not jobs_on():
-        raise ValueError("The CAD skill is off in Blender's chat: ask the user to switch it on (skill row)")
+        raise ValueError("The CAD skill is off in Blender's chat: ask the user to switch it on (the CAD icon "
+                         "in the skill row), then send it again")
     if not args.get("text"):
         found = cadjobs.jobs()
         try:
@@ -208,16 +209,10 @@ def _cad_job(args):
 _SETUP = {"type": "object", "description": "The setup as described by studio_context"}
 
 
-CAD_SKILL_TOOLS = ("studio_cad_job", "studio_cad_feedback")   # only while the CAD skill is checked
-
-
 def get_tools():
-    from .cad_link import jobs_on
-    on = jobs_on()
-    return [t for t in _tools() if on or t["name"] not in CAD_SKILL_TOOLS]
-
-
-def _tools():
+    # Always the same list: a running chat keeps the tool list it started with, so a tool that
+    # comes and goes with a skill would be missing ("No such tool"). studio_cad_job checks the
+    # CAD skill itself and says when it is off.
     return [
         {"name": "studio_context", "label": "Render Studio: looked at the setup",
          "description": "Render Studio: get the setup format and the current scene (subject size, camera, "

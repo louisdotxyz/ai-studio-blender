@@ -87,10 +87,14 @@ def _sha1(path):
 
 
 def load_active(workdir):
-    """The skills that were checked when Blender closed (only the ones that still exist)."""
+    """The skills that were checked when Blender closed (only the ones that still exist); None
+    when nothing was ever saved (the caller picks defaults)."""
     import json
+    path = os.path.join(skills_dir(workdir), ACTIVE)
+    if not os.path.exists(path):
+        return None
     try:
-        with open(os.path.join(skills_dir(workdir), ACTIVE), encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             names = json.load(f)
     except (OSError, ValueError):
         return []

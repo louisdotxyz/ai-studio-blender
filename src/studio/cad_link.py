@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The CAD skill: the link to the CAD chats lives in the chat, no box of its own.
 
-The skill "cad" (skill row of the chat) switches it on and off. On: Claude in Blender has
-studio_cad_job (a change for a Claude chat that works on the CAD model) and studio_cad_feedback
+The skill "cad" (skill row of the chat) switches it on and off. On: Claude in Blender sends
+jobs with studio_cad_job (a change for a Claude chat that works on the CAD model) and studio_cad_feedback
 (points in CAD-Feedback.md), and the chat says when a CAD chat takes a job or finishes it. The new
 version itself comes in from the CAD chat (Live Connection, api.cad_import)."""
 

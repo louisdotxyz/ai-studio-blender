@@ -258,6 +258,7 @@ if old:
         check("old CAD skill %s: %s" % (case, "new text" if case == "unchanged" else "kept"),
               ("studio_cad_job" in body) == (case == "unchanged"), body[:80])
 work = os.path.join(TMP, "work_active")
+check("nothing saved yet: None (defaults)", sk.load_active(work) is None)
 sk.save_active(work, ["cad", "gone"])
 check("checked skills kept, deleted ones dropped", sk.load_active(work) == ["cad"], sk.load_active(work))
 
