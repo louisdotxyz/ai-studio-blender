@@ -7,7 +7,7 @@ in <extension user dir>/studio. Settings in .blend files (Scene.render_studio)
 and operator names (render_studio.*) are unchanged from the stand-alone add-on.
 
 Renders go to the output folder from the preferences (Renders): a folder per file with
-subfolders for Low, High, Animation and an archive for sorting by hand. The queue
+subfolders for Low, High and Animation. The queue
 renders in a second Blender without a window.
 """
 

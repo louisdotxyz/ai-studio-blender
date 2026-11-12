@@ -3,6 +3,7 @@ title: CAM
 description: Camera, framing, focal length, depth of field
 icon: CAMERA_DATA
 studio_tab: RENDER
+chat: yes
 ---
 Set up the active scene camera (bpy.context.scene.camera); a new camera only on request. Answer briefly.
 Cameras live in the collection "Camera". Names: P_ (perspective) or O_ (orthographic), the view, a number:

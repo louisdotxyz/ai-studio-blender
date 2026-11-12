@@ -524,7 +524,7 @@ class RS_Preferences(PropertyGroup):
     output_root: StringProperty(
         name="Output Folder",
         description="Where the renders go: a folder per file (<name> + suffix) with subfolders for "
-                    "Low, High, Animation and one archive folder for sorting by hand. Empty: right next to "
+                    "Low, High and Animation. Empty: right next to "
                     "the .blend file (unsaved files: Documents/AI Studio)",
         subtype='DIR_PATH',
         default="",
@@ -629,7 +629,7 @@ class RS_Preferences(PropertyGroup):
         col.use_property_split = True
         col.prop(self, "output_suffix")
         sub = col.column(heading="Subfolders", align=True)
-        for key in ("low_dir", "high_dir", "anim_dir", "render_archive_dir"):
+        for key in ("low_dir", "high_dir", "anim_dir"):
             sub.prop(self, key)
         col.prop(self, "worker_gpu_only")
         col.prop(self, "material_preset_folder")

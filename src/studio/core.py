@@ -7,13 +7,13 @@ import shutil
 
 import bpy
 
-# <output folder>/<file><suffix>/{low, high, animation, archive}: names from the preferences (Renders)
+# <output folder>/<file><suffix>/{low, high, animation}: names from the preferences (Renders)
 QUALITIES = ('LOW', 'HIGH')
 EXT = ".png"
 
 
 def folder_names():
-    """{'LOW', 'HIGH', 'ANIM', 'ARCHIVE', 'SUFFIX'} as set in the preferences."""
+    """{'LOW', 'HIGH', 'ANIM', 'SUFFIX'} as set in the preferences."""
     from .runner import prefs
     p = prefs()
 
@@ -21,7 +21,6 @@ def folder_names():
         value = getattr(p, attr, "") if p is not None else ""
         return value.strip() or default
     return {'LOW': get("low_dir", "low"), 'HIGH': get("high_dir", "high"), 'ANIM': get("anim_dir", "animation"),
-            'ARCHIVE': get("render_archive_dir", "archive"),
             'SUFFIX': p.output_suffix if p is not None else "_renders"}
 
 # Output presets (gear menu in the Queue tab): key -> (file_format, extension, bit depths, alpha)
@@ -92,11 +91,6 @@ def quality_dir(root, project, quality):
     return os.path.join(project_dir(root, project), folder_names()[quality])
 
 
-def archive_dir(root, project):
-    """`<name>_renders/archive` – one folder for all renders, for sorting by hand."""
-    return os.path.join(project_dir(root, project), folder_names()['ARCHIVE'])
-
-
 def _highest_number(folder, stem):
     """Highest number among files `<stem>_01.png` and folders `<stem>_01` (older `_001` too)."""
     pattern = re.compile(re.escape(stem) + r"_(\d+)(?:\.[^.]+)?$", re.IGNORECASE)
@@ -111,7 +105,7 @@ def _highest_number(folder, stem):
 
 def next_path(folder, stem, ext=EXT, also=()):
     """Next free path `<stem>_01<ext>` (`_100` and up only past 99). Uses the highest number + 1 (also counting the
-    folders in `also`, e.g. the archiv) so the order is kept even if files were deleted
+    folders in `also`) so the order is kept even if files were deleted
     or sorted away."""
     highest = max(_highest_number(f, stem) for f in (folder,) + tuple(also))
     return os.path.join(folder, "%s_%02d%s" % (stem, highest + 1, ext))
@@ -146,13 +140,13 @@ def _stem(camera_name, name="", blend_filepath=None, quality=None):
 
 def job_path(root, camera_name, quality, name="", blend_filepath=None, ext=EXT):
     """`<name>_renders/<low|high>/<name>_<camera>_01.png` (extension from the still format).
-    Folders are made only when something is rendered into them (the archive never)."""
+    Folders are made only when something is rendered into them."""
     project = project_name(blend_filepath, name)
     folder = quality_dir(root, project, quality)
-    # low and high share one counter, so their files never clash in the shared archive
+    # low and high share one counter, so a preview and its final image have the same number
     others = [quality_dir(root, project, q) for q in QUALITIES if q != quality]
     return next_path(folder, _stem(camera_name, name, blend_filepath, quality), ext=ext,
-                     also=others + [archive_dir(root, project)])
+                     also=others)
 
 
 def anim_dir(root, camera_name, quality, name="", blend_filepath=None):
@@ -161,7 +155,7 @@ def anim_dir(root, camera_name, quality, name="", blend_filepath=None):
     names = folder_names()
     folder = os.path.join(project_dir(root, project), names['ANIM'])
     stem = "%s_%s" % (_stem(camera_name, name, blend_filepath), names[quality])
-    return next_path(folder, stem, ext="", also=[archive_dir(root, project)])
+    return next_path(folder, stem, ext="")
 
 
 def anim_frame_pattern(folder, camera_name, name="", blend_filepath=None):
