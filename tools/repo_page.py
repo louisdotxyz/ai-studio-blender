@@ -19,7 +19,7 @@ PAGE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI Studio for Blender</title>
+<title>AI Studio · ID Toolkit</title>
 <style>
   :root {{ --bg: #f6f6f4; --fg: #1d1d1b; --muted: #6b6b66; --card: #fff; --line: #e2e2dd; --accent: #e87d0d; }}
   @media (prefers-color-scheme: dark) {{
@@ -45,6 +45,7 @@ PAGE = """<!doctype html>
 <body>
 <main>
   <h1>AI Studio for Blender</h1>
+  <p class="small">Part of ID Toolkit</p>
   <p class="tag">{tagline} · version {version} · macOS · Blender {blender} or newer</p>
 
   <div class="card">

@@ -1,7 +1,10 @@
 # AI Studio for Blender
 
-A Claude chat that works directly in your scene, local models through LM Studio, and a
-render studio for product shots, all in the sidebar of the 3D viewport.
+*Part of ID Toolkit.*
+
+Product renders and the CAD hand-over up front, a Claude chat that works directly in your scene,
+local models through LM Studio, all in the sidebar of the 3D viewport. Made so that people who
+never used Blender get a clean product image from a CAD model.
 
 > Unofficial. Not affiliated with Anthropic or the Blender Foundation. You need your own
 > [Claude Code](https://claude.com/claude-code) access (Claude subscription or API key) or
@@ -21,11 +24,18 @@ render studio for product shots, all in the sidebar of the 3D viewport.
   down what worked and gets it again in later chats.
 - Usage, context and auto summarizing of long chats.
 - A **setup card** on first start: **Set Up Everything** allows online access, installs Claude Code
-  (with a progress bar), opens the login and connects the Claude apps; each step also has its own
-  button. Once the chat has answered, the steps go away by themselves. Below them a few questions
-  (where renders go, backups, a folder per new file, whether Claude's code runs directly, updates,
-  the model for new chats): nothing is decided for you until you choose. The **?** at the top shows
-  shortcuts, clicks worth knowing, example prompts and the setup again.
+  (with a progress bar), opens the login, creates the base materials and connects the Claude apps;
+  each step also has its own button. Once the chat has answered, the steps go away by themselves.
+  It asks only one thing: whether Claude's code runs directly or asks first. Everything else has a
+  good default (renders next to the file, backups every 5 minutes, automatic updates) and can be
+  changed in the preferences or from the **?**, which also shows shortcuts and example prompts.
+  With the Claude app connected, the card shows the last step there: set the permission switch
+  under the message box to **Auto** (or *Customize › Connectors › ai-studio › Tool permissions ›
+  Always allow*), so the Blender tools run without asking each time.
+- **Set Up for Product Renders** (Render tab and setup card): one click sets Cycles on the graphics
+  chip (Metal), 64 viewport / 512 final samples with adaptive sampling, noise removal, AgX colors,
+  millimeters and light bounces for glass and metal, and lists what it set. The arrow next to it
+  puts everything back, also after saving.
 - **Name scheme** (Preferences › Studio, on by default): cameras `P_` (perspective) or `O_`
   (orthographic), lights `A_` (area), `P_` (point), `S_` (spot) or `D_` (sun), then what they show or
   do and a two-digit number: `P_side_01`, `O_front_01`, `A_key_01`. A camera whose name says nothing
@@ -66,13 +76,28 @@ render studio for product shots, all in the sidebar of the 3D viewport.
   ids, CAD materials (mapped to base materials), mounting points (`MOUNT | …` empties that move with
   every version), sizes to check and variants. Claude: `studio_cad_import`, `studio_cad_check` (check
   images), `studio_cad_feedback` (`CAD-Feedback.md` next to the export for the CAD side), skill */cad*.
+- **CAD box** (Render tab, up front): *Import CAD*, *New Version*, and once a CAD export is known the
+  CAD comments and **Send CAD Job**: a change for the CAD side goes to the Claude chat the export came
+  from. The export names that chat in its sidecar (`"chat": {"name", "url", "session"}`, set by
+  `OS.exportPackage({… chat})`); Blender asks "Send to <chat>?" or starts a new chat. The job is a file
+  in `~/.config/ai-studio/jobs/`, its text goes to the clipboard and the Claude app opens at that chat
+  (`claude://claude.ai/chat/<id>`; with only a name, at Recents to paste it) or at a new chat with the
+  text filled in (`claude://claude.ai/new?q=…`). A chat in the app cannot read its own link: ask
+  once and pass it. An open **Claude Code** session named in `session` also gets the job directly
+  (cross-session messages). The chat takes jobs with the MCP tool **blender_jobs** (list / claim /
+  done, works without Blender open); Blender shows their status in the CAD box. Claude in Blender
+  can send one too (`studio_cad_job`).
+- **Onshape sign-in:** `OS.session()` in the browser helpers checks the sign-in before anything else
+  and says "sign in to Onshape in the browser pane of the Claude app" instead of failing with 401.
+  With saved API keys Blender checks them in the background when the CAD box shows and before a
+  sync, and shows a plain hint (keys refused, Onshape not reachable) instead of an error.
 - **Onshape:** a feedback point for a part that came from Onshape also becomes a **comment on its
   Onshape element** (with a check image or render if given), so the CAD side sees it there and gets
   a notification. Comments resolved in Onshape tick their point off in `CAD-Feedback.md` (on *Sync
   CAD Feedback* and at every import of a new version). Needs Onshape API keys once
   (dev-portal.onshape.com/keys, read and write): *Preferences › Studio › Onshape › Add Keys…*; they are
   kept in the macOS keychain, not in the preferences.
-  **CAD Comments** (Material tab, under *Import CAD*, once a CAD export is known): the open points,
+  **CAD Comments** (Render tab, CAD box, once a CAD export is known): the open points,
   *Add CAD Comment* (part = the selected object), ✓ ticks a point off (and resolves its comment in
   Onshape), sync and open `CAD-Feedback.md`.
   Onshape sends the package straight into Blender with `tools/onshape/onshape-helpers.js`

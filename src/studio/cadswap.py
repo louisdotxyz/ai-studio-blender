@@ -318,9 +318,9 @@ def empty_temp():
 class RS_OT_cad_import(bpy.types.Operator):
     bl_idname = "render_studio.cad_import"
     bl_label = "Import CAD"
-    bl_description = ("Import a CAD export (GLB, STEP, OBJ, STL, FBX …) and check size, floor, names and triangles. "
-                      "A sidecar <name>.cad.json next to it adds part ids, materials, mounting points and "
-                      "sizes to check. If parts of an older version are in the scene, take their materials over")
+    bl_description = ("Bring a model from CAD into Blender (Onshape export, STEP, GLB, OBJ, STL …). Checks size, "
+                      "floor and names. Is an older version already here, the new parts keep its materials. "
+                      "A <name>.cad.json next to the file adds part names, materials and mounting points")
     bl_options = {'UNDO'}
 
     filepath: StringProperty(subtype='FILE_PATH', options={'SKIP_SAVE'})
@@ -418,8 +418,10 @@ class RS_OT_cad_take_over(bpy.types.Operator):
 
 
 def draw(layout):
-    row = layout.row(align=True)
+    """The CAD box (Render tab): bring a CAD model in, swap in a new version, talk to the CAD side."""
+    box = layout.box()
+    row = box.row(align=True)
     row.operator(RS_OT_cad_import.bl_idname, text="Import CAD", icon='IMPORT')
     row.operator(RS_OT_cad_take_over.bl_idname, text="New Version", icon='FILE_REFRESH')
     from . import onshape_ops
-    onshape_ops.draw_comments(layout, bpy.context)
+    onshape_ops.draw_comments(box, bpy.context)

@@ -950,7 +950,6 @@ class RS_PT_material(_SidebarPanel, Panel):
                                       scale=float(p.mat_preview_size) if p is not None else 8.0)
                 self._draw_settings(layout, material, _principled(material), p)
             self._draw_library(layout, context, material, None)
-            cadswap.draw(layout)
             return
         material = obj.active_material
         node = _principled(material)
@@ -995,7 +994,6 @@ class RS_PT_material(_SidebarPanel, Panel):
 
         # 3. Library
         self._draw_library(layout, context, material, node)
-        cadswap.draw(layout)
 
     @staticmethod
     def _draw_settings(layout, material, node, p):
