@@ -347,7 +347,7 @@ def _draw_pin(box, context, item):
         row.prop(pin, "width")
         row.prop(pin, "height")
         row = col.row(align=True)
-        row.prop(pin, "horizontal")
+        row.prop(pin, "horizontal", text="Around")
         row.prop(pin, "vertical")
         _draw_actions(box, item)
 

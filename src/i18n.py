@@ -978,6 +978,7 @@ DE = {
     'Soft shadows that drift slowly': 'Weiche Schatten, die langsam ziehen',
     'A card in front of the open light: cuts (flag) or shapes (gobo) its light. Leaves, tree, water and clouds move when the animation plays; a small light gives sharper shadows': 'Eine Karte vor dem offenen Licht: schneidet (Abschatter) oder formt (Gobo) sein Licht. Blätter, Baum, Wasser und Wolken bewegen sich, wenn die Animation läuft; ein kleines Licht gibt schärfere Schatten',
     'A lighting mood of this file': 'Eine Lichtstimmung dieser Datei',
+    'Around': 'Rundum',
 }
 
 # Blender looks up operator names in the "Operator" context and everything else
