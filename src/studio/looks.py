@@ -148,12 +148,14 @@ def add(scene):
     rs = scene.render_studio
     data = json.dumps(capture(scene))
     if not len(rs.light_looks):
+        name = _next_name(scene)        # before adding: a new entry already carries a default name
         first = rs.light_looks.add()
-        first.name, first.data = _next_name(scene), data
+        first.name, first.data = name, data
     else:
         store(scene)
+    name = _next_name(scene)
     look = rs.light_looks.add()
-    look.name, look.data = _next_name(scene), data
+    look.name, look.data = name, data
     rs.light_look_index = len(rs.light_looks) - 1
     return look.name
 
