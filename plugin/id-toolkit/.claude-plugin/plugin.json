@@ -1,0 +1,12 @@
+{
+  "name": "id-toolkit",
+  "version": "0.1.0",
+  "description": "Product design with Claude: build parts in CAD (Onshape, Rhino, Fusion), send them to Blender and render product images. Sets itself up in one step.",
+  "author": {
+    "name": "louisdotxyz"
+  },
+  "homepage": "https://github.com/louisdotxyz/ai-studio-blender",
+  "repository": "https://github.com/louisdotxyz/ai-studio-blender",
+  "license": "GPL-3.0-or-later",
+  "keywords": ["blender", "cad", "onshape", "rhino", "fusion", "render", "product design"]
+}

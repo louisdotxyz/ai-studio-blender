@@ -1,0 +1,16 @@
+{
+  "name": "id-toolkit",
+  "owner": {
+    "name": "louisdotxyz"
+  },
+  "metadata": {
+    "description": "ID Toolkit: CAD, Blender and product renders with Claude"
+  },
+  "plugins": [
+    {
+      "name": "id-toolkit",
+      "source": "./plugin/id-toolkit",
+      "description": "Build parts in CAD, send them to Blender and render product images. Sets itself up in one step."
+    }
+  ]
+}
