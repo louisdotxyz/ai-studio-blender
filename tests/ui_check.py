@@ -174,6 +174,30 @@ for view in ('COMPACT', 'FULL'):
             cube.data.materials.append(bpy.data.materials.new("Test"))
         wm.render_studio_tab = 'MATERIAL'
         run(bpy.types.RS_PT_material, ctx)
+# library: project / library, tiles / list; every tab in the simple view too
+studio_prefs = bpy.context.preferences.addons[PKG].preferences.studio
+for source in ('PROJECT', 'LIBRARY'):
+    for lib_view in ('TILES', 'LIST'):
+        wm.render_studio_mat_source = source
+        studio_prefs.mat_library_view = lib_view
+        wm.render_studio_tab = 'MATERIAL'
+        run(bpy.types.RS_PT_material, ctx)
+scene_rs = bpy.context.scene.render_studio
+scene_rs.floor_mode = 'COVE'
+scene_rs.haze_density = 0.02
+scene_rs.background_mode = 'COLOR'
+bpy.ops.render_studio.shot_add()
+for simple in (False, True):
+    studio_prefs.simple_view = simple
+    for tab, panel in (('RENDER', "RS_PT_camera"), ('LIGHT', "RS_PT_lighting"), ('QUEUE', "RS_PT_render_queue")):
+        wm.render_studio_tab = tab
+        if hasattr(bpy.types, panel):
+            run(getattr(bpy.types, panel), ctx)
+    run(bpy.types.RS_PT_tabs, ctx)
+studio_prefs.simple_view = False
+scene_rs.floor_mode = 'NONE'
+scene_rs.haze_density = 0.0
+scene_rs.background_mode = 'NORMAL'
 # the setup card while "Set Up Everything" runs (progress bar, then a text line)
 import threading
 flow, cli = sys.modules[PKG + ".setup_flow"], sys.modules[PKG + ".claude_cli"]
