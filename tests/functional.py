@@ -389,7 +389,7 @@ def environment_tab():
     turned = api.sun_from_hdri()
     up2 = (turned.rotation_euler.to_matrix() @ Vector((0, 0, 1))).normalized()
     delta = (math.atan2(up2.y, up2.x) - math.atan2(up.y, up.x) + math.pi) % (2 * math.pi) - math.pi
-    check("sun from HDRI follows the World rotation", abs(abs(delta) - 0.5) < 0.15, delta)
+    check("sun from HDRI follows the World rotation", abs(delta + 0.5) < 0.15, delta)
     rs.world_rotation = 0.0
     for o in mod("studio.lights").scene_lights(scene):
         bpy.data.objects.remove(o)
