@@ -246,12 +246,19 @@ def _pin_changed(self, context):
     world_modes.on_change(self.id_data)
 
 
-def _items(name):
-    """A getter / setter of light_items.py, looked up when it is used (that module needs this one)."""
-    def call(*args):
+def _item_get(name):
+    """A getter of light_items.py, looked up when it is used (that module needs this one)."""
+    def get(self):
         from . import light_items
-        return getattr(light_items, name)(*args)
-    return call
+        return getattr(light_items, name)(self)
+    return get
+
+
+def _item_set(name):
+    def set_(self, value):
+        from . import light_items
+        getattr(light_items, name)(self, value)
+    return set_
 
 
 # How a click on the product places the open light (light_paint.py)
@@ -283,11 +290,11 @@ class RS_HdriPin(PropertyGroup):
     color: FloatVectorProperty(name="Color", subtype='COLOR_GAMMA', size=3, min=0.0, max=1.0,
                                default=(1.0, 1.0, 1.0), update=_pin_changed)
     size: FloatProperty(name="Size", description="How big the light is (width and height together)",
-                        subtype='ANGLE', min=0.02, max=math.pi, get=_items("get_pin_size"),
-                        set=_items("set_pin_size"), options=set())
+                        subtype='ANGLE', min=0.02, max=math.pi, get=_item_get("get_pin_size"),
+                        set=_item_set("set_pin_size"), options=set())
     kelvin: FloatProperty(name="Color Temperature", description="Warm (2700 K) to cool (8000 K) light",
                           min=1000.0, max=20000.0, soft_min=2000.0, soft_max=10000.0, step=10000, precision=0,
-                          get=_items("get_pin_kelvin"), set=_items("set_pin_kelvin"), options=set())
+                          get=_item_get("get_pin_kelvin"), set=_item_set("set_pin_kelvin"), options=set())
 
 
 class RS_Look(PropertyGroup):
@@ -332,13 +339,13 @@ class RS_LightSettings(PropertyGroup):
     # the same few values for every kind of light (light_items.py)
     size: FloatProperty(name="Size", description="How big the light is: bigger gives softer shadows and wider "
                         "reflections", subtype='DISTANCE', min=0.001, soft_max=10.0, step=FINE_STEP, precision=3,
-                        get=_items("get_light_size"), set=_items("set_light_size"), options=set())
+                        get=_item_get("get_light_size"), set=_item_set("set_light_size"), options=set())
     softness: FloatProperty(name="Softness", description="0 = the light shines straight ahead with a hard edge, "
                             "1 = it spreads to all sides", subtype='FACTOR', min=0.0, max=1.0,
-                            get=_items("get_light_softness"), set=_items("set_light_softness"), options=set())
+                            get=_item_get("get_light_softness"), set=_item_set("set_light_softness"), options=set())
     kelvin: FloatProperty(name="Color Temperature", description="Warm (2700 K) to cool (8000 K) light",
                           min=1000.0, max=20000.0, soft_min=2000.0, soft_max=10000.0, step=10000, precision=0,
-                          get=_items("get_light_kelvin"), set=_items("set_light_kelvin"), options=set())
+                          get=_item_get("get_light_kelvin"), set=_item_set("set_light_kelvin"), options=set())
 
 
 def _look_changed(settings, context):
