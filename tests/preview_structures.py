@@ -72,18 +72,18 @@ floor.data.materials.append(ground)
 
 camera = bpy.data.objects.new("Camera", bpy.data.cameras.new("Camera"))
 scene.collection.objects.link(camera)
-camera.location = (0.0, -0.78, 0.5)
+camera.location = (-0.02, -1.0, 0.62)
 camera.rotation_euler = (Vector((0.0, 0.1, 0.05)) - camera.location).to_track_quat('-Z', 'Y').to_euler()
-camera.data.lens = 60
+camera.data.lens = 50
 scene.camera = camera
 api.world("STUDIO", ambient=0.35, pins=[
     {"name": "Key", "horizontal": -50, "vertical": 40, "width": 60, "height": 45, "strength": 9, "softness": 0.3},
     {"name": "Fill", "horizontal": 60, "vertical": 20, "width": 70, "height": 50, "strength": 3, "softness": 0.6},
     {"name": "Top", "horizontal": 150, "vertical": 55, "width": 40, "height": 30, "strength": 7, "softness": 0.3}])
 scene.render.engine = 'CYCLES'
-scene.cycles.samples = 96
+scene.cycles.samples = 72
 scene.cycles.use_denoising = True
-scene.render.resolution_x, scene.render.resolution_y, scene.render.resolution_percentage = 1800, 950, 100
+scene.render.resolution_x, scene.render.resolution_y, scene.render.resolution_percentage = 1600, 800, 100
 scene.render.film_transparent = False
 scene.render.filepath = OUT
 scene.render.image_settings.file_format = 'PNG'

@@ -27,7 +27,7 @@ import bpy
 from . import matpresets
 
 PREFIX = "ID | "
-VERSION = 1
+VERSION = 2
 VERSION_KEY = "id_structure_version"
 STRUCTURE_KEY = "id_structure"        # material[STRUCTURE_KEY] = kind
 NODE_GROUP, NODE_BUMP, NODE_MAPPING = "ID Structure", "ID Bump", "ID Mapping"
@@ -77,7 +77,7 @@ class Build:
         self.put(node.inputs[0], a)
         self.put(node.inputs[1], b)
         self.put(node.inputs[3], scale)
-        return node.outputs[1] if operation == 'LENGTH' else node.outputs[0]
+        return node.outputs[1] if operation in {'LENGTH', 'DOT_PRODUCT'} else node.outputs[0]
 
     def mapping(self, vector, scale=None, rotation=None):
         node = self.node('ShaderNodeMapping')
@@ -93,6 +93,13 @@ class Build:
         node.inputs["Detail"].default_value = detail
         node.inputs["Roughness"].default_value = roughness
         return node.outputs["Color"] if color else node.outputs["Fac"]
+
+    def noise_1d(self, value, scale):
+        node = self.node('ShaderNodeTexNoise', noise_dimensions='1D')
+        self.put(node.inputs["W"], value)
+        self.put(node.inputs["Scale"], scale)
+        node.inputs["Detail"].default_value = 0.0
+        return node.outputs["Fac"]
 
     def voronoi(self, vector, scale, feature='F1', smoothness=None):
         node = self.node('ShaderNodeTexVoronoi', feature=feature)
@@ -175,21 +182,26 @@ def _group(name, inputs, outputs, build):
 # ------------------------------------------------------------------ building blocks
 
 def scratches():
-    """Fine scratches in three directions. Mask: 1 on a scratch."""
+    """Fine straight scratches in five directions, each a little bent, in pieces of different length.
+    Made from thin parallel sheets through the object: where a sheet meets the surface there is a line.
+    Mask: 1 on a scratch."""
+    directions = ((1.0, 0.25, 0.1), (0.2, 1.0, -0.3), (-0.6, 0.7, 0.4), (0.5, -0.4, 0.8), (-0.3, -0.2, 1.0))
+
     def build(b, ins):
         v = b.vector('SCALE', ins["Vector"], scale=ins["Scale"])
+        bend = b.math('MULTIPLY', b.noise(v, 7.0, detail=1.0), 0.02)
         mask = None
-        for i, turn in enumerate(((0.0, 0.0, 0.3), (0.9, 0.3, 1.5), (-0.8, 0.7, 2.6))):
-            stretched = b.mapping(b.mapping(v, rotation=turn), scale=(1.0, 0.05, 1.0))
-            line = b.math('ABSOLUTE', b.math('SUBTRACT', b.noise(stretched, 380.0 + 90.0 * i, detail=1.0), 0.5))
-            line = b.math('SUBTRACT', 1.0, b.smooth(line, 0.0, 0.012))
-            where = b.noise(b.vector('ADD', v, (3.1 * i, 1.7, 0.4 * i)), 22.0, detail=2.0)
-            start = b.math('MULTIPLY_ADD', ins["Amount"], -0.32, 0.7)
-            layer = b.math('MULTIPLY', line, b.smooth(where, start, b.math('ADD', start, 0.08)))
+        for i, direction in enumerate(directions):
+            across = b.math('ADD', b.vector('DOT_PRODUCT', v, direction), bend)
+            line = b.math('ABSOLUTE', b.math('SUBTRACT', b.noise_1d(across, 430.0 + 70.0 * i), 0.5))
+            line = b.math('SUBTRACT', 1.0, b.smooth(line, 0.0, 0.014))
+            pieces = b.noise(b.vector('ADD', v, (3.1 * i, 1.7, 0.4 * i)), b.math('DIVIDE', 45.0, ins["Length"]), detail=2.0)
+            start = b.math('MULTIPLY_ADD', ins["Amount"], -0.3, 0.72)
+            layer = b.math('MULTIPLY', line, b.smooth(pieces, start, b.math('ADD', start, 0.06)))
             mask = layer if mask is None else b.math('MAXIMUM', mask, layer)
         return {"Mask": mask}
-    return _group("Scratches", (("Vector", V, None, 0, 0), ("Scale", F, 1.0, 0.01, 100.0), ("Amount", F, 0.5, 0.0, 1.0)),
-                  (("Mask", F),), build)
+    return _group("Scratches", (("Vector", V, None, 0, 0), ("Scale", F, 1.0, 0.01, 100.0), ("Amount", F, 0.5, 0.0, 1.0),
+                                ("Length", F, 1.0, 0.1, 20.0)), (("Mask", F),), build)
 
 
 def fingerprints():
@@ -214,10 +226,10 @@ def dust():
     def build(b, ins):
         v = b.vector('SCALE', ins["Vector"], scale=ins["Scale"])
         up = b.smooth(b.xyz(b.node('ShaderNodeNewGeometry').outputs["Normal"])[2], 0.1, 0.9)
-        specks = b.smooth(b.noise(v, 900.0, detail=2.0), 0.55, 0.75)
+        specks = b.smooth(b.noise(v, 2200.0, detail=2.0), 0.6, 0.8)
         cover = b.math('MULTIPLY', up, b.smooth(b.noise(v, 9.0, detail=3.0), 0.3, 0.7))
-        lying = b.math('MULTIPLY', specks, b.math('MULTIPLY_ADD', up, 0.7, 0.3))
-        both = b.math('ADD', b.math('MULTIPLY', cover, 0.55), b.math('MULTIPLY', lying, 0.6))
+        lying = b.math('MULTIPLY', specks, b.math('MULTIPLY_ADD', up, 0.85, 0.15))
+        both = b.math('ADD', b.math('MULTIPLY', cover, 0.5), b.math('MULTIPLY', lying, 0.45))
         return {"Mask": b.math('MULTIPLY', both, ins["Amount"], clamp=True)}
     return _group("Dust", (("Vector", V, None, 0, 0), ("Scale", F, 1.0, 0.01, 100.0), ("Amount", F, 0.3, 0.0, 1.0)),
                   (("Mask", F),), build)
@@ -234,7 +246,7 @@ def wear_group():
         d = b.group(dust(), Vector=v, Scale=ins["Scale"], Amount=ins["Dust"]).outputs[0]
         rough = b.math('ADD', b.math('MULTIPLY_ADD', s, 0.3, ins["Roughness"]), b.math('MULTIPLY', f, 0.35), clamp=True)
         color = b.mix(b.math('MULTIPLY', s, 0.2), ins["Color"], rgb(1.0, 1.0, 1.0))
-        return {"Color": b.mix(b.math('MULTIPLY', d, 0.85), color, ins["Dust Color"]),
+        return {"Color": b.mix(b.math('MULTIPLY', d, 0.6), color, ins["Dust Color"]),
                 "Roughness": b.blend(d, rough, 0.85),
                 "Height": b.math('MULTIPLY_ADD', s, -1.0, b.math('MULTIPLY', d, 0.3))}
     return _group("Wear", (("Vector", V, None, 0, 0), ("Color", C, rgb(0.8, 0.8, 0.8), 0, 0),
@@ -274,12 +286,16 @@ def _layered_earth():
         b.put(pick.inputs["W"], level)
         tone = b.math('MULTIPLY_ADD', b.math('SUBTRACT', b.noise(v, 260.0, detail=3.0), 0.5), 0.5, pick.outputs["Value"],
                       clamp=True)
-        stones = b.voronoi(v, 190.0)
-        pebble = b.math('SUBTRACT', 1.0, b.smooth(stones.outputs["Distance"], 0.15, 0.55))
-        color = b.mix(b.math('MULTIPLY', pebble, 0.25), b.mix(tone, ins["Color A"], ins["Color B"]), rgb(0.85, 0.8, 0.7))
-        pores = b.smooth(b.noise(v, 95.0, detail=2.0), 0.63, 0.7)
-        grain = b.math('MULTIPLY', b.noise(v, 750.0, detail=4.0, roughness=0.7), ins["Grain"])
-        height = b.math('SUBTRACT', b.math('MULTIPLY_ADD', pebble, 0.5, grain), b.math('MULTIPLY', pores, 1.5))
+        stones = b.voronoi(v, 230.0)
+        chosen = b.math('LESS_THAN', b.xyz(stones.outputs["Color"])[0], 0.22)
+        pebble = b.math('MULTIPLY', b.math('SUBTRACT', 1.0, b.smooth(stones.outputs["Distance"], 0.1, 0.5)), chosen)
+        color = b.mix(b.math('MULTIPLY', pebble, 0.35), b.mix(tone, ins["Color A"], ins["Color B"]), rgb(0.8, 0.74, 0.62))
+        holes = b.voronoi(v, 140.0)
+        pores = b.math('MULTIPLY', b.math('SUBTRACT', 1.0, b.smooth(holes.outputs["Distance"], 0.05, 0.3)),
+                       b.math('LESS_THAN', b.xyz(holes.outputs["Color"])[1], 0.1))
+        coarse = b.math('MULTIPLY', b.noise(v, 110.0, detail=4.0, roughness=0.7), 0.8)
+        grain = b.math('MULTIPLY', b.math('ADD', b.noise(v, 420.0, detail=6.0, roughness=0.75), coarse), ins["Grain"])
+        height = b.math('SUBTRACT', b.math('MULTIPLY_ADD', pebble, 0.35, grain), b.math('MULTIPLY', pores, 1.2))
         return {"Color": color, "Roughness": 0.93, "Height": height}
     return _group("Layered Earth", (("Vector", V, None, 0, 0), ("Color A", C, rgb(0.62, 0.48, 0.3), 0, 0),
                                     ("Color B", C, rgb(0.33, 0.19, 0.1), 0, 0),
@@ -312,12 +328,12 @@ def _hammered():
     def build(b, ins):
         v = b.vector('SCALE', ins["Vector"], scale=ins["Scale"])
         pushed = b.vector('ADD', v, b.vector('SCALE', b.noise(v, 60.0, color=True), scale=0.004))
-        dents = b.voronoi(pushed, b.math('DIVIDE', 1.0, ins["Dent Size"]), feature='SMOOTH_F1', smoothness=0.7)
+        dents = b.voronoi(pushed, b.math('DIVIDE', 1.0, ins["Dent Size"]), feature='SMOOTH_F1', smoothness=0.25)
         bowl = b.math('POWER', dents.outputs["Distance"], 2.0)
         rough = b.math('MULTIPLY_ADD', b.noise(v, 40.0, detail=3.0), 0.06, ins["Roughness"], clamp=True)
         return {"Color": ins["Color"], "Roughness": rough, "Height": b.math('MULTIPLY', bowl, ins["Depth"])}
     return _group("Hammered", (("Vector", V, None, 0, 0), ("Color", C, rgb(0.92, 0.92, 0.9), 0, 0),
-                               ("Roughness", F, 0.05, 0.0, 1.0), ("Dent Size", F, 0.009, 0.0005, 1.0),
+                               ("Roughness", F, 0.05, 0.0, 1.0), ("Dent Size", F, 0.006, 0.0005, 1.0),
                                ("Depth", F, 0.6, 0.0, 2.0), ("Scale", F, 1.0, 0.01, 100.0)),
                   (("Color", C), ("Roughness", F), ("Height", F)), build)
 
@@ -328,11 +344,11 @@ def _dark_anodized():
         streaks = b.noise(b.mapping(b.mapping(v, rotation=(0.0, 0.0, 0.5)), scale=(1.0, 0.12, 1.0)), 60.0, detail=4.0)
         clouds = b.noise(v, 18.0, detail=4.0, roughness=0.6)
         smudge = b.math('MULTIPLY', b.smooth(b.blend(0.5, streaks, clouds), 0.38, 0.7), ins["Smudges"])
-        long_scale = b.math('MULTIPLY', ins["Scale"], 0.4)       # longer, fewer scratches than on worn metal
-        s = b.group(scratches(), Vector=ins["Vector"], Scale=long_scale, Amount=ins["Scratches"]).outputs[0]
+        s = b.group(scratches(), Vector=ins["Vector"], Scale=ins["Scale"], Amount=ins["Scratches"],
+                    Length=3.0).outputs[0]        # longer than on worn metal
         lighter = b.mix(0.5, ins["Color"], rgb(0.12, 0.12, 0.13))
-        color = b.mix(b.math('MULTIPLY', s, 0.55), b.mix(b.math('MULTIPLY', smudge, 0.5), ins["Color"], lighter),
-                      rgb(0.4, 0.4, 0.42))
+        color = b.mix(b.math('MULTIPLY', s, 0.5), b.mix(b.math('MULTIPLY', smudge, 0.5), ins["Color"], lighter),
+                      rgb(0.22, 0.22, 0.23))
         rough = b.math('ADD', b.math('MULTIPLY_ADD', b.math('SUBTRACT', smudge, 0.3), 0.35, ins["Roughness"]),
                        b.math('MULTIPLY', s, 0.15), clamp=True)
         return {"Color": color, "Roughness": rough, "Height": b.math('MULTIPLY', s, -0.5)}
@@ -369,7 +385,7 @@ STRUCTURES = {
     'RESIN': ("Resin", _resin, {"Transmission Weight": 1.0, "Roughness": 0.04, "IOR": 1.5,
                                 "Base Color": rgb(1.0, 0.97, 0.93)}, 0.0,
               "Amber, acetate, tinted glass: clear, the color deepens with the thickness, soft bands (Cycles)"),
-    'HAMMERED': ("Hammered", _hammered, {"Metallic": 1.0}, 0.0012, "Polished metal with hammered dents"),
+    'HAMMERED': ("Hammered", _hammered, {"Metallic": 1.0}, 0.0007, "Polished metal with hammered dents"),
     'DARK_ANODIZED': ("Dark Anodized", _dark_anodized, {"Metallic": 1.0}, 0.0003,
                       "Dark metal with fine long scratches and wipe marks"),
 }
