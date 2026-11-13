@@ -140,7 +140,8 @@ class RS_OT_light_link(Operator):
 class RS_OT_add_flag(Operator):
     bl_idname = "render_studio.add_flag"
     bl_label = "Flag / Gobo"
-    bl_description = "A card in front of the active light: cuts (flag) or shapes (gobo) its light"
+    bl_description = ("A card in front of the open light: cuts (flag) or shapes (gobo) its light. Leaves, tree, "
+                      "water and clouds move when the animation plays; a small light gives sharper shadows")
     bl_options = {'UNDO', 'INTERNAL'}
 
     pattern: EnumProperty(name="Pattern", items=environment.FLAG_PATTERNS)
@@ -185,6 +186,11 @@ def draw_light_extras(box, light):
         sub.label(text=dict((k, n) for k, n, _d in environment.FLAG_PATTERNS).get(flag.get("as_pattern"), "Flag"),
                   icon='MOD_MASK')
         sub.operator(RS_OT_remove_flag.bl_idname, text="", icon='X').name = light.name
+        speed, scale = environment.gobo_nodes(flag)
+        if speed is not None and scale is not None:        # a moving gobo: how fast, how fine
+            row = box.row(align=True)
+            row.prop(speed, "default_value", text="Speed")
+            row.prop(scale, "default_value", text="Scale")
 
 
 def solo_light(scene):

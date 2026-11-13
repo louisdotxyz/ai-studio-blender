@@ -461,6 +461,182 @@ def light_placing_and_worlds():
 
 
 @section
+def light_list_map_looks():
+    scene = bpy.context.scene
+    rs = scene.render_studio
+    items, paint, lmap = mod("studio.light_items"), mod("studio.light_paint"), mod("studio.light_map")
+    looks, env, api, lights_mod = mod("studio.looks"), mod("studio.environment"), mod("studio.api"), mod("studio.lights")
+    deg = math.degrees
+    for o in lights_mod.scene_lights(scene):
+        bpy.data.objects.remove(o)
+    rs.light_orbit_target = None
+    rs.world_mode = 'IMAGE'
+    key = lights_mod.add_light(scene, None)
+    item = ('LIGHT', key)
+    check("one list: only scene lights while the World is an image", [i[0] for i in items.all_items(scene)] == ['LIGHT'])
+    rs.world_mode = 'STUDIO'
+    kinds = [i[0] for i in items.all_items(scene)]
+    check("one list: scene lights and studio World lights",
+          kinds == ['LIGHT'] + ['PIN'] * len(rs.hdri_pins) and len(rs.hdri_pins) >= 3, kinds)
+    # the light map: around = relative to the camera, + = the camera's right
+    center = items.center_of(scene, key)
+    distance = (key.matrix_world.translation - center).length
+    items.set_angles(scene, item, math.radians(60), math.radians(30))
+    around, height = items.angles(scene, item)
+    check("light map: a light goes where it is put", abs(deg(around) - 60) < 0.01 and abs(deg(height) - 30) < 0.01,
+          (deg(around), deg(height)))
+    right = scene.camera.matrix_world.to_3x3() @ Vector((1, 0, 0))
+    check("light map: right on the map is the camera's right", (key.matrix_world.translation - center).dot(right) > 0)
+    aim = (key.matrix_world.to_3x3() @ Vector((0, 0, -1))).normalized()
+    check("light map: moving keeps the distance and the aim",
+          abs((key.matrix_world.translation - center).length - distance) < 1e-4
+          and aim.angle((center - key.matrix_world.translation).normalized()) < 1e-3)
+    items.set_angles(scene, ('PIN', 0), math.radians(40), math.radians(20))
+    around, height = items.angles(scene, ('PIN', 0))
+    check("light map: studio World lights move the same way", abs(deg(around) - 40) < 0.01 and abs(deg(height) - 20) < 0.01,
+          (deg(around), deg(height)))
+    items.set_angles(scene, item, math.radians(50), math.radians(25))
+    items.mirror(scene, item)
+    around, height = items.angles(scene, item)
+    check("mirror: other side, same height", abs(deg(around) + 50) < 0.01 and abs(deg(height) - 25) < 0.01)
+    count = len(lights_mod.scene_lights(scene))
+    copy = items.mirror(scene, item, copy=True)
+    check("mirrored copy: a second light on the other side", len(lights_mod.scene_lights(scene)) == count + 1
+          and copy[1] != key and abs(deg(items.angles(scene, copy)[0]) - 50) < 0.01
+          and abs(deg(items.angles(scene, item)[0]) + 50) < 0.01)
+    items.remove(scene, copy)
+    check("light removed", len(lights_mod.scene_lights(scene)) == count)
+    pins = len(rs.hdri_pins)
+    twin = items.mirror(scene, ('PIN', 0), copy=True)
+    check("mirrored copy of a studio World light", twin == ('PIN', pins) and len(rs.hdri_pins) == pins + 1
+          and abs(deg(items.angles(scene, twin)[0]) + 40) < 0.01)
+    items.remove(scene, twin)
+    # the same few values for every light
+    own = key.render_studio_light
+    key.data.shape = 'RECTANGLE'
+    key.data.size, key.data.size_y = 1.0, 0.5
+    own.size = 2.0
+    check("size: width and height together", abs(key.data.size - 2.0) < 1e-6 and abs(key.data.size_y - 1.0) < 1e-6)
+    own.softness = 0.5
+    check("softness: how far the light spreads", abs(key.data.spread - math.pi / 2) < 1e-4, key.data.spread)
+    own.kelvin = 3200
+    check("color temperature in Kelvin", key.data.use_temperature and abs(key.data.temperature - 3200) < 1)
+    pin = rs.hdri_pins[0]
+    pin.width, pin.height = 0.5, 0.3
+    pin.size = 1.0
+    check("studio World light: size keeps its shape", abs(pin.width - 1.0) < 1e-5 and abs(pin.height - 0.6) < 1e-5)
+    pin.kelvin = 3000
+    check("studio World light: warm by Kelvin", pin.color[0] > pin.color[2] + 0.2, tuple(pin.color))
+    # the map's geometry
+    rect = lmap.rect_for(1200, 40, 300, 0, 1.0)
+    check("light map: between toolbar and sidebar, three times as wide as high",
+          rect[0] >= 40 and rect[0] + rect[2] <= 900 and abs(rect[3] * 3 - rect[2]) < 1e-6, rect)
+    back = lmap.from_map(rect, *lmap.to_map(rect, 0.3, 0.4))
+    check("light map: point and angles round trip", abs(back[0] - 0.3) < 1e-6 and abs(back[1] - 0.4) < 1e-6)
+    boxes = [lmap.light_box(rect, 0.0, 0.3, 1.0, 0.6), lmap.light_box(rect, 0.05, 0.3, 0.1, 0.1)]
+    check("light map: a small light in front of a big one can be picked",
+          lmap.pick(rect, boxes, *lmap.to_map(rect, 0.05, 0.3)) == 1
+          and lmap.pick(rect, boxes, *lmap.to_map(rect, -0.4, 0.3)) == 0
+          and lmap.pick(rect, boxes, rect[0] + 2, rect[1] + 2) is None)
+    edge = [lmap.light_box(rect, math.pi - 0.05, 0.3, 0.4, 0.3)]
+    check("light map: a light at the edge is picked on both sides",
+          lmap.pick(rect, edge, rect[0] + 3, lmap.to_map(rect, 0, 0.3)[1]) == 0)
+    cut = lmap.clip(lmap.box_points(rect[0] - 50, rect[1] - 50, rect[0] + 50, rect[1] + 50), rect)
+    check("light map: shapes are cut at the map's edge", len(cut) == 4 and len(lmap.fan(cut)) == 6
+          and all(px >= rect[0] - 1e-6 and py >= rect[1] - 1e-6 for px, py in cut), cut)
+    check("light map: nothing left of a shape outside",
+          not lmap.clip(lmap.box_points(rect[0] - 90, rect[1], rect[0] - 50, rect[1] + 20), rect)
+          and len(lmap.shape_tris(rect[0] + 100, rect[1] + 50, 20, 10, True, rect, edge=2.0)) == 28 * 6)
+    check("light map: the picture behind lines up with the camera", abs(lmap.backdrop_u(-math.pi / 2, 0.0) - 0.25) < 1e-9)
+    # placing on the product: shade and shadow
+    view, normal = Vector((0, 1, 0)), Vector((0, -1, 0))
+    shade = paint.light_direction(view, normal, 'SHADE')
+    check("click placing: shade puts the light behind the spot", shade.dot(normal) < -0.9 and shade.z > 0, shade)
+    top = paint.light_direction(Vector((0, 1, -1)), Vector((0, 0, 1)), 'SHADE')
+    check("click placing: shade on a face that looks up goes behind the product", top.y > 0.5 and top.z > 0, top)
+    spot = Vector((1.0, 0.0, -0.5))
+    shadow = paint.light_direction(view, Vector((0, 0, 1)), 'SHADOW', hit=spot, center=center)
+    paint.place_item(scene, item, spot, shadow, 'SHADOW', 2.0)
+    eye = key.matrix_world.translation
+    check("click placing: light, product and shadow spot in one line",
+          (spot - eye).normalized().angle((center - eye).normalized()) < 1e-3 and abs((eye - center).length - 2.0) < 1e-4)
+    keys = paint.RS_WT_light_place.bl_keymap
+    check("place tool: click, Ctrl + click (new light) and the wheel", len(keys) == 8
+          and keys[0][1] == {"type": 'LEFTMOUSE', "value": 'PRESS'} and keys[1][2]["properties"] == [("new", True)])
+    items.select(scene, ('PIN', 0))
+    new = items.add_like(scene, items.active_item(scene))
+    check("new light: of the open light's kind", new == ('PIN', pins) and items.active_item(scene) == new, new)
+    items.remove(scene, new)
+    check("studio World light removed", len(rs.hdri_pins) == pins)
+    items.select(scene, item)
+    check("open light: one at a time", items.active_item(scene) == item and rs.hdri_pin_index == -1)
+    # moving gobos
+    flag = api.flag(key, "BRANCHES", speed=2.0, scale=1.5)
+    speed, scale = env.gobo_nodes(flag)
+    tree = flag.data.materials[0].node_tree
+    drivers = tree.animation_data.drivers if tree.animation_data else []
+    check("moving gobo: speed, scale and a clock that follows the frame",
+          speed is not None and abs(speed.default_value - 2.0) < 1e-6 and abs(scale.default_value - 1.5) < 1e-6
+          and len(drivers) == 1 and drivers[0].driver.expression == "frame / 24" and drivers[0].driver.is_valid)
+    check("moving gobos: leaves, water and clouds build",
+          all(env.gobo_nodes(api.flag(key, pattern))[0] is not None for pattern in ("DAPPLE", "WATER", "CLOUDS")))
+    check("still gobo: no speed", env.gobo_nodes(api.flag(key, "BLINDS")) == (None, None))
+    api.flag(key, "WATER")
+    api.flag(key, None)
+    check("gobo removed, with its material", env.flag_of(key) is None and not [
+        m.name for m in bpy.data.materials if m.name.startswith(env.GOBO_PREFIX) and m.name != env.GOBO_PREFIX + "Flag"])
+    # looks
+    rs.light_looks.clear()
+    rs.light_look_index = -1
+    key.data.energy = 100.0
+    items.set_angles(scene, item, math.radians(-40), math.radians(30))
+    rs.background_mode = 'COLOR'
+    rs.background_color = (0.9, 0.9, 0.9)
+    rs.hdri_pins[0].strength = 5.0
+    name = looks.add(scene)
+    check("looks: the first one keeps A and opens B", looks.names(scene) == ["A", "B"] and name == "B"
+          and looks.active(scene) == 1)
+    key.data.energy = 400.0
+    items.set_angles(scene, item, math.radians(70), math.radians(10))
+    rs.background_color = (0.05, 0.05, 0.05)
+    rs.hdri_pins[0].strength = 33.0
+    extra = lights_mod.add_light(scene, None)
+    api.flag(key, "DAPPLE", speed=0.5)
+    looks.switch(scene, 0)
+    check("looks: A is back as it was", abs(key.data.energy - 100) < 1e-3
+          and abs(deg(items.angles(scene, item)[0]) + 40) < 0.05 and rs.background_color[0] > 0.8
+          and abs(rs.hdri_pins[0].strength - 5.0) < 1e-4 and extra.hide_render and env.flag_of(key) is None,
+          (key.data.energy, deg(items.angles(scene, item)[0]), rs.hdri_pins[0].strength))
+    looks.switch(scene, 1)
+    flag = env.flag_of(key)
+    check("looks: B keeps what was changed", abs(key.data.energy - 400) < 1e-3
+          and abs(deg(items.angles(scene, item)[0]) - 70) < 0.05 and rs.background_color[0] < 0.1
+          and abs(rs.hdri_pins[0].strength - 33.0) < 1e-4 and not extra.hide_render
+          and flag is not None and abs(env.gobo_values(flag)["speed"] - 0.5) < 1e-6,
+          (key.data.energy, deg(items.angles(scene, item)[0]), rs.hdri_pins[0].strength))
+    result = api.look("A")
+    check("looks from Claude", result["open"] == "A" and result["looks"] == ["A", "B"], result)
+    looks.switch(scene, 1)
+    looks.remove(scene)
+    check("looks: removing the open one goes back to its neighbor", looks.names(scene) == ["A"]
+          and looks.active(scene) == 0 and abs(key.data.energy - 100) < 1e-3)
+    looks.remove(scene)
+    check("looks: none left", not looks.names(scene) and looks.active(scene) == -1)
+    listing = api.lights_list()
+    api.move_light(key.name, around=90, height=45)
+    check("lights from Claude: list and move", any(entry["name"] == key.name for entry in listing)
+          and any(entry["kind"] == "world" for entry in listing)
+          and abs(deg(items.angles(scene, item)[0]) - 90) < 0.05)
+    api.mirror_light()
+    check("lights from Claude: mirror everything", abs(deg(items.angles(scene, item)[0]) + 90) < 0.05)
+    for o in lights_mod.scene_lights(scene):
+        items.remove(scene, ('LIGHT', o))
+    rs.world_mode = 'IMAGE'
+    rs.background_mode = 'NORMAL'
+    scene.frame_set(1)
+
+
+@section
 def shots_presets_check():
     scene = bpy.context.scene
     rs = scene.render_studio

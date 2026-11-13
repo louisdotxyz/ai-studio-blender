@@ -193,6 +193,24 @@ for world_mode in ('STUDIO', 'SKY', 'IMAGE'):
         scene_rs.hdri_pin_index = 0
     wm.render_studio_tab = 'LIGHT'
     run(bpy.types.RS_PT_lighting, ctx)
+# an open scene light with everything under "More", a moving gobo and looks; then an open studio World light
+light_obj = sys.modules[PKG + ".studio.lights"].add_light(bpy.context.scene, None)
+sys.modules[PKG + ".studio.light_items"].select(bpy.context.scene, ('LIGHT', light_obj))
+sys.modules[PKG + ".studio.environment"].add_flag(bpy.context.scene, light_obj, 'BRANCHES')
+wm.render_studio_sections = "light_more"
+bpy.ops.render_studio.look_add()
+for world_mode in ('STUDIO', 'IMAGE'):
+    scene_rs.world_mode = world_mode
+    run(bpy.types.RS_PT_lighting, ctx)
+scene_rs.world_mode = 'STUDIO'
+sys.modules[PKG + ".studio.light_items"].select(bpy.context.scene, ('PIN', 0))
+run(bpy.types.RS_PT_lighting, ctx)
+run(bpy.types.RS_PT_light_settings, ctx)
+scene_rs.light_looks.clear()
+scene_rs.light_look_index = -1
+sys.modules[PKG + ".studio.light_items"].remove(bpy.context.scene, ('LIGHT', light_obj))
+scene_rs.world_mode = 'IMAGE'
+wm.render_studio_sections = ""
 for _once in (0,):
     for tab, panel in (('RENDER', "RS_PT_camera"), ('LIGHT', "RS_PT_lighting"), ('QUEUE', "RS_PT_render_queue")):
         wm.render_studio_tab = tab

@@ -68,7 +68,7 @@ def ensure_pins(scene):
         pin["width"], pin["height"] = math.radians(w), math.radians(hgt)
         pin["strength"], pin["softness"] = strength, soft
         pin["shape"] = 0 if shape == 'RECT' else 1
-    rs.hdri_pin_index = 0
+    rs.hdri_pin_index = -1
 
 
 def studio_spec(scene, resolution=LIVE_RESOLUTION):

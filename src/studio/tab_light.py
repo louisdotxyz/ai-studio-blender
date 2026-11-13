@@ -8,7 +8,8 @@ import bpy
 from bpy.props import (BoolProperty, FloatProperty, IntProperty, StringProperty)
 from bpy.types import Menu, Operator, Panel
 
-from . import addons, api, background, env_ui, hdri, light_paint, lights, presets_io, runner
+from . import (addons, api, background, env_ui, hdri, light_map, light_paint, light_ui, lights, presets_io,
+               runner)
 from .ui_common import (LIGHT_TAB_ORDER, _SidebarPanel, _report_value_error, _select_only, _unpin, section,
                         studio_tab)
 
@@ -407,6 +408,11 @@ class RS_PT_light_settings(Panel):
         row.operator(RS_OT_light_preset_save.bl_idname, text="Save Light Preset", icon='ADD')
         if current and current in lights.saved_presets():
             row.operator(RS_OT_light_preset_delete.bl_idname, text="", icon='TRASH').name = current
+        box = layout.box()
+        box.label(text="Light Map", icon='IMAGE_PLANE')
+        box.prop(context.window_manager, "render_studio_light_map_size", slider=True)
+        box.operator(light_ui.RS_OT_light_mirror.bl_idname, text="Mirror All Lights",
+                     icon='MOD_MIRROR').everything = True
         presets_io.draw(layout.box())
         addons.draw_list(layout)
 
@@ -495,42 +501,21 @@ class RS_PT_lighting(_SidebarPanel, Panel):
         rs = scene.render_studio
         layout = self.layout
 
-        # Scene: one row, everything below as one preset
+        # Scene: one row, everything below as one preset; looks: several lighting moods of this file
         env_ui.draw_scene_presets(layout, scene)
+        light_ui.draw_looks(layout, scene)
 
-        # Lights: the list (eye, name, strength); click a light's icon for its details
+        # Lights: one list (eye, kind, name, brightness); click a light's icon for its settings.
+        # The same lights are points on the light map in the 3D viewport.
         box, head, is_open = section(layout, "lights", "Lights", 'LIGHT')
         current = current_preset(scene)
         head.menu(RS_MT_light_presets.bl_idname, text=current or "Preset")
-        head.operator(RS_OT_add_light.bl_idname, text="", icon='ADD')
+        head.menu(light_ui.RS_MT_light_new.bl_idname, text="", icon='ADD')
+        head.operator(light_map.RS_OT_light_map.bl_idname, text="", icon='IMAGE_PLANE',
+                      depress=context.window_manager.render_studio_light_map)
         head.popover(RS_PT_light_settings.__name__, text="", icon='PREFERENCES')
         if is_open:
-            all_lights = lights.scene_lights(scene)
-            if not all_lights:
-                sub = box.row()
-                sub.active = False
-                sub.label(text="Pick a preset or add a light", icon='INFO')
-            active = rs.active_light
-            col = box.column(align=True)
-            for obj in all_lights:
-                on = not obj.hide_render
-                row = col.row(align=True)
-                row.operator(RS_OT_toggle_light.bl_idname, text="", emboss=False,
-                             icon='HIDE_OFF' if on else 'HIDE_ON').name = obj.name
-                sub = row.row(align=True)
-                sub.active = on
-                sub.operator(RS_OT_select_light.bl_idname, text="", depress=(obj == active),
-                             icon=LIGHT_ICONS.get(obj.data.type, 'LIGHT')).name = obj.name
-                sub.prop(obj.render_studio_light, "short_name", text="")
-                power = sub.row(align=True)
-                power.ui_units_x = 4.5
-                power.prop(obj.data, "energy", text="")
-                if env_ui.solo_light(scene) == obj.name:
-                    row.label(text="", icon='SOLO_ON')
-                if obj == active:
-                    details = col.box()
-                    _draw_light_details(details, obj, rs)
-                    col.separator()
+            light_ui.draw_list(box, context)
 
         # World: the HDRI that lights the scene (also behind a transparent or colored background)
         box, head, is_open = section(layout, "world", "World", 'WORLD')
@@ -575,48 +560,3 @@ def _draw_world(box, scene, rs):
         col.prop(rs, "world_rotation")
     elif scene.world is not None and background.world_background_node(scene) is not None:
         box.prop(rs, "world_background_strength", text="Strength")
-
-
-def _draw_light_details(box, light, rs):
-    data = light.data
-    row = box.row(align=True)
-    row.prop(data, "type", expand=True, icon_only=True)
-    row.separator()
-    row.operator(env_ui.RS_OT_solo_light.bl_idname, text="",
-                 icon=env_ui.solo_icon(bpy.context.scene, light)).name = light.name
-    row.operator(RS_OT_duplicate_light.bl_idname, text="", icon='DUPLICATE').name = light.name
-    light_paint.draw_place_row(box, name=light.name)
-    col = box.column(align=True)
-    row = col.row(align=True)
-    if getattr(data, "use_temperature", False):
-        row.prop(data, "temperature", text="Kelvin")
-    else:
-        row.prop(data, "color", text="")
-    if hasattr(data, "use_temperature"):
-        row.prop(data, "use_temperature", text="", icon='TEMP')
-    if data.type == 'AREA':
-        if data.shape in {'RECTANGLE', 'ELLIPSE'}:
-            row = col.row(align=True)
-            row.prop(data, "size", text="W")
-            row.prop(data, "size_y", text="H")
-        else:
-            col.prop(data, "size", text="Size")
-        col.prop(data, "spread", text="Spread")
-    elif data.type == 'SPOT':
-        col.prop(data, "spot_size", text="Angle")
-        col.prop(data, "shadow_soft_size", text="Softness")
-    elif data.type == 'SUN':
-        col.prop(data, "angle", text="Softness")
-    else:
-        col.prop(data, "shadow_soft_size", text="Softness")
-    own = light.render_studio_light
-    box.prop(own, "target", text="", icon='PIVOT_CURSOR',
-             placeholder=("Target: " + rs.light_orbit_target.name) if rs.light_orbit_target else "Target")
-    target = lights.light_target(light, rs)
-    if target is not None and target != light:
-        col = box.column(align=True)
-        col.prop(rs, "light_orbit_horizontal")
-        col.prop(rs, "light_orbit_vertical")
-        col.prop(rs, "light_orbit_distance")
-        col.prop(own, "height")
-    env_ui.draw_light_extras(box, light)

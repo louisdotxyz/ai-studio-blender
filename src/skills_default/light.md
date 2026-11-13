@@ -28,9 +28,18 @@ Know:
   "strength": 10, "softness": 0.35}, …], ambient=0.25): a studio World painted from softboxes (soft reflections on
   glossy products; 0° = from the camera, negative = left). api.world("SKY", time=17.2): sky by time of day
   (14 day, 17.2 golden hour, 23 night). api.world("IMAGE") goes back to the HDRI file.
-  api.place_light(light, on_object, "REFLECTION" | "ILLUMINATION" | "RIM"): put a light so its highlight / light /
-  rim falls on that part as the camera sees it.
+  api.place_light(light, on_object, "REFLECTION" | "ILLUMINATION" | "RIM" | "SHADE" | "SHADOW"): put a light so its
+  highlight / light / rim falls on that part as the camera sees it, the part falls into shadow, or the
+  product's shadow falls there (SHADOW: on_object is the floor).
+  One light list: api.lights_list() gives every light (scene lights and studio World lights) with its place on
+  the light map: "around" in degrees (0 = from the camera, + = the camera's right, 180 = behind) and "height".
+  api.move_light(light, around=…, height=…) moves one (name, or the index of a studio World light);
+  api.mirror_light(light, copy=False) flips it to the other side, api.mirror_light() the whole lighting.
+  Looks: api.look(new=True) keeps the lighting so far and goes on in a copy; api.look("A") switches. Use a new
+  look before a bigger change of the lighting, so the user can compare with one click.
   api.floor("COVE" | "FLOOR" | "NONE", color=(r, g, b), roughness=…, shadow_catcher=…); api.sun_from_hdri();
-  api.flag(light, "FLAG" | "BLINDS" | "WINDOW" | "DAPPLE") (None removes it); api.only_product(light, True);
+  api.flag(light, "FLAG" | "BLINDS" | "WINDOW" | "DAPPLE" | "BRANCHES" | "WATER" | "CLOUDS", speed=1, scale=1)
+  (None removes it; leaves, tree, water and clouds move when the animation plays, speed=0 keeps them still; a
+  small light gives sharper gobo shadows); api.only_product(light, True);
   haze: scene.render_studio.haze_density (0-0.2). Background: scene.render_studio.background_mode.
 - Check: render_preview (max_size 600).

@@ -246,6 +246,24 @@ def _pin_changed(self, context):
     world_modes.on_change(self.id_data)
 
 
+def _items(name):
+    """A getter / setter of light_items.py, looked up when it is used (that module needs this one)."""
+    def call(*args):
+        from . import light_items
+        return getattr(light_items, name)(*args)
+    return call
+
+
+# How a click on the product places the open light (light_paint.py)
+PLACE_MODES = (
+    ('REFLECTION', "Reflection", "The light's reflection appears where you click"),
+    ('ILLUMINATION', "Light", "The light shines straight onto the spot you click"),
+    ('RIM', "Rim", "The light comes from behind the spot you click (edge light)"),
+    ('SHADE', "Shade", "The spot you click falls into shadow: the light goes to the other side"),
+    ('SHADOW', "Shadow", "The product's shadow falls onto the spot you click (click the floor)"),
+)
+
+
 class RS_HdriPin(PropertyGroup):
     """A light on the studio HDRI (World › Studio): a softbox painted into the environment."""
     name: StringProperty(name="Name", default="Light")
@@ -264,6 +282,18 @@ class RS_HdriPin(PropertyGroup):
                         default='RECT', update=_pin_changed)
     color: FloatVectorProperty(name="Color", subtype='COLOR_GAMMA', size=3, min=0.0, max=1.0,
                                default=(1.0, 1.0, 1.0), update=_pin_changed)
+    size: FloatProperty(name="Size", description="How big the light is (width and height together)",
+                        subtype='ANGLE', min=0.02, max=math.pi, get=_items("get_pin_size"),
+                        set=_items("set_pin_size"), options=set())
+    kelvin: FloatProperty(name="Color Temperature", description="Warm (2700 K) to cool (8000 K) light",
+                          min=1000.0, max=20000.0, soft_min=2000.0, soft_max=10000.0, step=10000, precision=0,
+                          get=_items("get_pin_kelvin"), set=_items("set_pin_kelvin"), options=set())
+
+
+class RS_Look(PropertyGroup):
+    """A lighting mood of this file (looks.py): its name and everything it holds, as JSON."""
+    name: StringProperty(name="Name", default="A")
+    data: StringProperty(options={'HIDDEN'})
 
 
 def _world_mode_changed(self, context):
@@ -299,6 +329,16 @@ class RS_LightSettings(PropertyGroup):
     height: FloatProperty(
         name="Height", description="The light and the point it looks at move up or down together",
         step=FINE_STEP, precision=3, subtype='DISTANCE', get=lights.get_light_height, set=lights.set_light_height, options=set())
+    # the same few values for every kind of light (light_items.py)
+    size: FloatProperty(name="Size", description="How big the light is: bigger gives softer shadows and wider "
+                        "reflections", subtype='DISTANCE', min=0.001, soft_max=10.0, step=FINE_STEP, precision=3,
+                        get=_items("get_light_size"), set=_items("set_light_size"), options=set())
+    softness: FloatProperty(name="Softness", description="0 = the light shines straight ahead with a hard edge, "
+                            "1 = it spreads to all sides", subtype='FACTOR', min=0.0, max=1.0,
+                            get=_items("get_light_softness"), set=_items("set_light_softness"), options=set())
+    kelvin: FloatProperty(name="Color Temperature", description="Warm (2700 K) to cool (8000 K) light",
+                          min=1000.0, max=20000.0, soft_min=2000.0, soft_max=10000.0, step=10000, precision=0,
+                          get=_items("get_light_kelvin"), set=_items("set_light_kelvin"), options=set())
 
 
 def _look_changed(settings, context):
@@ -414,6 +454,11 @@ class RS_Settings(PropertyGroup):
         default='IMAGE', options=set(), update=_world_mode_changed)
     hdri_pins: CollectionProperty(type=RS_HdriPin)
     hdri_pin_index: IntProperty(default=-1, options=set())
+    place_mode: EnumProperty(name="Place", description="How a click on the product places the open light",
+                             items=PLACE_MODES, default='REFLECTION', options=set())
+    # Looks: several lighting moods in this file (looks.py)
+    light_looks: CollectionProperty(type=RS_Look)
+    light_look_index: IntProperty(default=-1, options=set())
     studio_ambient: FloatProperty(name="Ambient", description="Brightness of the studio around the lights",
                                   default=0.25, min=0.0, soft_max=2.0, options=set(), update=_pin_changed)
     studio_color: FloatVectorProperty(name="Ambient Color", subtype='COLOR_GAMMA', size=3, min=0.0, max=1.0,

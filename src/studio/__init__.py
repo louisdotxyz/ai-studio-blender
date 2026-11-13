@@ -15,12 +15,13 @@ import bpy
 from bpy.props import (EnumProperty, PointerProperty, StringProperty)
 from bpy.types import Operator, Panel
 
-from . import (addons, background, cameras, claude_link, core, env_ui, environment, foreign, hdri, light_paint, lights,
-               presets_io, runner, shots, sync, tab_queue)
+from . import (addons, background, cameras, claude_link, core, env_ui, environment, foreign, hdri, light_map,
+               light_paint, light_ui, lights, presets_io, runner, shots, sync, tab_queue)
 # Loaded for their side effects: the chat finds claude_tools (Claude's studio_* tools) in
 # sys.modules; api and variants are the helpers in execute_python.
-from . import api, baselib, claude_tools, variants  # noqa: F401
-from .props import RS_CameraSettings, RS_HdriPin, RS_Item, RS_LightSettings, RS_Shot, RS_Preferences, RS_Settings, _apply_clipping
+from . import api, baselib, claude_tools, light_items, looks, variants  # noqa: F401
+from .props import (RS_CameraSettings, RS_HdriPin, RS_Item, RS_LightSettings, RS_Look, RS_Shot, RS_Preferences,
+                    RS_Settings, _apply_clipping)
 from .ui_common import STUDIO_TABS, _queue_progress_text, _unpin
 from .keymaps import register_keymaps, unregister_keymaps
 from .tab_camera import (RS_OT_camera_back, RS_OT_camera_from_view, RS_OT_dof_focus, RS_OT_duplicate_camera,
@@ -121,6 +122,7 @@ classes = render_setup.classes + (
     RS_Item,
     RS_Shot,
     RS_HdriPin,
+    RS_Look,
     RS_Settings,
     RS_OT_render_queue,
     RS_OT_cancel,
@@ -200,6 +202,17 @@ def _keep_old_hdri_folder():
     return None
 
 
+def _tab_changed(wm, context):
+    """Environment tab: clicks on the product place the open light; elsewhere the tool before is back."""
+    try:
+        if wm.render_studio_tab != 'LIGHT':
+            light_paint.restore_tool(context)
+        elif light_items.active_item(context.scene) is not None and not wm.render_studio_place_off:
+            light_paint.activate_tool(context)
+    except Exception as exc:        # a tab switch must never fail
+        print("ID Toolkit: tab:", exc)
+
+
 def register_prefs():
     """Before the extension's preferences, which hold these settings."""
     bpy.utils.register_class(RS_Preferences)
@@ -218,7 +231,7 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.render_studio = PointerProperty(type=RS_Settings)
     bpy.types.WindowManager.render_studio_tab = EnumProperty(
-        name="Studio Tab", items=STUDIO_TABS, default='RENDER', options={'SKIP_SAVE'})
+        name="Studio Tab", items=STUDIO_TABS, default='RENDER', options={'SKIP_SAVE'}, update=_tab_changed)
     # Material library groups toggled from their default (one name per line)
     bpy.types.WindowManager.render_studio_mat_open = StringProperty(options={'SKIP_SAVE'})
     # Sections of the Studio tabs toggled from their default (one key per line)
@@ -247,6 +260,8 @@ def register():
     addons.register()
     env_ui.register()
     light_paint.register()
+    light_map.register()
+    light_ui.register()
     presets_io.register()
     shots.register()
     cad_link.register()
@@ -270,6 +285,8 @@ def unregister():
     cad_link.unregister()
     shots.unregister()
     presets_io.unregister()
+    light_ui.unregister()
+    light_map.unregister()
     light_paint.unregister()
     env_ui.unregister()
     addons.unregister()

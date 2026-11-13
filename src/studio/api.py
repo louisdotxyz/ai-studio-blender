@@ -558,14 +558,22 @@ def sun_from_hdri(scene=None):
     return environment.sun_from_hdri(scene or bpy.context.scene)
 
 
-def flag(light, pattern="FLAG", scene=None):
-    """Flag or gobo in front of a light: FLAG, BLINDS, WINDOW, DAPPLE. pattern=None removes it."""
+def flag(light, pattern="FLAG", speed=None, scale=None, scene=None):
+    """Flag or gobo in front of a light: FLAG, BLINDS, WINDOW, and the moving ones DAPPLE (leaves), BRANCHES (tree),
+    WATER, CLOUDS. speed: how fast a moving one moves when the animation plays (0 = still, 1 = normal);
+    scale: how fine its pattern is. pattern=None removes it."""
     from . import environment
     light = bpy.data.objects[light] if isinstance(light, str) else light
     if pattern is None:
         environment.remove_flag(light)
         return None
-    return environment.add_flag(scene or bpy.context.scene, light, pattern)
+    if pattern not in {k for k, _n, _d in environment.FLAG_PATTERNS}:
+        raise ValueError("pattern must be one of %s" % ", ".join(k for k, _n, _d in environment.FLAG_PATTERNS))
+    obj = environment.add_flag(scene or bpy.context.scene, light, pattern)
+    values = {k: v for k, v in (("speed", speed), ("scale", scale)) if v is not None}
+    if values:
+        environment.set_gobo_values(obj, values)
+    return obj
 
 
 def only_product(light, on=True, scene=None):
@@ -604,7 +612,8 @@ def world(mode, time=None, pins=None, ambient=None, scene=None):
 
 def place_light(light, on_object, mode="REFLECTION", distance=None, scene=None):
     """Place a light by a spot on the product, as seen from the active camera: the middle of `on_object` that
-    faces the camera. mode: REFLECTION (highlight there), ILLUMINATION (lit straight on), RIM (from behind)."""
+    faces the camera. mode: REFLECTION (highlight there), ILLUMINATION (lit straight on), RIM (from behind),
+    SHADE (that spot falls into shadow), SHADOW (the product's shadow falls there: use the floor as on_object)."""
     from . import light_paint
     scene = scene or bpy.context.scene
     light = bpy.data.objects[light] if isinstance(light, str) else light
@@ -618,8 +627,82 @@ def place_light(light, on_object, mode="REFLECTION", distance=None, scene=None):
     ok, hit, normal, _i, _o, _m = scene.ray_cast(bpy.context.evaluated_depsgraph_get(), eye, view)
     if not ok:
         raise ValueError("The camera does not see %s" % target.name)
-    direction = light_paint.light_direction(view, normal, mode)
+    from . import light_items
+    product = light_items.center_of(scene, light)
+    direction = light_paint.light_direction(view, normal, mode, hit, product)
     if distance is None:
         distance = max((light.matrix_world.translation - hit).length, 0.05)
-    light_paint.place_light(light, hit, direction, distance)
+    light_paint.place_light(light, product if mode == 'SHADOW' else hit, direction, distance)
     return [round(v, 4) for v in light.matrix_world.translation]
+
+
+def _light_item(light, scene):
+    """A light of the Lights list: a scene light (object or name) or a studio World light (its index or name)."""
+    from . import light_items
+    rs = scene.render_studio
+    if isinstance(light, int):
+        if not 0 <= light < len(rs.hdri_pins):
+            raise ValueError("No studio World light %d" % light)
+        return ('PIN', light)
+    if isinstance(light, str):
+        obj = bpy.data.objects.get(light)
+        if obj is not None and obj.type == 'LIGHT':
+            return ('LIGHT', obj)
+        index = next((i for i, pin in enumerate(rs.hdri_pins) if pin.name == light), None)
+        if index is None or not light_items.pins_shown(scene):
+            raise ValueError("No light %r" % light)
+        return ('PIN', index)
+    return ('LIGHT', light)
+
+
+def lights_list(scene=None):
+    """Every light of the Lights list with its place on the light map: "around" in degrees (0 = from the
+    camera, positive = the camera's right, 180 = from behind) and "height" (0 = horizon, 90 = from above)."""
+    from . import light_items
+    scene = scene or bpy.context.scene
+    result = []
+    for item in light_items.all_items(scene):
+        around, height = light_items.angles(scene, item)
+        result.append({"name": light_items.name_of(scene, item), "kind": "world" if item[0] == 'PIN' else "scene",
+                       "on": light_items.is_on(scene, item), "around": round(math.degrees(around), 1),
+                       "height": round(math.degrees(height), 1)})
+    return result
+
+
+def move_light(light, around=None, height=None, scene=None):
+    """Moves a light on the light map (degrees, see lights_list); its distance, size and target stay."""
+    from . import light_items
+    scene = scene or bpy.context.scene
+    item = _light_item(light, scene)
+    now = light_items.angles(scene, item)
+    light_items.set_angles(scene, item, now[0] if around is None else math.radians(around),
+                           now[1] if height is None else math.radians(height))
+    return lights_list(scene)
+
+
+def mirror_light(light=None, copy=False, scene=None):
+    """Flips a light to the other side of the product (left / right as the camera sees it); copy=True keeps
+    it and puts a copy there. light=None flips the whole lighting."""
+    from . import light_items, looks
+    scene = scene or bpy.context.scene
+    if light is None:
+        looks.mirror_all(scene)
+    else:
+        light_items.mirror(scene, _light_item(light, scene), copy=copy)
+    return lights_list(scene)
+
+
+def look(name=None, new=False, scene=None):
+    """Looks: several lighting moods in this file (lights, World, background, floor, haze). new=True keeps the
+    lighting so far and goes on in a copy; name switches to that look ("A", "B", …). Returns the looks and
+    the open one."""
+    from . import looks
+    scene = scene or bpy.context.scene
+    notes = []
+    if new:
+        looks.add(scene)
+    if name is not None:
+        notes = looks.switch_name(scene, str(name))
+    index = looks.active(scene)
+    names = looks.names(scene)
+    return {"looks": names, "open": names[index] if index >= 0 else None, "notes": notes}

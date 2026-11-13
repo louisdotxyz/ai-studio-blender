@@ -261,15 +261,133 @@ FLAG_PATTERNS = (
     ('FLAG', "Flag", "A black card that cuts part of the light"),
     ('BLINDS', "Blinds", "Stripes of light and shadow"),
     ('WINDOW', "Window", "A window frame's shadow"),
-    ('DAPPLE', "Leaves", "Dappled light through leaves"),
+    ('DAPPLE', "Leaves", "Light through leaves that move in the wind"),
+    ('BRANCHES', "Tree", "Leaves and branches of a tree, moving in the wind"),
+    ('WATER', "Water", "Moving ripples of light, like light reflected off water"),
+    ('CLOUDS', "Clouds", "Soft shadows that drift slowly"),
 )
+MOVING = {'DAPPLE', 'BRANCHES', 'WATER', 'CLOUDS'}
+GOBO_PREFIX = "Studio | Gobo "
+NODE_TIME, NODE_SPEED, NODE_SCALE = "Time", "Speed", "Scale"
 
 
-def _flag_material(pattern):
-    name = "Studio | Gobo " + pattern.title()
+def _value(nt, name, value):
+    node = nt.nodes.new('ShaderNodeValue')
+    node.name = node.label = name
+    node.outputs[0].default_value = value
+    return node
+
+
+def _math(nt, operation, a, b=None, c=None):
+    """A Math node; a, b and c are sockets or numbers."""
+    node = nt.nodes.new('ShaderNodeMath')
+    node.operation = operation
+    for index, value in enumerate((a, b, c)):
+        if value is None:
+            continue
+        if isinstance(value, (int, float)):
+            node.inputs[index].default_value = value
+        else:
+            nt.links.new(value, node.inputs[index])
+    return node.outputs[0]
+
+
+def _smooth(nt, value, low, high):
+    """0 below `low`, 1 above `high`, soft in between."""
+    node = nt.nodes.new('ShaderNodeMapRange')
+    node.interpolation_type = 'SMOOTHSTEP'
+    nt.links.new(value, node.inputs["Value"])
+    node.inputs["From Min"].default_value, node.inputs["From Max"].default_value = low, high
+    return node.outputs["Result"]
+
+
+def _noise(nt, vector, scale, detail, w=None, roughness=0.6):
+    node = nt.nodes.new('ShaderNodeTexNoise')
+    node.noise_dimensions = '4D' if w is not None else '3D'
+    node.inputs["Scale"].default_value, node.inputs["Detail"].default_value = scale, detail
+    node.inputs["Roughness"].default_value = roughness
+    nt.links.new(vector, node.inputs["Vector"])
+    if w is not None:
+        nt.links.new(w, node.inputs["W"])
+    return node.outputs["Fac"]
+
+
+def _moving_pattern(nt, pattern, generated):
+    """The part of a moving gobo that lets light through (socket, 0..1). The pattern lives in the card's
+    0..1 square; Scale makes it finer, Speed moves it (0 = still)."""
+    time = _value(nt, NODE_TIME, 0.0)
+    speed = _value(nt, NODE_SPEED, 1.0)
+    scale = _value(nt, NODE_SCALE, 1.0)
+    try:        # seconds since frame 1; a still image is not affected
+        curve = nt.driver_add('nodes["%s"].outputs[0].default_value' % NODE_TIME)
+        curve.driver.type = 'SCRIPTED'
+        curve.driver.expression = "frame / 24"
+    except (TypeError, RuntimeError, AttributeError) as exc:
+        print("ID Toolkit: gobo:", exc)
+    t = _math(nt, 'MULTIPLY', time.outputs[0], speed.outputs[0])
+    mapping = nt.nodes.new('ShaderNodeMapping')
+    offset = nt.nodes.new('ShaderNodeCombineXYZ')
+    nt.links.new(generated, mapping.inputs["Vector"])
+    nt.links.new(scale.outputs[0], mapping.inputs["Scale"])
+    nt.links.new(offset.outputs[0], mapping.inputs["Location"])
+    vector = mapping.outputs["Vector"]
+    if pattern == 'CLOUDS':
+        nt.links.new(_math(nt, 'MULTIPLY', t, 0.04), offset.inputs["X"])
+        clouds = _noise(nt, vector, 1.6, 3.0, w=_math(nt, 'MULTIPLY', t, 0.03), roughness=0.5)
+        return _math(nt, 'MAXIMUM', _smooth(nt, clouds, 0.4, 0.62), 0.12)
+    if pattern == 'WATER':
+        wobble = nt.nodes.new('ShaderNodeTexNoise')
+        wobble.noise_dimensions = '4D'
+        wobble.inputs["Scale"].default_value = 2.5
+        nt.links.new(vector, wobble.inputs["Vector"])
+        nt.links.new(_math(nt, 'MULTIPLY', t, 0.25), wobble.inputs["W"])
+        push = nt.nodes.new('ShaderNodeVectorMath')        # the noise bends the cells: no straight lines
+        push.operation = 'SCALE'
+        nt.links.new(wobble.outputs["Color"], push.inputs[0])
+        push.inputs[3].default_value = 0.18
+        bent = nt.nodes.new('ShaderNodeVectorMath')
+        bent.operation = 'ADD'
+        nt.links.new(vector, bent.inputs[0])
+        nt.links.new(push.outputs[0], bent.inputs[1])
+        cells = nt.nodes.new('ShaderNodeTexVoronoi')
+        cells.voronoi_dimensions = '4D'
+        cells.feature = 'DISTANCE_TO_EDGE'
+        cells.inputs["Scale"].default_value = 5.0
+        nt.links.new(bent.outputs[0], cells.inputs["Vector"])
+        nt.links.new(_math(nt, 'MULTIPLY', t, 0.35), cells.inputs["W"])
+        lines = _math(nt, 'SUBTRACT', 1.0, _smooth(nt, cells.outputs["Distance"], 0.0, 0.14))
+        return _math(nt, 'MAXIMUM', lines, 0.2)
+    # leaves: they sway (the whole pattern moves a little back and forth) and flutter (the pattern changes)
+    nt.links.new(_math(nt, 'MULTIPLY', _math(nt, 'SINE', _math(nt, 'MULTIPLY', t, 1.3)), 0.035), offset.inputs["X"])
+    nt.links.new(_math(nt, 'MULTIPLY', _math(nt, 'SINE', _math(nt, 'MULTIPLY_ADD', t, 0.9, 1.0)), 0.02),
+                 offset.inputs["Y"])
+    flutter = _math(nt, 'MULTIPLY', t, 0.12)
+    fine = _noise(nt, vector, 6.0, 6.0, w=flutter, roughness=0.65)
+    coarse = _noise(nt, vector, 1.7, 2.0, w=_math(nt, 'MULTIPLY', t, 0.04))
+    density = _math(nt, 'ADD', _math(nt, 'MULTIPLY', fine, 0.6), _math(nt, 'MULTIPLY', coarse, 0.4))
+    light = _smooth(nt, density, 0.49, 0.55)
+    if pattern == 'BRANCHES':
+        wave = nt.nodes.new('ShaderNodeTexWave')
+        wave.wave_type = 'BANDS'
+        wave.bands_direction = 'DIAGONAL'
+        wave.inputs["Scale"].default_value = 1.1
+        wave.inputs["Distortion"].default_value = 7.0
+        wave.inputs["Detail"].default_value = 2.0
+        wave.inputs["Detail Scale"].default_value = 0.8
+        nt.links.new(vector, wave.inputs["Vector"])
+        branch = _smooth(nt, wave.outputs["Fac"], 0.9, 0.96)
+        light = _math(nt, 'MULTIPLY', light, _math(nt, 'SUBTRACT', 1.0, branch))
+    return light
+
+
+def _flag_material(pattern, owner=""):
+    """A flag is one shared black material; every gobo gets its own (its scale and speed are per light)."""
+    name = GOBO_PREFIX + pattern.title() + (" | " + owner if owner and pattern != 'FLAG' else "")
     mat = bpy.data.materials.get(name)
-    if mat is not None:
-        return mat
+    if mat is not None and (pattern == 'FLAG' or mat.users == 0):
+        if pattern == 'FLAG':
+            return mat
+        bpy.data.materials.remove(mat)
     mat = bpy.data.materials.new(name)
     nt = mat.node_tree
     nt.nodes.clear()
@@ -282,36 +400,52 @@ def _flag_material(pattern):
     clear = nt.nodes.new('ShaderNodeBsdfTransparent')
     mix = nt.nodes.new('ShaderNodeMixShader')
     coord = nt.nodes.new('ShaderNodeTexCoord')
-    ramp = nt.nodes.new('ShaderNodeMath')
-    ramp.operation = 'GREATER_THAN'
-    if pattern == 'BLINDS':
-        tex = nt.nodes.new('ShaderNodeTexWave')
-        tex.inputs["Scale"].default_value = 4.0
-        nt.links.new(coord.outputs["Generated"], tex.inputs["Vector"])
-        nt.links.new(tex.outputs["Fac"], ramp.inputs[0])
-        ramp.inputs[1].default_value = 0.5
-    elif pattern == 'WINDOW':
-        tex = nt.nodes.new('ShaderNodeTexBrick')
-        tex.inputs["Scale"].default_value = 2.0
-        tex.inputs["Mortar Size"].default_value = 0.06
-        tex.offset = 0.0
-        tex.squash = 1.0
-        nt.links.new(coord.outputs["Generated"], tex.inputs["Vector"])
-        nt.links.new(tex.outputs["Fac"], ramp.inputs[0])     # mortar = 1: the frame
-        ramp.operation = 'LESS_THAN'
-        ramp.inputs[1].default_value = 0.5
+    if pattern in MOVING:
+        nt.links.new(_moving_pattern(nt, pattern, coord.outputs["Generated"]), mix.inputs["Fac"])
     else:
-        tex = nt.nodes.new('ShaderNodeTexNoise')
-        tex.inputs["Scale"].default_value = 6.0
-        tex.inputs["Detail"].default_value = 4.0
+        ramp = nt.nodes.new('ShaderNodeMath')
+        ramp.operation = 'GREATER_THAN'
+        if pattern == 'BLINDS':
+            tex = nt.nodes.new('ShaderNodeTexWave')
+            tex.inputs["Scale"].default_value = 4.0
+            ramp.inputs[1].default_value = 0.5
+        else:
+            tex = nt.nodes.new('ShaderNodeTexBrick')
+            tex.inputs["Scale"].default_value = 2.0
+            tex.inputs["Mortar Size"].default_value = 0.06
+            tex.offset = 0.0
+            tex.squash = 1.0
+            ramp.operation = 'LESS_THAN'        # mortar = 1: the frame
+            ramp.inputs[1].default_value = 0.5
         nt.links.new(coord.outputs["Generated"], tex.inputs["Vector"])
         nt.links.new(tex.outputs["Fac"], ramp.inputs[0])
-        ramp.inputs[1].default_value = 0.52
-    nt.links.new(ramp.outputs[0], mix.inputs["Fac"])        # 1 = transparent (light passes)
+        nt.links.new(ramp.outputs[0], mix.inputs["Fac"])    # 1 = transparent (light passes)
     nt.links.new(black.outputs[0], mix.inputs[1])
     nt.links.new(clear.outputs[0], mix.inputs[2])
     nt.links.new(mix.outputs[0], out.inputs["Surface"])
     return mat
+
+
+def gobo_nodes(flag):
+    """(speed socket, scale socket) of a moving gobo, None for the others."""
+    mat = flag.data.materials[0] if flag is not None and flag.data and flag.data.materials else None
+    if mat is None or mat.node_tree is None:
+        return None, None
+    speed, scale = mat.node_tree.nodes.get(NODE_SPEED), mat.node_tree.nodes.get(NODE_SCALE)
+    return (speed.outputs[0] if speed else None), (scale.outputs[0] if scale else None)
+
+
+def gobo_values(flag):
+    speed, scale = gobo_nodes(flag)
+    return {"speed": speed.default_value if speed else 0.0, "scale": scale.default_value if scale else 1.0}
+
+
+def set_gobo_values(flag, values):
+    speed, scale = gobo_nodes(flag)
+    if speed is not None and "speed" in values:
+        speed.default_value = max(0.0, float(values["speed"]))
+    if scale is not None and "scale" in values:
+        scale.default_value = max(0.05, float(values["scale"]))
 
 
 def flag_of(light):
@@ -341,7 +475,7 @@ def add_flag(scene, light, pattern='FLAG'):
     obj.matrix_parent_inverse = Matrix.Identity(4)
     # in front of the light along its -Z, a third of the way to the product, offset half a card when it is a flag
     obj.location = (size * 0.45 if pattern == 'FLAG' else 0.0, 0.0, -distance * 0.33)
-    mesh.materials.append(_flag_material(pattern))
+    mesh.materials.append(_flag_material(pattern, light.name))
     for attr in ("visible_camera", "visible_diffuse", "visible_glossy", "visible_transmission",
                  "visible_volume_scatter"):
         if hasattr(obj, attr):
@@ -356,9 +490,13 @@ def remove_flag(light):
     if obj is None:
         return
     mesh = obj.data
+    mats = [m for m in mesh.materials if m is not None and m.name.startswith(GOBO_PREFIX)]
     bpy.data.objects.remove(obj)
     if mesh.users == 0:
         bpy.data.meshes.remove(mesh)
+    for mat in mats:
+        if mat.users == 0 and mat.name != GOBO_PREFIX + "Flag":
+            bpy.data.materials.remove(mat)
 
 
 # ------------------------------------------------------------------ solo / light linking
@@ -526,6 +664,13 @@ def apply_scene(scene, name):
     preset = scene_preset(name)
     if preset is None:
         raise ValueError("No scene preset %r" % name)
+    notes = apply_preset(scene, preset)
+    scene.render_studio.scene_preset = name
+    return notes
+
+
+def apply_preset(scene, preset):
+    """Applies preset data (a scene preset or a look, looks.py). Returns notes for the user."""
     rs = scene.render_studio
     notes = []
     spec = preset.get("lights")
@@ -535,16 +680,17 @@ def apply_scene(scene, name):
         lights.apply_setup(scene, rs.light_orbit_target, lights.parse_setup(spec))
     world = preset.get("world") or {}
     from . import world_modes
-    if world.get("mode") == 'STUDIO' and "pins" in world:
-        rs.hdri_pins.clear()
-        for i, item in enumerate(world["pins"]):
-            pin = rs.hdri_pins.add()
-            pin["name"] = "Light %d" % (i + 1)
-            pin["horizontal"], pin["vertical"] = math.radians(item["horizontal"]), math.radians(item["vertical"])
-            pin["width"], pin["height"] = math.radians(item["width"]), math.radians(item["height"])
-            pin["strength"], pin["softness"] = item["strength"], item.get("softness", 0.35)
-            pin["shape"] = 1 if item.get("shape") == 'ROUND' else 0
-            pin["color"] = item.get("color", [1, 1, 1])[:3]
+    if world.get("mode") == 'STUDIO':
+        if "pins" in world:
+            rs.hdri_pins.clear()
+            for i, item in enumerate(world["pins"]):
+                pin = rs.hdri_pins.add()
+                pin["name"] = "Light %d" % (i + 1)
+                pin["horizontal"], pin["vertical"] = math.radians(item["horizontal"]), math.radians(item["vertical"])
+                pin["width"], pin["height"] = math.radians(item["width"]), math.radians(item["height"])
+                pin["strength"], pin["softness"] = item["strength"], item.get("softness", 0.35)
+                pin["shape"] = 1 if item.get("shape") == 'ROUND' else 0
+                pin["color"] = item.get("color", [1, 1, 1])[:3]
         rs["studio_ambient"] = world.get("ambient", rs.studio_ambient)
         rs["studio_color"] = world.get("ambient_color", list(rs.studio_color))[:3]
         rs.world_mode = 'STUDIO'      # renders the studio and faces the camera
@@ -596,5 +742,4 @@ def apply_scene(scene, name):
                                                              lk.get("vignette", 0))
         look.apply(scene, rs.look_glow, rs.look_contrast, rs.look_vignette)
     background.sync(scene, force=True)
-    rs.scene_preset = name
     return notes
