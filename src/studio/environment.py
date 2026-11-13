@@ -224,8 +224,10 @@ def brightest_direction(image, rotation=0.0, width=256):
     lum = px[..., 0] * 0.2126 + px[..., 1] * 0.7152 + px[..., 2] * 0.0722
     y, x = np.unravel_index(int(np.argmax(lum)), lum.shape)
     u, v = (x + 0.5) / w, (y + 0.5) / h            # rows start at the bottom
-    phi, theta = (u - 0.5) * 2 * math.pi, (v - 0.5) * math.pi
-    tex = Vector((-math.cos(theta) * math.cos(phi), math.cos(theta) * math.sin(phi), math.sin(theta)))
+    # Cycles: u = 0.5 - atan2(y, x) / 2π, elevation = π (v - 0.5)
+    azimuth, elevation = math.pi - 2 * math.pi * u, (v - 0.5) * math.pi
+    tex = Vector((math.cos(elevation) * math.cos(azimuth), math.cos(elevation) * math.sin(azimuth),
+                  math.sin(elevation)))
     world = Matrix.Rotation(-rotation, 3, 'Z') @ tex   # the mapping node turns the World by `rotation`
     color = [float(c) for c in px[y, x, :3]]
     return world.normalized(), color

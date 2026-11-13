@@ -378,13 +378,17 @@ def environment_tab():
                     "ground": [0.2, 0.2, 0.2]}, "strength": 1.0,
                     "sun": {"horizontal": 0, "vertical": 40, "size": 3, "strength": 80, "kelvin": 5600}})
     sun = api.sun_from_hdri()
-    up = (sun.matrix_world.to_3x3() @ Vector((0, 0, 1))).normalized()
+    up = (sun.rotation_euler.to_matrix() @ Vector((0, 0, 1))).normalized()
     check("sun from HDRI: above the horizon at about 40°", sun.data.type == 'SUN'
           and abs(math.degrees(math.asin(up.z)) - 40) < 8, math.degrees(math.asin(up.z)))
+    front = mod("studio.hdri_gen").FRONT
+    turn = abs((math.atan2(up.y, up.x) - front + math.pi) % (2 * math.pi) - math.pi)
+    check("sun from HDRI: from the sun's side", math.degrees(turn) < 8, math.degrees(turn))
     for o in mod("studio.lights").scene_lights(scene):
         bpy.data.objects.remove(o)
     rs.floor_mode = 'NONE'
     rs.background_mode = 'NORMAL'
+    rs.look_glow = rs.look_contrast = rs.look_vignette = 0.0
 
 
 @section
