@@ -21,9 +21,16 @@ Know:
 - Other add-ons: studio_context lists the ones that are on and how to reach them (atmosphere from Physical
   Starlight & Atmosphere, placing with Light Wrangler). Use them for what they add; do not rebuild a light setup
   with add-ons the Light tab covers (Quick Studio Light, QLE, Tri-lighting).
-- Environment tab helpers (api is ready in execute_python): api.scene_preset("Studio White" | "Dark Moody" |
-  "Outdoor" | saved name) sets lights, World, background, floor, haze and look together;
+- Environment tab helpers (api is ready in execute_python):
+  api.scene_preset("Studio Softboxes" | "Daylight" | "Golden Hour" | "Night" | "Studio White" | "Dark Moody" | saved)
+  sets lights, World, background, floor, haze and look together.
+  api.world("STUDIO", pins=[{"name": "Key", "horizontal": -45, "vertical": 35, "width": 50, "height": 40,
+  "strength": 10, "softness": 0.35}, …], ambient=0.25): a studio World painted from softboxes (soft reflections on
+  glossy products; 0° = from the camera, negative = left). api.world("SKY", time=17.2): sky by time of day
+  (14 day, 17.2 golden hour, 23 night). api.world("IMAGE") goes back to the HDRI file.
+  api.place_light(light, on_object, "REFLECTION" | "ILLUMINATION" | "RIM"): put a light so its highlight / light /
+  rim falls on that part as the camera sees it.
   api.floor("COVE" | "FLOOR" | "NONE", color=(r, g, b), roughness=…, shadow_catcher=…); api.sun_from_hdri();
-  api.flag(light, "FLAG" | "BLINDS" | "WINDOW" | "DAPPLE") (None removes it); api.only_product(light, True)
-  (light linking); haze: scene.render_studio.haze_density (0-0.2). Background: scene.render_studio.background_mode.
+  api.flag(light, "FLAG" | "BLINDS" | "WINDOW" | "DAPPLE") (None removes it); api.only_product(light, True);
+  haze: scene.render_studio.haze_density (0-0.2). Background: scene.render_studio.background_mode.
 - Check: render_preview (max_size 600).

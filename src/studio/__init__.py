@@ -15,12 +15,12 @@ import bpy
 from bpy.props import (EnumProperty, PointerProperty, StringProperty)
 from bpy.types import Operator, Panel
 
-from . import (addons, background, cameras, claude_link, core, env_ui, environment, foreign, hdri, lights, presets_io,
-               runner, shots, sync, tab_queue)
+from . import (addons, background, cameras, claude_link, core, env_ui, environment, foreign, hdri, light_paint, lights,
+               presets_io, runner, shots, sync, tab_queue)
 # Loaded for their side effects: the chat finds claude_tools (Claude's studio_* tools) in
 # sys.modules; api and variants are the helpers in execute_python.
 from . import api, baselib, claude_tools, variants  # noqa: F401
-from .props import RS_CameraSettings, RS_Item, RS_LightSettings, RS_Shot, RS_Preferences, RS_Settings, _apply_clipping
+from .props import RS_CameraSettings, RS_HdriPin, RS_Item, RS_LightSettings, RS_Shot, RS_Preferences, RS_Settings, _apply_clipping
 from .ui_common import STUDIO_TABS, _queue_progress_text, _unpin
 from .keymaps import register_keymaps, unregister_keymaps
 from .tab_camera import (RS_OT_camera_back, RS_OT_camera_from_view, RS_OT_dof_focus, RS_OT_duplicate_camera,
@@ -89,10 +89,6 @@ class RS_PT_tabs(Panel):
         row = self.layout.row(align=True)
         row.scale_y = 1.3
         row.prop(context.window_manager, "render_studio_tab", expand=True)
-        p = runner.prefs(context)
-        if p is not None:
-            sub = row.row(align=True)
-            sub.prop(p, "simple_view", text="", icon='HIDE_OFF' if not p.simple_view else 'HIDE_ON')
         if RUN.busy:   # rendering: compact, in every sub-tab – ring for the queue, ✕ cancels
             row = self.layout.row(align=True)
             row.progress(factor=RUN.list_progress, type='BAR', text=_queue_progress_text())
@@ -124,6 +120,7 @@ classes = render_setup.classes + (
     RS_CameraSettings,
     RS_Item,
     RS_Shot,
+    RS_HdriPin,
     RS_Settings,
     RS_OT_render_queue,
     RS_OT_cancel,
@@ -249,6 +246,7 @@ def register():
     foreign.register()
     addons.register()
     env_ui.register()
+    light_paint.register()
     presets_io.register()
     shots.register()
     cad_link.register()
@@ -272,6 +270,7 @@ def unregister():
     cad_link.unregister()
     shots.unregister()
     presets_io.unregister()
+    light_paint.unregister()
     env_ui.unregister()
     addons.unregister()
     foreign.unregister()

@@ -174,7 +174,7 @@ for view in ('COMPACT', 'FULL'):
             cube.data.materials.append(bpy.data.materials.new("Test"))
         wm.render_studio_tab = 'MATERIAL'
         run(bpy.types.RS_PT_material, ctx)
-# library: project / library, tiles / list; every tab in the simple view too
+# library: project / library, tiles / list; environment and render tabs with everything on
 studio_prefs = bpy.context.preferences.addons[PKG].preferences.studio
 for source in ('PROJECT', 'LIBRARY'):
     for lib_view in ('TILES', 'LIST'):
@@ -187,14 +187,18 @@ scene_rs.floor_mode = 'COVE'
 scene_rs.haze_density = 0.02
 scene_rs.background_mode = 'COLOR'
 bpy.ops.render_studio.shot_add()
-for simple in (False, True):
-    studio_prefs.simple_view = simple
+for world_mode in ('STUDIO', 'SKY', 'IMAGE'):
+    scene_rs.world_mode = world_mode
+    if world_mode == 'STUDIO':
+        scene_rs.hdri_pin_index = 0
+    wm.render_studio_tab = 'LIGHT'
+    run(bpy.types.RS_PT_lighting, ctx)
+for _once in (0,):
     for tab, panel in (('RENDER', "RS_PT_camera"), ('LIGHT', "RS_PT_lighting"), ('QUEUE', "RS_PT_render_queue")):
         wm.render_studio_tab = tab
         if hasattr(bpy.types, panel):
             run(getattr(bpy.types, panel), ctx)
     run(bpy.types.RS_PT_tabs, ctx)
-studio_prefs.simple_view = False
 wm.render_studio_sections = "lights\nworld\nbackdrop\nlibrary"   # every section closed
 for tab, panel in (('LIGHT', "RS_PT_lighting"), ('MATERIAL', "RS_PT_material")):
     wm.render_studio_tab = tab

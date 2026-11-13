@@ -8,7 +8,7 @@ import bpy
 from bpy.props import (BoolProperty, FloatProperty, IntProperty, StringProperty)
 from bpy.types import Menu, Operator, Panel
 
-from . import addons, api, background, env_ui, hdri, lights, presets_io, runner
+from . import addons, api, background, env_ui, hdri, light_paint, lights, presets_io, runner
 from .ui_common import (LIGHT_TAB_ORDER, _SidebarPanel, _report_value_error, _select_only, _unpin, section,
                         studio_tab)
 
@@ -494,8 +494,6 @@ class RS_PT_lighting(_SidebarPanel, Panel):
         scene = context.scene
         rs = scene.render_studio
         layout = self.layout
-        p = runner.prefs(context)
-        simple = p is not None and p.simple_view
 
         # Scene: one row, everything below as one preset
         env_ui.draw_scene_presets(layout, scene)
@@ -531,25 +529,34 @@ class RS_PT_lighting(_SidebarPanel, Panel):
                     row.label(text="", icon='SOLO_ON')
                 if obj == active:
                     details = col.box()
-                    _draw_light_details(details, obj, rs, simple)
+                    _draw_light_details(details, obj, rs)
                     col.separator()
 
         # World: the HDRI that lights the scene (also behind a transparent or colored background)
         box, head, is_open = section(layout, "world", "World", 'WORLD')
         if is_open:
-            _draw_world(box, scene, rs, simple)
-            env_ui.draw_world_extras(box, scene, simple)
-            if addons.has("psa"):
-                addons.draw_atmosphere(box, scene)
+            box.row(align=True).prop(rs, "world_mode", expand=True)
+            if rs.world_mode == 'STUDIO':
+                light_paint.draw_studio(box, scene)
+            elif rs.world_mode == 'SKY':
+                light_paint.draw_sky(box, scene)
+            else:
+                _draw_world(box, scene, rs)
+            col = box.column(align=True)
+            if rs.world_mode != 'IMAGE' and hdri.current_path(scene):
+                col.prop(rs, "world_strength")
+                if rs.world_mode == 'STUDIO':
+                    col.prop(rs, "world_rotation")
+            env_ui.draw_world_extras(col, scene, sun=rs.world_mode == 'IMAGE')
 
         # Backdrop: what the camera sees behind the product, and the floor it stands on
         box, head, is_open = section(layout, "backdrop", "Backdrop", 'IMAGE_BACKGROUND')
         if is_open:
-            env_ui.draw_backdrop(box, context, simple)
+            env_ui.draw_backdrop(box, context)
 
 
-def _draw_world(box, scene, rs, simple=False):
-    """The World: ◀ dropdown ▶ with the current HDRI, its preview (not in the simple view),
+def _draw_world(box, scene, rs):
+    """The World: ◀ dropdown ▶ with the current HDRI, its preview,
     strength and rotation."""
     path = hdri.current_path(scene)
     row = box.row(align=True)
@@ -560,7 +567,7 @@ def _draw_world(box, scene, rs, simple=False):
         row.menu(RS_MT_hdris.bl_idname, text=scene.world.name if scene.world else "No World", icon='WORLD')
     row.operator(RS_OT_hdri_step.bl_idname, text="", icon='TRIA_RIGHT').direction = 1
     if path:
-        icon = hdri.preview_icon(path) if not simple else None
+        icon = hdri.preview_icon(path)
         if icon:
             box.template_icon(icon_value=icon, scale=6.0)   # preview of the HDRI
         col = box.column(align=True)
@@ -570,7 +577,7 @@ def _draw_world(box, scene, rs, simple=False):
         box.prop(rs, "world_background_strength", text="Strength")
 
 
-def _draw_light_details(box, light, rs, simple=False):
+def _draw_light_details(box, light, rs):
     data = light.data
     row = box.row(align=True)
     row.prop(data, "type", expand=True, icon_only=True)
@@ -578,10 +585,15 @@ def _draw_light_details(box, light, rs, simple=False):
     row.operator(env_ui.RS_OT_solo_light.bl_idname, text="",
                  icon=env_ui.solo_icon(bpy.context.scene, light)).name = light.name
     row.operator(RS_OT_duplicate_light.bl_idname, text="", icon='DUPLICATE').name = light.name
-    if addons.has("lightwrangler"):
-        row.operator(addons.RS_OT_place_light.bl_idname, text="", icon='MOUSE_LMB_DRAG').name = light.name
+    light_paint.draw_place_row(box, name=light.name)
     col = box.column(align=True)
-    col.prop(data, "color", text="")
+    row = col.row(align=True)
+    if getattr(data, "use_temperature", False):
+        row.prop(data, "temperature", text="Kelvin")
+    else:
+        row.prop(data, "color", text="")
+    if hasattr(data, "use_temperature"):
+        row.prop(data, "use_temperature", text="", icon='TEMP')
     if data.type == 'AREA':
         if data.shape in {'RECTANGLE', 'ELLIPSE'}:
             row = col.row(align=True)
@@ -606,7 +618,5 @@ def _draw_light_details(box, light, rs, simple=False):
         col.prop(rs, "light_orbit_horizontal")
         col.prop(rs, "light_orbit_vertical")
         col.prop(rs, "light_orbit_distance")
-        if not simple:
-            col.prop(own, "height")
-    if not simple:
-        env_ui.draw_light_extras(box, light)
+        col.prop(own, "height")
+    env_ui.draw_light_extras(box, light)

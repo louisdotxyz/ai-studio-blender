@@ -219,13 +219,14 @@ class RS_OT_sun_from_hdri(Operator):
         return {'FINISHED'}
 
 
-def draw_world_extras(box, scene, simple=False):
-    """Sun from the HDRI and haze in one row."""
+def draw_world_extras(box, scene, sun=True):
+    """Sun from the HDRI (for an HDRI image) and haze in one row."""
     rs = scene.render_studio
     row = box.row(align=True)
-    row.operator(RS_OT_sun_from_hdri.bl_idname, text="Sun from HDRI", icon='LIGHT_SUN')
+    if sun:
+        row.operator(RS_OT_sun_from_hdri.bl_idname, text="Sun from HDRI", icon='LIGHT_SUN')
     row.prop(rs, "haze_density", text="Haze")
-    if rs.haze_density > 0 and not simple:
+    if rs.haze_density > 0:
         sub = row.row(align=True)
         sub.ui_units_x = 2
         sub.prop(rs, "haze_color", text="")
@@ -233,7 +234,7 @@ def draw_world_extras(box, scene, simple=False):
 
 # ------------------------------------------------------------------ backdrop: background and floor
 
-def draw_backdrop(box, context, simple=False):
+def draw_backdrop(box, context):
     """Background (what the camera sees behind the product) and floor, one line each, details below."""
     scene = context.scene
     rs = scene.render_studio
@@ -247,11 +248,10 @@ def draw_backdrop(box, context, simple=False):
             row.prop(rs, "background_color_top", text="")
         row.prop(rs, "background_color", text="")
         row.prop(rs, "use_gradient", text="", icon='IPO_EASE_IN_OUT')
-        if not simple:
-            row = col.row(align=True)
-            row.prop(rs, "noise_intensity", text="Noise")
-            if rs.noise_intensity > 0:
-                row.prop(rs, "noise_size", text="Size")
+        row = col.row(align=True)
+        row.prop(rs, "noise_intensity", text="Noise")
+        if rs.noise_intensity > 0:
+            row.prop(rs, "noise_size", text="Size")
     elif rs.background_mode == 'NORMAL':
         problems = background.world_problems(scene, context.space_data)
         if problems:
@@ -269,11 +269,10 @@ def draw_backdrop(box, context, simple=False):
     row.prop(rs, "floor_color", text="")
     row.prop(rs, "floor_roughness", text="Roughness", slider=True)
     row.prop(rs, "floor_shadow_catcher", text="", icon='GHOST_ENABLED')
-    if not simple:
-        row = col.row(align=True)
-        row.prop(rs, "floor_size")
-        if rs.floor_mode == 'COVE':
-            row.prop(rs, "floor_curve")
+    row = col.row(align=True)
+    row.prop(rs, "floor_size")
+    if rs.floor_mode == 'COVE':
+        row.prop(rs, "floor_curve")
 
 
 classes = (RS_OT_scene_preset, RS_OT_scene_preset_save, RS_OT_scene_preset_delete, RS_MT_scene_presets,

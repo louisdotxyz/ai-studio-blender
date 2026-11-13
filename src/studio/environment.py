@@ -414,7 +414,34 @@ def toggle_product_link(scene, light):
 
 # ------------------------------------------------------------------ scene presets
 
+_STUDIO_PINS = [
+    {"horizontal": -45, "vertical": 35, "width": 50, "height": 40, "strength": 10, "softness": 0.35},
+    {"horizontal": 60, "vertical": 15, "width": 70, "height": 50, "strength": 2.5, "softness": 0.6},
+    {"horizontal": 160, "vertical": 40, "width": 30, "height": 30, "strength": 8, "softness": 0.3},
+]
+
 BUILTIN_SCENES = {
+    "Studio Softboxes": {
+        "lights": None, "floor": {"mode": "COVE", "color": [0.85, 0.85, 0.85], "roughness": 0.5,
+                                  "shadow_catcher": False},
+        "background": {"mode": "COLOR", "color": [0.9, 0.9, 0.9], "gradient": False},
+        "world": {"mode": "STUDIO", "pins": _STUDIO_PINS, "ambient": 0.25},
+        "haze": 0.0, "look": {"glow": 0.0, "contrast": 0.1, "vignette": 0.0}},
+    "Daylight": {
+        "lights": None, "floor": {"mode": "FLOOR", "color": [0.5, 0.48, 0.45], "roughness": 0.8,
+                                  "shadow_catcher": True},
+        "background": {"mode": "NORMAL"}, "world": {"mode": "SKY", "time": 14.0},
+        "haze": 0.0, "look": {"glow": 0.0, "contrast": 0.1, "vignette": 0.0}},
+    "Golden Hour": {
+        "lights": None, "floor": {"mode": "FLOOR", "color": [0.5, 0.48, 0.45], "roughness": 0.8,
+                                  "shadow_catcher": True},
+        "background": {"mode": "NORMAL"}, "world": {"mode": "SKY", "time": 17.2},
+        "haze": 0.0, "look": {"glow": 0.1, "contrast": 0.15, "vignette": 0.15}},
+    "Night": {
+        "lights": "3-Point", "floor": {"mode": "FLOOR", "color": [0.1, 0.1, 0.11], "roughness": 0.4,
+                                       "shadow_catcher": False},
+        "background": {"mode": "NORMAL"}, "world": {"mode": "SKY", "time": 23.0},
+        "haze": 0.0, "look": {"glow": 0.2, "contrast": 0.2, "vignette": 0.3}},
     "Studio White": {
         "lights": "High Key", "floor": {"mode": "COVE", "color": [0.92, 0.92, 0.92], "roughness": 0.6,
                                          "shadow_catcher": False},
@@ -429,16 +456,6 @@ BUILTIN_SCENES = {
         "world": {"generate": {"name": "Dark Studio", "resolution": 1024, "sky": {"top": [0.05, 0.05, 0.06], "horizon": [0.02, 0.02, 0.02],
                                                               "ground": [0.0, 0.0, 0.0]}, "strength": 0.3}},
         "haze": 0.0, "look": {"glow": 0.15, "contrast": 0.35, "vignette": 0.3}},
-    "Outdoor": {
-        "lights": None, "floor": {"mode": "FLOOR", "color": [0.5, 0.48, 0.45], "roughness": 0.8,
-                                  "shadow_catcher": True},
-        "background": {"mode": "NORMAL"},
-        "world": {"generate": {"name": "Sunny Sky", "resolution": 1024, "sky": {"top": [0.35, 0.55, 1.0], "horizon": [0.85, 0.9, 1.0],
-                                                            "ground": [0.35, 0.33, 0.3]}, "strength": 1.0,
-                               "sun": {"horizontal": -30, "vertical": 40, "size": 1.0, "strength": 60,
-                                       "kelvin": 5600}},
-                  "atmosphere": True},
-        "haze": 0.0, "look": {"glow": 0.05, "contrast": 0.15, "vignette": 0.1}},
 }
 
 
@@ -471,9 +488,14 @@ def capture(scene, name):
     path = hdri.current_path(scene)
     preset["world"] = ({"hdri": path, "strength": rs.world_strength, "rotation": rs.world_rotation} if path
                        else {"world": scene.world.name if scene.world else ""})
-    from . import addons
-    if addons.has("psa"):
-        preset["world"]["atmosphere"] = addons.atmosphere_on(scene)
+    preset["world"]["mode"] = rs.world_mode
+    if rs.world_mode == 'STUDIO':
+        from . import world_modes
+        spec = world_modes.studio_spec(scene)
+        preset["world"].update(pins=spec["softboxes"], ambient=rs.studio_ambient, ambient_color=list(rs.studio_color),
+                               strength=rs.world_strength)
+    elif rs.world_mode == 'SKY':
+        preset["world"].update(time=rs.sky_time, north=rs.sky_north)
     preset["background"] = {"mode": rs.background_mode, "color": list(rs.background_color),
                             "gradient": rs.use_gradient, "top": list(rs.background_color_top)}
     preset["floor"] = {"mode": rs.floor_mode, "color": list(rs.floor_color), "roughness": rs.floor_roughness,
@@ -512,7 +534,32 @@ def apply_scene(scene, name):
     if spec:
         lights.apply_setup(scene, rs.light_orbit_target, lights.parse_setup(spec))
     world = preset.get("world") or {}
-    if world.get("hdri"):
+    from . import world_modes
+    if world.get("mode") == 'STUDIO' and "pins" in world:
+        rs.hdri_pins.clear()
+        for i, item in enumerate(world["pins"]):
+            pin = rs.hdri_pins.add()
+            pin["name"] = "Light %d" % (i + 1)
+            pin["horizontal"], pin["vertical"] = math.radians(item["horizontal"]), math.radians(item["vertical"])
+            pin["width"], pin["height"] = math.radians(item["width"]), math.radians(item["height"])
+            pin["strength"], pin["softness"] = item["strength"], item.get("softness", 0.35)
+            pin["shape"] = 1 if item.get("shape") == 'ROUND' else 0
+            pin["color"] = item.get("color", [1, 1, 1])[:3]
+        rs["studio_ambient"] = world.get("ambient", rs.studio_ambient)
+        rs["studio_color"] = world.get("ambient_color", list(rs.studio_color))[:3]
+        rs.world_mode = 'STUDIO'      # renders the studio and faces the camera
+        if "strength" in world:
+            rs.world_strength = world["strength"]
+    elif world.get("mode") == 'SKY':
+        rs["sky_time"] = world.get("time", rs.sky_time)
+        rs["sky_north"] = world.get("north", rs.sky_north)
+        rs.world_mode = 'SKY'
+    elif world.get("hdri") or world.get("generate") or world.get("world"):
+        if rs.world_mode != 'IMAGE':
+            rs.world_mode = 'IMAGE'   # leaves the sky / studio
+    if world.get("mode") in ('STUDIO', 'SKY'):
+        pass
+    elif world.get("hdri"):
         if os.path.isfile(world["hdri"]):
             hdri.apply(scene, world["hdri"], rs)
             rs.world_strength = world.get("strength", rs.world_strength)
@@ -524,15 +571,6 @@ def apply_scene(scene, name):
         api.hdri_setup(world["generate"], scene)
     elif world.get("world") and bpy.data.worlds.get(world["world"]):
         scene.world = bpy.data.worlds[world["world"]]
-    from . import addons
-    if "atmosphere" in world and addons.has("psa") and world["atmosphere"] != addons.atmosphere_on(scene):
-        try:
-            if world["atmosphere"]:
-                bpy.ops.psa.add_atmosphere()
-            else:
-                bpy.ops.psa.remove_atmosphere()
-        except (RuntimeError, AttributeError) as exc:
-            notes.append("Atmosphere: %s" % exc)
     bg = preset.get("background") or {}
     if bg.get("mode"):
         if "color" in bg:

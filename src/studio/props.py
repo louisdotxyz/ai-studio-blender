@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Settings of Render Studio: scene, camera, light and queue entry properties and the preferences."""
 
+import math
+
 import bpy
 from bpy.props import (BoolProperty, CollectionProperty, EnumProperty, FloatProperty, FloatVectorProperty,
                        IntProperty, PointerProperty, StringProperty)
@@ -239,6 +241,41 @@ class RS_Item(PropertyGroup):
     percentage: IntProperty(options={'HIDDEN'})
 
 
+def _pin_changed(self, context):
+    from . import world_modes
+    world_modes.on_change(self.id_data)
+
+
+class RS_HdriPin(PropertyGroup):
+    """A light on the studio HDRI (World › Studio): a softbox painted into the environment."""
+    name: StringProperty(name="Name", default="Light")
+    on: BoolProperty(name="On", default=True, update=_pin_changed)
+    horizontal: FloatProperty(name="Left / Right", description="Around the product: 0° = from the camera, "
+                              "negative = left", subtype='ANGLE', default=-0.785, soft_min=-math.pi,
+                              soft_max=math.pi, update=_pin_changed)
+    vertical: FloatProperty(name="Height", description="0° = at the horizon, 90° = straight from above",
+                            subtype='ANGLE', default=0.61, min=-math.pi / 2, max=math.pi / 2, update=_pin_changed)
+    width: FloatProperty(name="Width", subtype='ANGLE', default=0.87, min=0.02, max=math.pi, update=_pin_changed)
+    height: FloatProperty(name="Height", subtype='ANGLE', default=0.7, min=0.02, max=math.pi, update=_pin_changed)
+    strength: FloatProperty(name="Brightness", default=8.0, min=0.0, soft_max=50.0, update=_pin_changed)
+    softness: FloatProperty(name="Softness", description="0 = hard edge, 1 = fades out from the middle",
+                            subtype='FACTOR', default=0.35, min=0.0, max=1.0, update=_pin_changed)
+    shape: EnumProperty(name="Shape", items=(('RECT', "Rectangle", "A softbox"), ('ROUND', "Round", "A round light")),
+                        default='RECT', update=_pin_changed)
+    color: FloatVectorProperty(name="Color", subtype='COLOR_GAMMA', size=3, min=0.0, max=1.0,
+                               default=(1.0, 1.0, 1.0), update=_pin_changed)
+
+
+def _world_mode_changed(self, context):
+    from . import world_modes
+    world_modes.on_mode(context.scene)
+
+
+def _sky_changed(self, context):
+    from . import world_modes
+    world_modes.on_sky(context.scene)
+
+
 class RS_Shot(PropertyGroup):
     """A shot (Render tab): camera + scene preset + material variant + quality."""
     name: StringProperty(name="Name", default="Shot")
@@ -368,6 +405,24 @@ class RS_Settings(PropertyGroup):
         name="Noise Size", description="Size of the grain in pixels",
         default=1.0, min=1.0, soft_max=20.0, subtype='PIXEL', options=set(), update=background.on_color,
     )
+    # World (see world_modes.py): an HDRI image, a studio painted from lights, or a sky by time of day
+    world_mode: EnumProperty(
+        name="World",
+        items=[('IMAGE', "Image", "An HDRI image lights the scene"),
+               ('STUDIO', "Studio", "A studio environment made of lights you place (like an HDRI light editor)"),
+               ('SKY', "Sky", "A sky by time of day: day, golden hour, night")],
+        default='IMAGE', options=set(), update=_world_mode_changed)
+    hdri_pins: CollectionProperty(type=RS_HdriPin)
+    hdri_pin_index: IntProperty(default=-1, options=set())
+    studio_ambient: FloatProperty(name="Ambient", description="Brightness of the studio around the lights",
+                                  default=0.25, min=0.0, soft_max=2.0, options=set(), update=_pin_changed)
+    studio_color: FloatVectorProperty(name="Ambient Color", subtype='COLOR_GAMMA', size=3, min=0.0, max=1.0,
+                                      default=(1.0, 1.0, 1.0), options=set(), update=_pin_changed)
+    sky_time: FloatProperty(name="Time", description="Time of day (hours): the sun's height and direction follow",
+                            default=14.0, min=0.0, max=24.0, step=25, precision=1, options=set(),
+                            update=_sky_changed)
+    sky_north: FloatProperty(name="North", description="Turns the sky: where north is", subtype='ANGLE',
+                             default=0.0, options=set(), update=_sky_changed)
     # Environment tab (see environment.py)
     scene_preset: StringProperty(name="Scene Preset", default="", options=set())
     floor_mode: EnumProperty(
@@ -564,9 +619,6 @@ class RS_Preferences(PropertyGroup):
     mat_show_emission: BoolProperty(name="Emission", default=False)
     mat_show_transmission: BoolProperty(name="Transmission", default=False)
     mat_show_coat: BoolProperty(name="Coat", default=False)
-    simple_view: BoolProperty(
-        name="Simple View", description="Show only the main settings in the Studio tabs (the rest stays as it is)",
-        default=False)
     mat_library_view: EnumProperty(
         name="Library View",
         items=[('TILES', "Tiles", "Previews in a grid", 'IMGDISPLAY', 0),

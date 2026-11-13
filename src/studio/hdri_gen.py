@@ -111,6 +111,9 @@ def parse_world(spec):
             "height": math.radians(_num(box, "height", 20, 1, 180)),
             "strength": _num(box, "strength", 5.0, 0.0, 10000.0),
             "color": _color(box, [1.0, 1.0, 1.0]),
+            "round": str(box.get("shape", "RECT")).upper() == "ROUND",
+            # None: the classic hard-edged softbox; 0..1: how far the falloff reaches in from the edge
+            "softness": _num(box, "softness", 0.0, 0.0, 1.0) if "softness" in box else None,
         })
     return out
 
@@ -162,7 +165,12 @@ def render_pixels(world):
         d_el = el - box["vertical"]
         x = np.abs(d_az * np.cos(box["vertical"])) / (box["width"] / 2)
         y = np.abs(d_el) / (box["height"] / 2)
-        edge = np.clip((1.08 - np.maximum(x, y)) / 0.08, 0, 1)[..., None]
+        r = np.sqrt(x * x + y * y) if box.get("round") else np.maximum(x, y)
+        if box.get("softness") is None:
+            edge = np.clip((1.08 - r) / 0.08, 0, 1)[..., None]
+        else:
+            fall = np.clip((1.0 - r) / max(box["softness"], 0.03), 0, 1)
+            edge = (fall * fall * (3 - 2 * fall))[..., None]
         rgb = rgb + edge * np.asarray(_linear(box["color"]), np.float32) * box["strength"]
 
     return np.concatenate([rgb, np.ones((height, width, 1), np.float32)], axis=-1).astype(np.float32)

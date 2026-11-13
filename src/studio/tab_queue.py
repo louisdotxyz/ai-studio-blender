@@ -436,7 +436,6 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
         scene = context.scene
         rq = scene.render_studio
         p = runner.prefs(context)
-        simple = p is not None and p.simple_view
         if not RUN.busy:
             shots.draw_check(layout, scene)
 
@@ -446,7 +445,7 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
         row.label(text="", icon='SORTALPHA')
         row.prop(rq, "output_name", text="", placeholder=core.project_name())
         row.popover(RS_PT_output.__name__, text="", icon='PREFERENCES')
-        if p is not None and not simple:
+        if p is not None:
             row = col.row(align=True)
             row.label(text="", icon='FILE_FOLDER')
             row.prop(p, "output_root", text="", placeholder="Next to the .blend file")

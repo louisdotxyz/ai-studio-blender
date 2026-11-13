@@ -527,7 +527,8 @@ def section(objects, axis="X", offset=0.0, plane_object=None, keep=False, compar
 # ---------------------------------------------------------------- Environment tab
 
 def scene_preset(name, scene=None):
-    """Applies a scene preset (built-in: "Studio White", "Dark Moody", "Outdoor", or a saved one).
+    """Applies a scene preset (built-in: "Studio Softboxes", "Daylight", "Golden Hour", "Night", "Studio White",
+    "Dark Moody", or a saved one).
     Returns notes (e.g. a missing HDRI)."""
     from . import environment
     return environment.apply_scene(scene or bpy.context.scene, name)
@@ -573,3 +574,52 @@ def only_product(light, on=True, scene=None):
     light = bpy.data.objects[light] if isinstance(light, str) else light
     if environment.linked_to_product(light) != on:
         environment.toggle_product_link(scene or bpy.context.scene, light)
+
+
+def world(mode, time=None, pins=None, ambient=None, scene=None):
+    """The World: mode "IMAGE" (an HDRI file), "STUDIO" (lights painted into an HDRI) or "SKY" (by time of day).
+    time: hours for SKY (14 = afternoon, 17.2 = golden hour, 23 = night). pins: for STUDIO a list of
+    {"name", "horizontal", "vertical", "width", "height" (degrees), "strength", "softness" 0-1, "shape" RECT/ROUND,
+    "color"}; 0° horizontal = from the camera, negative = left."""
+    from . import world_modes
+    scene = scene or bpy.context.scene
+    rs = scene.render_studio
+    if time is not None:
+        rs["sky_time"] = float(time)
+    if ambient is not None:
+        rs["studio_ambient"] = float(ambient)
+    if pins is not None:
+        rs.hdri_pins.clear()
+        for i, item in enumerate(pins):
+            pin = rs.hdri_pins.add()
+            pin["name"] = str(item.get("name") or "Light %d" % (i + 1))
+            for key, default in (("horizontal", 0), ("vertical", 30), ("width", 40), ("height", 30)):
+                pin[key] = math.radians(float(item.get(key, default)))
+            pin["strength"], pin["softness"] = float(item.get("strength", 8)), float(item.get("softness", 0.35))
+            pin["shape"] = 1 if str(item.get("shape", "RECT")).upper() == "ROUND" else 0
+            pin["color"] = [float(c) for c in item.get("color", [1, 1, 1])][:3]
+    rs.world_mode = mode
+    return world_modes.studio_spec(scene) if mode == 'STUDIO' else mode
+
+
+def place_light(light, on_object, mode="REFLECTION", distance=None, scene=None):
+    """Place a light by a spot on the product, as seen from the active camera: the middle of `on_object` that
+    faces the camera. mode: REFLECTION (highlight there), ILLUMINATION (lit straight on), RIM (from behind)."""
+    from . import light_paint
+    scene = scene or bpy.context.scene
+    light = bpy.data.objects[light] if isinstance(light, str) else light
+    target = bpy.data.objects[on_object] if isinstance(on_object, str) else on_object
+    cam = scene.camera
+    if cam is None:
+        raise ValueError("No active camera")
+    eye = cam.matrix_world.translation
+    center = sum((target.matrix_world @ Vector(c) for c in target.bound_box), Vector()) / 8
+    view = (center - eye).normalized()
+    ok, hit, normal, _i, _o, _m = scene.ray_cast(bpy.context.evaluated_depsgraph_get(), eye, view)
+    if not ok:
+        raise ValueError("The camera does not see %s" % target.name)
+    direction = light_paint.light_direction(view, normal, mode)
+    if distance is None:
+        distance = max((light.matrix_world.translation - hit).length, 0.05)
+    light_paint.place_light(light, hit, direction, distance)
+    return [round(v, 4) for v in light.matrix_world.translation]

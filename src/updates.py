@@ -9,7 +9,8 @@ reads the repository's index.json in a thread, at most once a day. A newer versi
   the chat says so;
 - ASK: shown as a card in the chat with an Install button;
 - OFF: not looked for.
-Installed from a zip (no repository) there is nothing to update from: then nothing happens.
+Installed from a zip (no repository) the add-on's own install page (INDEX_URL) is the source:
+the new zip is downloaded and installed over the old one, into the same local repository.
 """
 
 import json
@@ -21,10 +22,11 @@ import urllib.request
 import bpy
 
 PKG_ID = "AI_Studio"
+INDEX_URL = "https://louisdotxyz.github.io/ai-studio-blender/index.json"
 CHECK_EVERY = 24 * 3600
 START_DELAY = 8.0
 
-state = {"available": "", "thread": None, "error": "", "installing": False}
+state = {"available": "", "thread": None, "error": "", "installing": False, "zip": ""}
 
 
 def _data_file():
@@ -81,6 +83,21 @@ def own_repo():
     return None
 
 
+def local_repo():
+    """The module name of the local repository a zip install lives in ("user_default"), else ""."""
+    parts = __package__.split(".")
+    return parts[1] if len(parts) >= 3 and parts[0] == "bl_ext" and own_repo() is None else ""
+
+
+def archive_in_index(data, version, index_url):
+    """The download address of this version's zip (archive_url is relative to the index)."""
+    import urllib.parse
+    for item in data.get("data", []):
+        if item.get("id") == PKG_ID and item.get("version") == version and item.get("archive_url"):
+            return urllib.parse.urljoin(index_url, item["archive_url"])
+    return ""
+
+
 def newest_in_index(data, blender=None):
     """The newest version of AI Studio in an index.json that this Blender can run."""
     blender = tuple(blender or bpy.app.version)
@@ -108,16 +125,21 @@ def check(force=False):
     if mode() == 'OFF' or not bpy.app.online_access:
         return False
     found = own_repo()
-    if found is None:
+    from_zip = found is None
+    if from_zip and not local_repo():
         return False
     if state["thread"] is not None and state["thread"].is_alive():
         return False
     data = _read()
     if not force and time.time() - data.get("checked", 0) < CHECK_EVERY:
-        if version_tuple(data.get("available")) > version_tuple(installed_version()):
-            state["available"] = data["available"]
-        return False
-    url = found[1].remote_url
+        known = version_tuple(data.get("available")) > version_tuple(installed_version())
+        if known and (not from_zip or os.path.isfile(data.get("zip", ""))):
+            state["available"], state["zip"] = data["available"], data.get("zip", "")
+            return False
+        if not known or not from_zip:
+            return False
+    url = INDEX_URL if from_zip else found[1].remote_url
+    folder = os.path.dirname(_data_file())
     current = installed_version()
     blender = tuple(bpy.app.version)
 
@@ -125,14 +147,25 @@ def check(force=False):
         try:
             request = urllib.request.Request(url, headers={"User-Agent": "Blender-AI-Studio"})
             with urllib.request.urlopen(request, timeout=15) as response:
-                newest = newest_in_index(json.loads(response.read().decode("utf-8")), blender)
+                index = json.loads(response.read().decode("utf-8"))
+            newest = newest_in_index(index, blender)
+            available = newest if version_tuple(newest) > version_tuple(current) else ""
+            path = ""
+            if available and from_zip:     # the zip itself, ready for install()
+                address = archive_in_index(index, available, url)
+                if not address.startswith("https://"):
+                    raise ValueError("no download for %s" % available)
+                path = os.path.join(folder, "%s-%s.zip" % (PKG_ID, available))
+                request = urllib.request.Request(address, headers={"User-Agent": "Blender-AI-Studio"})
+                with urllib.request.urlopen(request, timeout=60) as response, open(path + ".part", "wb") as f:
+                    f.write(response.read())
+                os.replace(path + ".part", path)
             state["error"] = ""
         except Exception as exc:
             state["error"] = str(exc)
             return
-        available = newest if version_tuple(newest) > version_tuple(current) else ""
-        state["available"] = available
-        _write(dict(_read(), checked=time.time(), available=available))
+        state["available"], state["zip"] = available, path
+        _write(dict(_read(), checked=time.time(), available=available, zip=path))
 
     state["thread"] = threading.Thread(target=run, name="ai-studio-updates", daemon=True)
     state["thread"].start()
@@ -149,16 +182,22 @@ def install():
     """Install the newer version now (Blender disables, replaces and enables the add-on).
     True when it was started."""
     found = own_repo()
-    if found is None or not state["available"] or state["installing"]:
+    repo = local_repo()
+    if not state["available"] or state["installing"]:
         return False
-    index, _repo = found
+    if found is None and not (repo and os.path.isfile(state["zip"])):
+        return False
     state["installing"] = True
     target = state["available"]
     _write(dict(_read(), updated_from=installed_version(), updated_to=target))
     try:
-        bpy.ops.extensions.repo_sync(repo_index=index)
-        bpy.ops.extensions.package_install(repo_index=index, pkg_id=PKG_ID, enable_on_install=True)
-    except (RuntimeError, AttributeError, TypeError) as exc:
+        if found is None:
+            bpy.ops.extensions.package_install_files(filepath=state["zip"], repo=repo, enable_on_install=True,
+                                                     overwrite=True)
+        else:
+            bpy.ops.extensions.repo_sync(repo_index=found[0])
+            bpy.ops.extensions.package_install(repo_index=found[0], pkg_id=PKG_ID, enable_on_install=True)
+    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
         state["error"] = str(exc)
         data = _read()
         data.pop("updated_to", None)

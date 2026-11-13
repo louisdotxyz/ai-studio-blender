@@ -295,11 +295,9 @@ class RS_PT_camera(_SidebarPanel, Panel):
         col.prop(rq, "orbit_vertical")
         if cam.data.type != 'ORTHO':   # orthographic: the distance changes nothing in the picture
             col.prop(rq, "orbit_distance")
-        p = runner.prefs(context)
-        if p is None or not p.simple_view:
-            col.prop(rq, "orbit_height")
-            col.prop(rq, "orbit_side_offset")
-            col.prop(rq, "orbit_up_offset")
+        col.prop(rq, "orbit_height")
+        col.prop(rq, "orbit_side_offset")
+        col.prop(rq, "orbit_up_offset")
 
         look.draw(layout, scene)
 

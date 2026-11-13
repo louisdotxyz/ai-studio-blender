@@ -29,7 +29,8 @@ ACTIVE = ".active.json"   # the checked skills, kept between Blender sessions
 IN_CHAT = {"camera", "light", "material"}
 # Earlier shipped versions (sha1 of the file): a copy the user never changed gets the new text.
 UPGRADES = {"cad": {"e7b3d80ae27d22995023a36ddcaab3b3761f1b97"},
-            "light": {"836f400f42ede6f5a887089f90528bf1e29da481", "dd0b9b9a2a01ef17ccf380bfc53708180e61224e"}}
+            "light": {"836f400f42ede6f5a887089f90528bf1e29da481", "dd0b9b9a2a01ef17ccf380bfc53708180e61224e",
+                      "f0af9312a69eafd23e268221be706be8fffab3ba"}}
 _FRONT = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.S)
 
 

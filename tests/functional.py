@@ -399,6 +399,68 @@ def environment_tab():
 
 
 @section
+def light_placing_and_worlds():
+    scene = bpy.context.scene
+    rs = scene.render_studio
+    paint, modes, env = mod("studio.light_paint"), mod("studio.world_modes"), mod("studio.environment")
+    view, normal = Vector((0, 1, 0)), Vector((0, -1, 0))
+    check("click placing: reflection straight back, light along the normal",
+          (paint.light_direction(view, normal, 'REFLECTION') - Vector((0, -1, 0))).length < 1e-6
+          and (paint.light_direction(view, Vector((1, -1, 0)), 'ILLUMINATION') - Vector((1, -1, 0)).normalized()).length < 1e-6)
+    tilted = paint.light_direction(view, Vector((1, -1, 0)), 'REFLECTION')
+    check("click placing: mirrored at a tilted face", (tilted - Vector((1, 0, 0))).length < 1e-6, tilted)
+    rim = paint.light_direction(view, normal, 'RIM')
+    check("click placing: rim comes from behind", rim.dot(view) > 0.3, rim)
+    light = mod("studio.lights").add_light(scene, None)
+    hit = Vector((0.1, 0.2, 0.3))
+    paint.place_light(light, hit, tilted, 2.0)
+    aim = (light.matrix_world.to_3x3() @ Vector((0, 0, -1))).normalized()
+    check("click placing: light at the distance, looking at the spot",
+          abs((light.matrix_world.translation - hit).length - 2.0) < 1e-5 and (aim + tilted).length < 1e-4)
+    bpy.data.objects.remove(light)
+    # the studio World: lights painted into an HDRI
+    rs.world_mode = 'STUDIO'
+    path = mod("studio.hdri").current_path(scene)
+    check("studio world: three lights, its own file", len(rs.hdri_pins) == 3 and path.endswith("Studio.hdr")
+          and os.path.isfile(path), path)
+    key = max(rs.hdri_pins, key=lambda p: p.strength)
+    image = env._env_image(scene)
+    brightest, _color = env.brightest_direction(image, rs.world_rotation)
+    check("studio world: brightest where the key light is", brightest.angle(modes.pin_direction(scene, key)) < 0.4,
+          math.degrees(brightest.angle(modes.pin_direction(scene, key))))
+    want = Vector((0.3, -0.5, 0.6)).normalized()
+    modes.set_pin_direction(scene, key, want)
+    check("studio world: a light follows a direction", modes.pin_direction(scene, key).angle(want) < 1e-4)
+    brightest, _color = env.brightest_direction(env._env_image(scene), rs.world_rotation)
+    check("studio world: rendered again after the change", brightest.angle(want) < 0.4, math.degrees(brightest.angle(want)))
+    name = env.save_scene(scene, "Pins")
+    rs.hdri_pins.clear()
+    env.apply_scene(scene, name)
+    check("scene preset keeps the studio lights", len(rs.hdri_pins) == 3 and rs.world_mode == 'STUDIO')
+    env.delete_scene("Pins")
+    # the sky by time of day
+    el, az = modes.sun_position(12.0)
+    el6, az6 = modes.sun_position(6.0)
+    check("sky: noon in the south, 6 h in the east at the horizon",
+          abs(math.degrees(el) - 43) < 1 and abs(math.degrees(az) - 180) < 1 and abs(math.degrees(el6)) < 1
+          and abs(math.degrees(az6) - 90) < 1, (math.degrees(el), math.degrees(az), math.degrees(el6), math.degrees(az6)))
+    rs.sky_time = 14.0
+    rs.world_mode = 'SKY'
+    day = modes.sky_spec(scene)
+    rs.sky_time = 23.0
+    night = modes.sky_spec(scene)
+    check("sky: day has a sun, night is dark", "sun" in day and "sun" not in night and night["strength"] < 0.1 < day["strength"])
+    if not modes.atmosphere_available():
+        check("sky: generated file used", mod("studio.hdri").current_path(scene).endswith("Sky.hdr"))
+    rs.world_mode = 'IMAGE'
+    up = mod("updates")
+    index = {"data": [{"id": "AI_Studio", "version": "9.9.9", "archive_url": "./AI_Studio-9.9.9.zip"}]}
+    check("updates: zip address from the install page",
+          up.archive_in_index(index, "9.9.9", up.INDEX_URL) == up.INDEX_URL.rsplit("/", 1)[0] + "/AI_Studio-9.9.9.zip")
+    check("updates: a zip install knows its local repository", up.local_repo() == PKG.split(".")[1], up.local_repo())
+
+
+@section
 def shots_presets_check():
     scene = bpy.context.scene
     rs = scene.render_studio
