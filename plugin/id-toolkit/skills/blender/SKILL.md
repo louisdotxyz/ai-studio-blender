@@ -39,6 +39,14 @@ print(S._context({"kind": "light"}))   # light format + subject size, camera, cu
   `{"action": "status"}`, `{"action": "cancel"}`.
 Brighter/darker or rotated World: `bpy.context.scene.render_studio.world_strength` / `world_rotation`.
 
+Environment in one call each (`api`):
+- `api.scene_preset("Studio White" | "Dark Moody" | "Outdoor" | <saved>)`: lights, World, background, floor,
+  haze and look together; `api.save_scene_preset(name)` keeps the current state.
+- `api.floor("COVE" | "FLOOR" | "NONE", color=(r, g, b), roughness=0.6, shadow_catcher=False)`.
+- `api.sun_from_hdri()`, `api.flag(light, "FLAG" | "BLINDS" | "WINDOW" | "DAPPLE")`, `api.only_product(light)`.
+- Background the camera sees: `scene.render_studio.background_mode` = `NORMAL` / `TRANSPARENT` / `COLOR`.
+- Several looks at once: shots in the Render tab (camera + scene preset + variant), `shots.render_shots(scene)`.
+
 ## Product render: the short path
 1. **Setup once per file:** `bpy.ops.render_studio.product_setup()` (Cycles on the GPU, good samples, denoising,
    AgX, mm, bounces for glass and metal). The user can undo it in the Studio tab.
