@@ -5,7 +5,7 @@ import bpy
 from bpy.props import (BoolProperty, FloatProperty, IntProperty, StringProperty)
 from bpy.types import Operator, Panel
 
-from . import background, cameras, look, runner, sync
+from . import cameras, look, runner, sync
 from .props import FORMAT_PRESETS, PPI
 from .ui_common import (RENDER_TAB_ORDER, _SidebarPanel, _look_through, _unpin,
                         active_camera, studio_tab)
@@ -298,33 +298,6 @@ class RS_PT_camera(_SidebarPanel, Panel):
         col.prop(rq, "orbit_height")
         col.prop(rq, "orbit_side_offset")
         col.prop(rq, "orbit_up_offset")
-
-        # Background
-        box = layout.box()
-        col = box.column(align=True)
-        col.row(align=True).prop(rq, "background_mode", expand=True)
-        space = context.space_data
-        if rq.background_mode == 'COLOR':
-            if rq.use_gradient:
-                col.prop(rq, "background_color_top", text="")
-            col.prop(rq, "background_color", text="")
-            col = box.column(align=True)
-            col.prop(rq, "use_gradient", toggle=True)
-            row = col.row(align=True)
-            row.prop(rq, "noise_intensity", text="Noise")
-            if rq.noise_intensity > 0:
-                row.prop(rq, "noise_size", text="Size")
-            shading = getattr(space, "shading", None)
-            if shading is not None and shading.type in {'SOLID', 'WIREFRAME'}:
-                box.label(text="Shown in Material Preview and Rendered", icon='INFO')
-        elif rq.background_mode == 'NORMAL':
-            # The World itself (HDRI, strength, rotation) is set in the Light tab.
-            problems = background.world_problems(scene, space)
-            if problems:
-                sub = box.column(align=True)
-                for text in problems:
-                    sub.label(text=text, icon='ERROR')
-                box.operator('render_studio.show_world', icon='WORLD')
 
         look.draw(layout, scene)
 

@@ -205,11 +205,29 @@ def material_library():
     for name in ("18DS115 | Gummi", "18DS115 | Alu"):
         bpy.data.materials.new(name)
     groups = dict(tab._library_groups())
-    check("component group", sorted(s for _m, s in groups.get("18DS115", [])) == ["Alu", "Gummi"], groups.keys())
+    check("groups by kind", [s for _m, s in groups.get("Rubber", [])] == ["Gummi"]
+          and "Alu" in [s for _m, s in groups.get("Metal", [])], list(groups))
+    kinds = {}
+    for name, values in (("Glas klar", {}), ("LED Streifen", {}), ("Mat A", {"Metallic": 1.0}),
+                         ("Mat B", {"Transmission Weight": 1.0}), ("Eiche geölt", {}), ("Plain", {})):
+        m = bpy.data.materials.new(name)
+        node = tab._principled(m)
+        for key, value in values.items():
+            node.inputs[key].default_value = value
+        kinds[name] = tab.material_kind(m)
+    check("kinds from name and shader", kinds == {"Glas klar": "Glass", "LED Streifen": "Light", "Mat A": "Metal",
+                                                  "Mat B": "Glass", "Eiche geölt": "Wood", "Plain": "Other"}, kinds)
+    lib = dict(tab._library_groups(source='LIBRARY'))
+    kind_items = [m for g, items in lib.items() if g not in (tab.FAVORITES_GROUP, tab.RECENT_GROUP)
+                  for m, _s in items]
+    check("library view: only base copies", all(m.get(tab.BASE_KEY) for m in kind_items), list(lib))
     bpy.ops.render_studio.material_new()
     check("new plain material", cube.active_material is not None and cube.active_material.name.startswith("Material"))
     bpy.ops.render_studio.material_assign(name="18DS115 | Gummi")
     check("assign from library", cube.active_material.name == "18DS115 | Gummi")
+    check("recent: the assigned one first", tab.recent()[:1] == ["18DS115 | Gummi"], tab.recent()[:3])
+    recent = dict(tab._library_groups()).get(tab.RECENT_GROUP, [])
+    check("recent group on top", recent and recent[0][0].name == "18DS115 | Gummi")
 
 
 @section
@@ -306,6 +324,67 @@ def studio_tools_offered():
     names = {t["name"] for t in mod("core").extension_tools()}
     check("studio tools offered to Claude", {"studio_render_queue", "studio_light_setup", "studio_hdri_setup",
                                              "studio_camera", "studio_base_material"} <= names, sorted(names))
+
+
+@section
+def environment_tab():
+    env = mod("studio.environment")
+    api = mod("studio.api")
+    scene = bpy.context.scene
+    rs = scene.render_studio
+    cube = bpy.data.objects["Cube"]
+    low = min((cube.matrix_world @ Vector(c)).z for c in cube.bound_box)
+    obj = api.floor("COVE", color=(0.8, 0.8, 0.8))
+    zmin = min((obj.matrix_world @ Vector(c)).z for c in obj.bound_box)
+    zmax = max((obj.matrix_world @ Vector(c)).z for c in obj.bound_box)
+    check("cove under the product", obj is not None and abs(zmin - low) < 1e-4 and zmax > low + 1.0, (zmin, low, zmax))
+    check("floor is not the product", obj not in env.product_objects(scene) and cube in env.product_objects(scene))
+    rs.floor_mode = 'FLOOR'
+    flat = bpy.data.objects.get(env.FLOOR_NAME)
+    check("flat floor", flat is not None and max((flat.matrix_world @ Vector(c)).z for c in flat.bound_box) - low < 1e-4)
+    rs.floor_mode = 'NONE'
+    check("no floor", bpy.data.objects.get(env.FLOOR_NAME) is None)
+    rs.haze_density = 0.05
+    out = env._world_output(scene.world)
+    check("haze in the World volume", out is not None and out.inputs["Volume"].is_linked
+          and scene.world.node_tree.nodes.get(env.HAZE_NODE) is not None)
+    rs.haze_density = 0.0
+    check("haze off removes it", scene.world.node_tree.nodes.get(env.HAZE_NODE) is None)
+    created = api.light_setup(mod("studio.lights").BUILTIN_PRESETS["3-Point"])
+    key, fill = created[0], created[1]
+    env.toggle_solo(scene, key)
+    check("solo: only this light renders", not key.hide_render and all(o.hide_render for o in created[1:]))
+    env.toggle_solo(scene, key)
+    check("solo again: all back", not any(o.hide_render for o in created))
+    api.only_product(fill, True)
+    coll = fill.light_linking.receiver_collection
+    check("light linking: only the product", coll is not None and cube.name in coll.objects)
+    api.only_product(fill, False)
+    check("light linking off", fill.light_linking.receiver_collection is None)
+    flag = api.flag(key, "BLINDS")
+    check("gobo in front of the light", flag is not None and flag.parent == key and not flag.visible_camera
+          and flag.visible_shadow and env.flag_of(key) == flag)
+    api.flag(key, None)
+    check("gobo removed", env.flag_of(key) is None)
+    name = env.save_scene(scene, "Test Scene")
+    rs.floor_mode = 'COVE'
+    notes = env.apply_scene(scene, name)
+    check("scene preset round trip", rs.floor_mode == 'NONE' and rs.scene_preset == "Test Scene", (rs.floor_mode, notes))
+    env.delete_scene("Test Scene")
+    env.apply_scene(scene, "Studio White")
+    check("built-in scene", rs.floor_mode == 'COVE' and rs.background_mode == 'COLOR'
+          and bpy.data.objects.get(env.FLOOR_NAME) is not None)
+    api.hdri_setup({"name": "Sun Test", "resolution": 256, "sky": {"top": [0.2, 0.3, 0.6], "horizon": [0.6, 0.7, 0.9],
+                    "ground": [0.2, 0.2, 0.2]}, "strength": 1.0,
+                    "sun": {"horizontal": 0, "vertical": 40, "size": 3, "strength": 80, "kelvin": 5600}})
+    sun = api.sun_from_hdri()
+    up = (sun.matrix_world.to_3x3() @ Vector((0, 0, 1))).normalized()
+    check("sun from HDRI: above the horizon at about 40°", sun.data.type == 'SUN'
+          and abs(math.degrees(math.asin(up.z)) - 40) < 8, math.degrees(math.asin(up.z)))
+    for o in mod("studio.lights").scene_lights(scene):
+        bpy.data.objects.remove(o)
+    rs.floor_mode = 'NONE'
+    rs.background_mode = 'NORMAL'
 
 
 @section

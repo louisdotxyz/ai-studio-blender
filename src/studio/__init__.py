@@ -15,7 +15,7 @@ import bpy
 from bpy.props import (EnumProperty, PointerProperty, StringProperty)
 from bpy.types import Operator, Panel
 
-from . import addons, background, cameras, claude_link, core, foreign, hdri, lights, runner, sync, tab_queue
+from . import addons, background, env_ui, environment, cameras, claude_link, core, foreign, hdri, lights, runner, sync, tab_queue
 # Loaded for their side effects: the chat finds claude_tools (Claude's studio_* tools) in
 # sys.modules; api and variants are the helpers in execute_python.
 from . import api, baselib, claude_tools, variants  # noqa: F401
@@ -200,6 +200,10 @@ def register():
         name="Studio Tab", items=STUDIO_TABS, default='RENDER', options={'SKIP_SAVE'})
     # Material library groups toggled from their default (one name per line)
     bpy.types.WindowManager.render_studio_mat_open = StringProperty(options={'SKIP_SAVE'})
+    bpy.types.WindowManager.render_studio_mat_source = EnumProperty(
+        name="Library", options={'SKIP_SAVE'}, default='PROJECT',
+        items=[('PROJECT', "Project", "The materials of this file"),
+               ('LIBRARY', "Library", "Your materials for every project (the base material library)")])
     bpy.types.WindowManager.render_studio_mat_search = StringProperty(
         name="Search", description="Show only materials whose name contains this", options={'SKIP_SAVE'})
     bpy.types.UI_MT_button_context_menu.append(draw_tile_menu)
@@ -218,6 +222,7 @@ def register():
     background.register()
     foreign.register()
     addons.register()
+    env_ui.register()
     cad_link.register()
 
     register_keymaps()
@@ -237,6 +242,7 @@ def unregister():
         runner.on_live_image.remove(tab_queue.on_live_image)
 
     cad_link.unregister()
+    env_ui.unregister()
     addons.unregister()
     foreign.unregister()
     background.unregister()
@@ -254,6 +260,7 @@ def unregister():
     del bpy.types.WindowManager.render_studio_tab
     del bpy.types.WindowManager.render_studio_mat_open
     del bpy.types.WindowManager.render_studio_mat_search
+    del bpy.types.WindowManager.render_studio_mat_source
     bpy.types.UI_MT_button_context_menu.remove(draw_tile_menu)
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

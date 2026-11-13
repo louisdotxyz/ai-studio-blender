@@ -186,6 +186,21 @@ def _material_pick_update(settings, context):
     settings.material_source = None
 
 
+
+def _floor_changed(self, context):
+    from . import environment
+    environment.on_floor(self, context)
+
+
+def _floor_look_changed(self, context):
+    from . import environment
+    environment.on_floor_look(self, context)
+
+
+def _haze_changed(self, context):
+    from . import environment
+    environment.on_haze(self, context)
+
 class RS_CameraSettings(PropertyGroup):
     short_name: StringProperty(
         name="Name", description="Rename the camera: \"side\" becomes \"P_side_01\" (Preferences › Studio › "
@@ -341,6 +356,33 @@ class RS_Settings(PropertyGroup):
         name="Noise Size", description="Size of the grain in pixels",
         default=1.0, min=1.0, soft_max=20.0, subtype='PIXEL', options=set(), update=background.on_color,
     )
+    # Environment tab (see environment.py)
+    scene_preset: StringProperty(name="Scene Preset", default="", options=set())
+    floor_mode: EnumProperty(
+        name="Floor",
+        items=[('NONE', "None", "No floor of our own"),
+               ('FLOOR', "Floor", "A floor under the product"),
+               ('COVE', "Cove", "A floor that curves up into a back wall (infinity cove), opposite the camera")],
+        default='NONE', options=set(), update=_floor_changed)
+    floor_color: FloatVectorProperty(name="Floor Color", subtype='COLOR_GAMMA', size=3, min=0.0, max=1.0,
+                                     default=(0.9, 0.9, 0.9), options=set(), update=_floor_look_changed)
+    floor_roughness: FloatProperty(name="Roughness", description="0 = mirror-like reflections, 1 = matte",
+                                   default=0.6, min=0.0, max=1.0, subtype='FACTOR', options=set(),
+                                   update=_floor_look_changed)
+    floor_size: FloatProperty(name="Size", description="Width of the floor as a multiple of the product's size",
+                              default=6.0, min=2.0, soft_max=30.0, options=set(), update=_floor_changed)
+    floor_curve: FloatProperty(name="Curve", description="How round the cove curves up into the wall",
+                               default=0.35, min=0.0, max=1.0, subtype='FACTOR', options=set(),
+                               update=_floor_changed)
+    floor_shadow_catcher: BoolProperty(
+        name="Shadow Catcher", description="The floor itself is invisible, only shadows and reflections on it "
+        "stay (with a transparent or colored background)", default=False, options=set(),
+        update=_floor_look_changed)
+    haze_density: FloatProperty(name="Haze", description="Haze in the air: makes light beams visible (0 = off). "
+                                "Slower renders", default=0.0, min=0.0, soft_max=0.2, options=set(),
+                                update=_haze_changed)
+    haze_color: FloatVectorProperty(name="Haze Color", subtype='COLOR_GAMMA', size=3, min=0.0, max=1.0,
+                                    default=(1.0, 1.0, 1.0), options=set(), update=_haze_changed)
     world_background_strength: FloatProperty(
         name="World Strength", description="Strength of the World's Background node (HDRI brightness)",
         min=0.0, soft_max=5.0, get=background.get_world_strength, set=background.set_world_strength,
@@ -510,6 +552,11 @@ class RS_Preferences(PropertyGroup):
     mat_show_emission: BoolProperty(name="Emission", default=False)
     mat_show_transmission: BoolProperty(name="Transmission", default=False)
     mat_show_coat: BoolProperty(name="Coat", default=False)
+    mat_library_view: EnumProperty(
+        name="Library View",
+        items=[('TILES', "Tiles", "Previews in a grid", 'IMGDISPLAY', 0),
+               ('LIST', "List", "One material per row, more at a glance", 'ALIGN_JUSTIFY', 1)],
+        default='TILES')
     mat_preview: BoolProperty(name="Preview", description="Show a preview image of the material", default=True)
     mat_preview_size: EnumProperty(
         name="Preview Size",

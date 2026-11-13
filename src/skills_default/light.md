@@ -21,4 +21,9 @@ Know:
 - Other add-ons: studio_context lists the ones that are on and how to reach them (atmosphere from Physical
   Starlight & Atmosphere, placing with Light Wrangler). Use them for what they add; do not rebuild a light setup
   with add-ons the Light tab covers (Quick Studio Light, QLE, Tri-lighting).
+- Environment tab helpers (api is ready in execute_python): api.scene_preset("Studio White" | "Dark Moody" |
+  "Outdoor" | saved name) sets lights, World, background, floor, haze and look together;
+  api.floor("COVE" | "FLOOR" | "NONE", color=(r, g, b), roughness=…, shadow_catcher=…); api.sun_from_hdri();
+  api.flag(light, "FLAG" | "BLINDS" | "WINDOW" | "DAPPLE") (None removes it); api.only_product(light, True)
+  (light linking); haze: scene.render_studio.haze_density (0-0.2). Background: scene.render_studio.background_mode.
 - Check: render_preview (max_size 600).

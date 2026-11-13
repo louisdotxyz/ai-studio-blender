@@ -522,3 +522,54 @@ def section(objects, axis="X", offset=0.0, plane_object=None, keep=False, compar
                 result[obj.name]["to_" + objects[0].name + "_mm"] = {
                     "mean": round(sum(dists) / len(dists) * 1000, 2), "max": round(max(dists) * 1000, 2)}
     return result
+
+
+# ---------------------------------------------------------------- Environment tab
+
+def scene_preset(name, scene=None):
+    """Applies a scene preset (built-in: "Studio White", "Dark Moody", "Outdoor", or a saved one).
+    Returns notes (e.g. a missing HDRI)."""
+    from . import environment
+    return environment.apply_scene(scene or bpy.context.scene, name)
+
+
+def save_scene_preset(name, scene=None):
+    from . import environment
+    return environment.save_scene(scene or bpy.context.scene, name)
+
+
+def floor(mode="COVE", color=None, roughness=None, size=None, curve=None, shadow_catcher=None, scene=None):
+    """Studio floor under the product: mode NONE / FLOOR / COVE; color as sRGB (0-1). Returns the object."""
+    from . import environment
+    scene = scene or bpy.context.scene
+    rs = scene.render_studio
+    for prop, value in (("floor_color", color), ("floor_roughness", roughness), ("floor_size", size),
+                        ("floor_curve", curve), ("floor_shadow_catcher", shadow_catcher)):
+        if value is not None:
+            setattr(rs, prop, value)
+    rs.floor_mode = mode
+    return environment.build_floor(scene)
+
+
+def sun_from_hdri(scene=None):
+    """A sun light where the HDRI is brightest. Returns the light object."""
+    from . import environment
+    return environment.sun_from_hdri(scene or bpy.context.scene)
+
+
+def flag(light, pattern="FLAG", scene=None):
+    """Flag or gobo in front of a light: FLAG, BLINDS, WINDOW, DAPPLE. pattern=None removes it."""
+    from . import environment
+    light = bpy.data.objects[light] if isinstance(light, str) else light
+    if pattern is None:
+        environment.remove_flag(light)
+        return None
+    return environment.add_flag(scene or bpy.context.scene, light, pattern)
+
+
+def only_product(light, on=True, scene=None):
+    """Light linking: the light lights only the product (True) or everything (False)."""
+    from . import environment
+    light = bpy.data.objects[light] if isinstance(light, str) else light
+    if environment.linked_to_product(light) != on:
+        environment.toggle_product_link(scene or bpy.context.scene, light)

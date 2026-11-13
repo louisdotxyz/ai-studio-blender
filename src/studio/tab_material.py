@@ -459,20 +459,27 @@ def _copy_color(source, target):
 
 class RS_OT_material_to_base(Operator):
     bl_idname = "render_studio.material_to_base"
-    bl_label = "Save to Base Materials"
-    bl_description = ("Save the active material into the base material library, so every project can use it "
+    bl_label = "Save to Library"
+    bl_description = ("Save the material into your library, so every project can use it "
                       "(replaces one of the same name)")
     bl_options = {'INTERNAL'}
 
+    name: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})   # empty: the current material
+
+    def _material(self, context):
+        return bpy.data.materials.get(self.name) if self.name else current_material(context)
+
     @classmethod
     def poll(cls, context):
-        obj = context.active_object
-        return obj is not None and obj.active_material is not None and bool(base_library_file())
+        return bool(base_library_file())
 
     def invoke(self, context, event):
-        material = context.active_object.active_material
+        material = self._material(context)
+        if material is None:
+            self.report({'WARNING'}, "No material to save")
+            return {'CANCELLED'}
         return context.window_manager.invoke_confirm(
-            self, event, title="Save to base materials?",
+            self, event, title="Save to your library?",
             message="%s goes into %s" % (material.get(BASE_KEY) or material.name,
                                          os.path.basename(base_library_file())),
             confirm_text="Save")
@@ -480,11 +487,11 @@ class RS_OT_material_to_base(Operator):
     def execute(self, context):
         from . import baselib
         try:
-            name = baselib.save(context.active_object.active_material)
+            name = baselib.save(self._material(context))
         except Exception as ex:
             self.report({'ERROR'}, str(ex))
             return {'CANCELLED'}
-        self.report({'INFO'}, "%s saved to the base materials" % name)
+        self.report({'INFO'}, "%s saved to your library" % name)
         return {'FINISHED'}
 
 
@@ -527,7 +534,7 @@ class RS_OT_material_assign(Operator):
         material = bpy.data.materials.get(props.name)
         count = len(material_users().get(material, ())) if material is not None else 0
         used = "Used by %d object%s" % (count, "" if count == 1 else "s") if count else "Not used"
-        return (used + ".\nClick: every object with the current material switches to this one. "
+        return (props.name + "\n" + used + ".\nClick: every object with the current material switches to this one. "
                 "Shift: only the selected objects. Ctrl: select the objects that use it. Right-click: more")
 
     def invoke(self, context, event):
@@ -567,6 +574,8 @@ _current = [""]
 
 def remember(material):
     _current[0] = material.name if material is not None else ""
+    if material is not None:
+        add_recent(material.name)
 
 
 def current_material(context):
@@ -625,6 +634,87 @@ def toggle_favorite(name):
     with open(_favorites_file(), "w", encoding="utf-8") as f:
         json.dump(sorted(favs), f, indent=1)
     return name in favs
+
+
+RECENT_MAX = 8
+_recent = []
+
+
+def _recent_file():
+    from .paths import data_dir
+    return os.path.join(data_dir(), "material_recent.json")
+
+
+def recent():
+    """Names of the materials used last (newest first), for every project."""
+    if not _recent:
+        try:
+            with open(_recent_file(), encoding="utf-8") as f:
+                _recent.append([n for n in json.load(f) if isinstance(n, str)])
+        except (OSError, ValueError):
+            _recent.append([])
+    return _recent[0]
+
+
+def add_recent(name):
+    names = recent()
+    if names[:1] == [name]:
+        return
+    if name in names:
+        names.remove(name)
+    names.insert(0, name)
+    del names[RECENT_MAX:]
+    try:
+        with open(_recent_file(), "w", encoding="utf-8") as f:
+            json.dump(names, f, indent=1)
+    except OSError:
+        pass
+
+
+# What a material is, for the library groups: a word in its name first, then its shader values.
+KINDS = ("Metal", "Plastic", "Glass", "Rubber", "Wood", "Fabric", "Light", "Other")
+_KIND_WORDS = (   # (kind, exact words, word beginnings)
+    ("Glass", {"pc", "pmma"}, ("glass", "glas", "acryl", "plexi", "clear", "klar", "transpar", "frosted",
+                                "milchig", "satin", "diffus", "lens", "linse")),
+    ("Light", {"led"}, ("light", "emiss", "leucht", "lamp", "glow")),
+    ("Rubber", {"tpu", "tpe", "epdm"}, ("rubber", "gummi", "silikon", "silicon", "foam", "schaum")),
+    ("Wood", {"mdf", "osb"}, ("wood", "holz", "oak", "eiche", "birch", "birke", "ash", "esche", "walnut",
+                              "nuss", "plywood", "sperrholz", "furnier", "veneer", "bamboo", "bambus", "cork", "kork")),
+    ("Fabric", set(), ("fabric", "stoff", "textil", "cloth", "felt", "filz", "leather", "leder", "mesh", "gewebe")),
+    ("Metal", {"alu", "inox", "zink", "zinc"}, ("metal", "steel", "stahl", "alumin", "chrom", "brass", "messing",
+                                                 "copper", "kupfer", "iron", "eisen", "titan", "gold", "silber",
+                                                 "silver", "bronze", "nickel", "anodi", "eloxi", "kupfer")),
+    ("Plastic", {"abs", "pla", "petg", "pp", "pe", "pa", "pa12", "pom", "asa", "pvc", "nylon"},
+     ("plastic", "kunststoff", "polycarb", "resin", "harz", "lack", "paint", "powder", "pulver")),
+)
+
+
+def material_kind(material):
+    """One of KINDS: words in the name (German or English) decide first, then the shader."""
+    words = [w for w in re.split(r"[^a-z0-9äöü]+", material.name.lower()) if w]
+    for kind, exact, starts in _KIND_WORDS:
+        if any(w in exact or w.startswith(starts) for w in words):
+            return kind
+    node = _principled(material)
+    if node is None:
+        return "Other"
+
+    def value(name, default=0.0):
+        socket = node.inputs.get(name)
+        if socket is None or socket.is_linked:
+            return default
+        try:
+            return float(socket.default_value)
+        except TypeError:
+            return default
+    if value("Transmission Weight") > 0.5:
+        return "Glass"
+    color = node.inputs.get("Emission Color")
+    if value("Emission Strength") > 0 and color is not None and max(color.default_value[:3]) > 0.01:
+        return "Light"
+    if value("Metallic") > 0.5:
+        return "Metal"
+    return "Other"
 
 
 def variant_name(material):
@@ -797,6 +887,8 @@ def draw_tile_menu(self, context):
     layout.operator(RS_OT_material_favorite.bl_idname, icon='SOLO_ON' if fav else 'SOLO_OFF',
                     text="Remove from Favorites" if fav else "Add to Favorites").name = material.name
     layout.operator(RS_OT_material_rename.bl_idname, text="Rename…", icon='GREASEPENCIL').name = material.name
+    if base_library_file():
+        layout.operator(RS_OT_material_to_base.bl_idname, icon='EXPORT').name = material.name
     if not material.get(BASE_KEY):
         layout.operator(RS_OT_material_delete.bl_idname, text="Delete…", icon='TRASH').name = material.name
 
@@ -885,32 +977,42 @@ def _schedule_base_append():
 
 
 FAVORITES_GROUP = "Favorites"
+RECENT_GROUP = "Recent"
 
 
-def _library_groups(search=""):
-    """[(group, [(material, short name)])]: favorites, the project's own materials, the base
-    materials, and components: "Driver X | Rubber" belongs to the group "Driver X"."""
-    groups = {}
-    base = base_group()
+def _in_source(material, source, used):
+    """Project: the file's own materials and the base copies it uses. Library: the base copies."""
+    if source == 'LIBRARY':
+        return bool(material.get(BASE_KEY))
+    return not material.get(BASE_KEY) or material in used
+
+
+def _short(material):
+    """ "Driver X | Rubber" shows as "Rubber" in a tile (the full name is in its tooltip)."""
+    head, sep, rest = material.name.partition(" | ")
+    return rest.strip() if sep and rest.strip() else material.name
+
+
+def _library_groups(search="", source='PROJECT'):
+    """[(group, [(material, short name)])]: favorites and recently used ones on top (from both sources),
+    then the source's materials by kind (KINDS order)."""
     search = search.strip().lower()
-    favs = favorites()
-    for mat in _library_materials():
-        if search and search not in mat.name.lower():
-            continue
-        if mat.name in favs:
-            groups.setdefault(FAVORITES_GROUP, []).append((mat, mat.name))
-        head, sep, rest = mat.name.partition(" | ")
-        if mat.get(BASE_KEY):
-            group, short = base, mat.name
-        elif sep and rest.strip():
-            group, short = head.strip(), rest.strip()
-        else:
-            group, short = PROJECT_GROUP, mat.name
-        groups.setdefault(group, []).append((mat, short))
-    if base not in groups and base_library_file():
-        groups[base] = []   # shown closed; opening it copies the materials in
-    order = sorted(groups, key=lambda g: (g != FAVORITES_GROUP, g != PROJECT_GROUP, g != base, g.lower()))
-    return [(g, groups[g]) for g in order]
+    favs, used = favorites(), material_users()
+    mats = [m for m in _library_materials() if not search or search in m.name.lower()]
+    by_name = {m.name: m for m in mats}
+    groups = []
+    top = [(m, _short(m)) for m in mats if m.name in favs]
+    if top:
+        groups.append((FAVORITES_GROUP, top))
+    last = [(by_name[n], _short(by_name[n])) for n in recent() if n in by_name and n not in favs]
+    if last and not search:
+        groups.append((RECENT_GROUP, last))
+    kinds = {}
+    for m in mats:
+        if _in_source(m, source, used):
+            kinds.setdefault(material_kind(m), []).append((m, _short(m)))
+    groups += [(kind, kinds[kind]) for kind in KINDS if kind in kinds]
+    return groups
 
 
 LIBRARY_COLUMNS = 4
@@ -1019,53 +1121,78 @@ class RS_PT_material(_SidebarPanel, Panel):
 
     @staticmethod
     def _draw_library(layout, context, material, node):
+        from ..i18n import tr
         box = layout.box()
+        wm = context.window_manager
+        p = runner.prefs(context)
         row = box.row()
         row.label(text="Library", icon='ASSET_MANAGER')
         row.operator(RS_OT_material_to_base.bl_idname, text="", icon='EXPORT')
         row.menu(RS_MT_material_new.bl_idname, text="", icon='ADD')
-        wm = context.window_manager
-        box.prop(wm, "render_studio_mat_search", text="", icon='VIEWZOOM')
+        row = box.row(align=True)
+        row.prop(wm, "render_studio_mat_source", expand=True)
+        if p is not None:
+            sub = row.row(align=True)
+            sub.prop(p, "mat_library_view", expand=True, icon_only=True)
+        source = wm.render_studio_mat_source
+        row = box.row(align=True)
+        row.prop(wm, "render_studio_mat_search", text="", icon='VIEWZOOM')
+        unused = len(unused_materials()) if source == 'PROJECT' else 0
+        if unused:
+            row.operator(RS_OT_material_clean_unused.bl_idname, text=str(unused), icon='TRASH')
         search = wm.render_studio_mat_search
         _ensure_base_library()
         from .. import setup_flow
         if setup_flow.running() and setup_flow.flow["step"] == "materials":
             box.label(text="Creating the base materials…", icon='TIME')
-        groups = _library_groups(search)
+        if source == 'LIBRARY':
+            _schedule_base_append()   # copies the library's materials in (unused copies are not saved)
+        groups = _library_groups(search, source)
         if not groups:
-            box.label(text="No match" if search else "No materials in this file", icon='INFO')
+            if source == 'LIBRARY' and base_library_file() and not search:
+                box.label(text="Loading…", icon='TIME')
+            else:
+                box.label(text="No match" if search else "No materials yet", icon='INFO')
             return
         users = material_users()
-        unused = len(unused_materials())
-        opened = set(wm.render_studio_mat_open.split("\n"))
+        closed = set(wm.render_studio_mat_open.split("\n"))
+        tiles = p is None or p.mat_library_view == 'TILES'
         for group, items in groups:
-            # Favorites and the project's own materials are open unless closed, the others closed
-            # unless opened; while searching every group with a match is open.
-            is_open = bool(search) or (group in (FAVORITES_GROUP, PROJECT_GROUP)) != (group in opened)
-            if len(groups) > 1:
-                head = box.row(align=True)
-                head.emboss = 'NONE'
-                head.operator(RS_OT_material_group_toggle.bl_idname,
-                              text="%s  (%d)" % (group, len(items)) if items else group,
-                              icon='DOWNARROW_HLT' if is_open else 'RIGHTARROW').name = group
-                if group == PROJECT_GROUP and unused:
-                    head.operator(RS_OT_material_clean_unused.bl_idname, text="%d unused" % unused,
-                                  icon='TRASH')
+            is_open = bool(search) or group not in closed
+            head = box.row(align=True)
+            left = head.row(align=True)
+            left.alignment = 'LEFT'
+            left.emboss = 'NONE'
+            left.operator(RS_OT_material_group_toggle.bl_idname, text=tr(group),
+                          icon='DOWNARROW_HLT' if is_open else 'RIGHTARROW').name = group
+            right = head.row(align=True)
+            right.alignment = 'RIGHT'
+            right.active = False
+            right.label(text=str(len(items)))
             if not is_open:
                 continue
-            if group == base_group():
-                _schedule_base_append()   # new ones in the library file
-                if not items:
-                    box.label(text="Loading…", icon='TIME')
-                    continue
-            grid = box.grid_flow(row_major=True, columns=LIBRARY_COLUMNS, even_columns=True, align=False)
-            for mat, short in items:
-                count = len(users.get(mat, ()))
-                cell = grid.column(align=True)
-                cell.active = bool(count) or mat == material or bool(mat.get(BASE_KEY))
-                pic = cell.box() if mat == material else cell.column()
-                pic.template_icon(icon_value=layout.icon(mat), scale=LIBRARY_ICON_SCALE)
-                name = cell.row(align=True)
-                name.scale_y = 0.75
-                name.operator(RS_OT_material_assign.bl_idname, text="%d× %s" % (count, short) if count else short,
-                              depress=(mat == material), emboss=(mat == material)).name = mat.name
+            if tiles:
+                grid = box.grid_flow(row_major=True, columns=LIBRARY_COLUMNS, even_columns=True, align=False)
+                for mat, short in items:
+                    count = len(users.get(mat, ()))
+                    cell = grid.column(align=True)
+                    cell.active = bool(count) or mat == material or bool(mat.get(BASE_KEY))
+                    pic = cell.box() if mat == material else cell.column()
+                    pic.template_icon(icon_value=layout.icon(mat), scale=LIBRARY_ICON_SCALE)
+                    name = cell.row(align=True)
+                    name.scale_y = 0.75
+                    name.operator(RS_OT_material_assign.bl_idname,
+                                  text="%d× %s" % (count, short) if count else short,
+                                  depress=(mat == material), emboss=(mat == material)).name = mat.name
+            else:
+                col = box.column(align=True)
+                for mat, _short_name in items:
+                    count = len(users.get(mat, ()))
+                    line = col.row(align=True)
+                    line.active = bool(count) or mat == material or bool(mat.get(BASE_KEY))
+                    line.operator(RS_OT_material_assign.bl_idname, text=mat.name.replace(" | ", " · "),
+                                  icon_value=layout.icon(mat), depress=(mat == material)).name = mat.name
+                    info = line.row(align=True)
+                    info.ui_units_x = 1.6
+                    info.alignment = 'RIGHT'
+                    info.label(text="%d×" % count if count else "")

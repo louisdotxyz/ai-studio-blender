@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The Light tab: light setups and presets, single lights, World / HDRI."""
+"""The Environment tab: scene presets, lights, World / HDRI, background, floor, other add-ons."""
 
 import math
 import os
@@ -8,7 +8,7 @@ import bpy
 from bpy.props import (BoolProperty, FloatProperty, IntProperty, StringProperty)
 from bpy.types import Menu, Operator, Panel
 
-from . import addons, api, background, hdri, lights, runner
+from . import addons, api, background, env_ui, hdri, lights, runner
 from .ui_common import (LIGHT_TAB_ORDER, _SidebarPanel, _report_value_error, _select_only, _unpin,
                         studio_tab)
 
@@ -468,7 +468,7 @@ class RS_MT_hdris(Menu):
 
 
 class RS_PT_lighting(_SidebarPanel, Panel):
-    """The Light tab in one panel, so the order is always Claude, Presets, Lights, World.
+    """The Environment tab in one panel: Scene, Lights, World, Background, Floor, other add-ons.
     Without a header, so it stays at the top of the tab."""
     bl_label = "Lighting"
     studio_tab = 'LIGHT'
@@ -480,26 +480,24 @@ class RS_PT_lighting(_SidebarPanel, Panel):
         scene = context.scene
         rs = scene.render_studio
         layout = self.layout
-        # Presets: dropdown with the current one, + saves the lights as a new preset
+        # Scene: everything below in one preset
+        env_ui.draw_scene_presets(layout, scene)
+
+        # Lights: light presets, aim, then on/off, solo, name, intensity; click the name for the details
         box = layout.box()
         row = box.row()
-        row.label(text="Presets", icon='PRESET')
+        row.label(text="Lights", icon='LIGHT')
+        row.operator(RS_OT_add_light.bl_idname, text="", icon='ADD', emboss=False)
         row.popover(RS_PT_light_settings.__name__, text="", icon='PREFERENCES')
         row = box.row(align=True)
         current = current_preset(scene)
-        row.menu(RS_MT_light_presets.bl_idname, text=current or "Choose a preset")
+        row.menu(RS_MT_light_presets.bl_idname, text=current or "Light preset")
         row.operator(RS_OT_light_preset_save.bl_idname, text="", icon='ADD')
         if current and current in lights.saved_presets():
             row.operator(RS_OT_light_preset_delete.bl_idname, text="", icon='TRASH').name = current
         row = box.row(align=True)
         row.prop(rs, "light_orbit_target", text="", icon='PIVOT_CURSOR', placeholder="Aim at Object")
         row.operator(RS_OT_light_focus_selection.bl_idname, text="", icon='RESTRICT_SELECT_OFF')
-
-        # Lights: on/off, name, intensity; click the name for the details
-        box = layout.box()
-        row = box.row()
-        row.label(text="Lights", icon='LIGHT')
-        row.operator(RS_OT_add_light.bl_idname, text="", icon='ADD', emboss=False)
         all_lights = lights.scene_lights(scene)
         if not all_lights:
             box.label(text="No lights, pick a preset or add one", icon='INFO')
@@ -511,6 +509,8 @@ class RS_PT_lighting(_SidebarPanel, Panel):
             row = col.row(align=True)
             row.operator(RS_OT_toggle_light.bl_idname, text="", emboss=False,
                          icon='HIDE_OFF' if on else 'HIDE_ON').name = obj.name
+            row.operator(env_ui.RS_OT_solo_light.bl_idname, text="", emboss=False,
+                         icon=env_ui.solo_icon(scene, obj)).name = obj.name
             row.operator(RS_OT_duplicate_light.bl_idname, text="", emboss=False, icon='DUPLICATE').name = obj.name
             sub = row.row(align=True)
             sub.active = on
@@ -524,15 +524,22 @@ class RS_PT_lighting(_SidebarPanel, Panel):
                 row.operator(addons.RS_OT_place_light.bl_idname, text="", emboss=False,
                              icon='MOUSE_LMB_DRAG').name = obj.name
             if obj == active:
-                _draw_light_details(col.box(), obj, rs)
+                details = col.box()
+                _draw_light_details(details, obj, rs)
+                env_ui.draw_light_extras(details, obj)
                 col.separator()
 
         # World: HDRI (also when the background is transparent or a color, it still lights)
         box = layout.box()
         box.label(text="World", icon='WORLD')
         _draw_world(box, scene, rs)
+        env_ui.draw_world_extras(box, scene)
         if addons.has("psa"):
             addons.draw_atmosphere(box, scene)
+
+        # What the camera sees behind the product, and the floor it stands on
+        env_ui.draw_background(layout, context)
+        env_ui.draw_floor(layout, scene)
 
         # Other add-ons: what they add, what this tab covers already
         addons.draw_list(layout)
