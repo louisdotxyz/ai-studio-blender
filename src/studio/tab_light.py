@@ -9,7 +9,7 @@ from bpy.props import (BoolProperty, FloatProperty, IntProperty, StringProperty)
 from bpy.types import Menu, Operator, Panel
 
 from . import addons, api, background, env_ui, hdri, lights, presets_io, runner
-from .ui_common import (LIGHT_TAB_ORDER, _SidebarPanel, _report_value_error, _select_only, _unpin,
+from .ui_common import (LIGHT_TAB_ORDER, _SidebarPanel, _report_value_error, _select_only, _unpin, section,
                         studio_tab)
 
 
@@ -396,7 +396,19 @@ class RS_PT_light_settings(Panel):
         op = sub.operator(RS_OT_lights_adjust.bl_idname, text="", icon='X')
         op.what, op.value = "KELVIN", 0
 
+        box = layout.box()
+        box.label(text="Lights aim at", icon='PIVOT_CURSOR')
+        row = box.row(align=True)
+        rs = scene.render_studio
+        row.prop(rs, "light_orbit_target", text="", placeholder="3D Cursor")
+        row.operator(RS_OT_light_focus_selection.bl_idname, text="", icon='RESTRICT_SELECT_OFF')
+        current = current_preset(scene)
+        row = box.row(align=True)
+        row.operator(RS_OT_light_preset_save.bl_idname, text="Save Light Preset", icon='ADD')
+        if current and current in lights.saved_presets():
+            row.operator(RS_OT_light_preset_delete.bl_idname, text="", icon='TRASH').name = current
         presets_io.draw(layout.box())
+        addons.draw_list(layout)
 
         box = layout.box()
         box.label(text="Shadows & Bounces", icon='LIGHT_SUN')
@@ -482,75 +494,62 @@ class RS_PT_lighting(_SidebarPanel, Panel):
         scene = context.scene
         rs = scene.render_studio
         layout = self.layout
-        # Scene: everything below in one preset
+        p = runner.prefs(context)
+        simple = p is not None and p.simple_view
+
+        # Scene: one row, everything below as one preset
         env_ui.draw_scene_presets(layout, scene)
 
-        # Lights: light presets, aim, then on/off, solo, name, intensity; click the name for the details
-        box = layout.box()
-        row = box.row()
-        row.label(text="Lights", icon='LIGHT')
-        row.operator(RS_OT_add_light.bl_idname, text="", icon='ADD', emboss=False)
-        row.popover(RS_PT_light_settings.__name__, text="", icon='PREFERENCES')
-        row = box.row(align=True)
+        # Lights: the list (eye, name, strength); click a light's icon for its details
+        box, head, is_open = section(layout, "lights", "Lights", 'LIGHT')
         current = current_preset(scene)
-        row.menu(RS_MT_light_presets.bl_idname, text=current or "Light preset")
-        row.operator(RS_OT_light_preset_save.bl_idname, text="", icon='ADD')
-        if current and current in lights.saved_presets():
-            row.operator(RS_OT_light_preset_delete.bl_idname, text="", icon='TRASH').name = current
-        row = box.row(align=True)
-        row.prop(rs, "light_orbit_target", text="", icon='PIVOT_CURSOR', placeholder="Aim at Object")
-        row.operator(RS_OT_light_focus_selection.bl_idname, text="", icon='RESTRICT_SELECT_OFF')
-        all_lights = lights.scene_lights(scene)
-        if not all_lights:
-            box.label(text="No lights, pick a preset or add one", icon='INFO')
-        active = rs.active_light
-        wrangler = addons.has("lightwrangler")
-        col = box.column(align=True)
-        for obj in all_lights:
-            on = not obj.hide_render
-            row = col.row(align=True)
-            row.operator(RS_OT_toggle_light.bl_idname, text="", emboss=False,
-                         icon='HIDE_OFF' if on else 'HIDE_ON').name = obj.name
-            row.operator(env_ui.RS_OT_solo_light.bl_idname, text="", emboss=False,
-                         icon=env_ui.solo_icon(scene, obj)).name = obj.name
-            row.operator(RS_OT_duplicate_light.bl_idname, text="", emboss=False, icon='DUPLICATE').name = obj.name
-            sub = row.row(align=True)
-            sub.active = on
-            sub.operator(RS_OT_select_light.bl_idname, text="", depress=(obj == active),
-                         icon=LIGHT_ICONS.get(obj.data.type, 'LIGHT')).name = obj.name
-            sub.prop(obj.render_studio_light, "short_name", text="")
-            power = sub.row(align=True)
-            power.ui_units_x = 4.5
-            power.prop(obj.data, "energy", text="")
-            if wrangler:
-                row.operator(addons.RS_OT_place_light.bl_idname, text="", emboss=False,
-                             icon='MOUSE_LMB_DRAG').name = obj.name
-            if obj == active:
-                details = col.box()
-                _draw_light_details(details, obj, rs)
-                env_ui.draw_light_extras(details, obj)
-                col.separator()
+        head.menu(RS_MT_light_presets.bl_idname, text=current or "Preset")
+        head.operator(RS_OT_add_light.bl_idname, text="", icon='ADD')
+        head.popover(RS_PT_light_settings.__name__, text="", icon='PREFERENCES')
+        if is_open:
+            all_lights = lights.scene_lights(scene)
+            if not all_lights:
+                sub = box.row()
+                sub.active = False
+                sub.label(text="Pick a preset or add a light", icon='INFO')
+            active = rs.active_light
+            col = box.column(align=True)
+            for obj in all_lights:
+                on = not obj.hide_render
+                row = col.row(align=True)
+                row.operator(RS_OT_toggle_light.bl_idname, text="", emboss=False,
+                             icon='HIDE_OFF' if on else 'HIDE_ON').name = obj.name
+                sub = row.row(align=True)
+                sub.active = on
+                sub.operator(RS_OT_select_light.bl_idname, text="", depress=(obj == active),
+                             icon=LIGHT_ICONS.get(obj.data.type, 'LIGHT')).name = obj.name
+                sub.prop(obj.render_studio_light, "short_name", text="")
+                power = sub.row(align=True)
+                power.ui_units_x = 4.5
+                power.prop(obj.data, "energy", text="")
+                if env_ui.solo_light(scene) == obj.name:
+                    row.label(text="", icon='SOLO_ON')
+                if obj == active:
+                    details = col.box()
+                    _draw_light_details(details, obj, rs, simple)
+                    col.separator()
 
-        # World: HDRI (also when the background is transparent or a color, it still lights)
-        box = layout.box()
-        box.label(text="World", icon='WORLD')
-        _draw_world(box, scene, rs)
-        env_ui.draw_world_extras(box, scene)
-        if addons.has("psa"):
-            addons.draw_atmosphere(box, scene)
+        # World: the HDRI that lights the scene (also behind a transparent or colored background)
+        box, head, is_open = section(layout, "world", "World", 'WORLD')
+        if is_open:
+            _draw_world(box, scene, rs, simple)
+            env_ui.draw_world_extras(box, scene, simple)
+            if addons.has("psa"):
+                addons.draw_atmosphere(box, scene)
 
-        # What the camera sees behind the product, and the floor it stands on
-        env_ui.draw_background(layout, context)
-        env_ui.draw_floor(layout, scene)
-
-        # Other add-ons: what they add, what this tab covers already
-        p = runner.prefs(context)
-        if p is None or not p.simple_view:
-            addons.draw_list(layout)
+        # Backdrop: what the camera sees behind the product, and the floor it stands on
+        box, head, is_open = section(layout, "backdrop", "Backdrop", 'IMAGE_BACKGROUND')
+        if is_open:
+            env_ui.draw_backdrop(box, context, simple)
 
 
-def _draw_world(box, scene, rs):
-    """The World in the Light tab: ◀ dropdown ▶ with the current HDRI, a large preview,
+def _draw_world(box, scene, rs, simple=False):
+    """The World: ◀ dropdown ▶ with the current HDRI, its preview (not in the simple view),
     strength and rotation."""
     path = hdri.current_path(scene)
     row = box.row(align=True)
@@ -561,9 +560,9 @@ def _draw_world(box, scene, rs):
         row.menu(RS_MT_hdris.bl_idname, text=scene.world.name if scene.world else "No World", icon='WORLD')
     row.operator(RS_OT_hdri_step.bl_idname, text="", icon='TRIA_RIGHT').direction = 1
     if path:
-        icon = hdri.preview_icon(path)
+        icon = hdri.preview_icon(path) if not simple else None
         if icon:
-            box.template_icon(icon_value=icon, scale=9.0)   # large preview of the HDRI
+            box.template_icon(icon_value=icon, scale=6.0)   # preview of the HDRI
         col = box.column(align=True)
         col.prop(rs, "world_strength")
         col.prop(rs, "world_rotation")
@@ -571,9 +570,16 @@ def _draw_world(box, scene, rs):
         box.prop(rs, "world_background_strength", text="Strength")
 
 
-def _draw_light_details(box, light, rs):
+def _draw_light_details(box, light, rs, simple=False):
     data = light.data
-    box.row(align=True).prop(data, "type", expand=True, icon_only=True)
+    row = box.row(align=True)
+    row.prop(data, "type", expand=True, icon_only=True)
+    row.separator()
+    row.operator(env_ui.RS_OT_solo_light.bl_idname, text="",
+                 icon=env_ui.solo_icon(bpy.context.scene, light)).name = light.name
+    row.operator(RS_OT_duplicate_light.bl_idname, text="", icon='DUPLICATE').name = light.name
+    if addons.has("lightwrangler"):
+        row.operator(addons.RS_OT_place_light.bl_idname, text="", icon='MOUSE_LMB_DRAG').name = light.name
     col = box.column(align=True)
     col.prop(data, "color", text="")
     if data.type == 'AREA':
@@ -600,4 +606,7 @@ def _draw_light_details(box, light, rs):
         col.prop(rs, "light_orbit_horizontal")
         col.prop(rs, "light_orbit_vertical")
         col.prop(rs, "light_orbit_distance")
-        col.prop(own, "height")
+        if not simple:
+            col.prop(own, "height")
+    if not simple:
+        env_ui.draw_light_extras(box, light)

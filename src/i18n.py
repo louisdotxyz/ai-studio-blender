@@ -838,6 +838,23 @@ DE = {
     'The last renders on one sheet (PNG next to them), opened right away': 'Die letzten Renderings auf einem Bogen (PNG daneben), gleich geöffnet',
     'The last two renders side by side (in Preview)': 'Die letzten zwei Renderings nebeneinander (in Vorschau)',
     'Render at least two images first': 'Zuerst mindestens zwei Bilder rendern',
+    # -- 2.4: simpler tabs -----------------------------------------------------
+    'Lights': 'Lichter',
+    'Preset': 'Preset',
+    'Pick a preset or add a light': 'Preset wählen oder Licht hinzufügen',
+    'Backdrop': 'Hintergrund & Boden',
+    'Scene preset': 'Szenen-Preset',
+    'Lights aim at': 'Lichter zielen auf',
+    '3D Cursor': '3D-Cursor',
+    'Save Light Preset': 'Licht-Preset speichern',
+    'Own Copy for This Object': 'Eigene Kopie für dieses Objekt',
+    'New Variant': 'Neue Variante',
+    'Unlink from the Others': 'Von den anderen lösen',
+    'Pick Color from Object': 'Farbe von Objekt übernehmen',
+    'Shader Editor': 'Shader-Editor',
+    'Select an object or click a material': 'Objekt wählen oder Material anklicken',
+    'Open or close this section': 'Diesen Bereich öffnen oder schliessen',
+    'Roughness': 'Rauheit',
 }
 
 # Blender looks up operator names in the "Operator" context and everything else

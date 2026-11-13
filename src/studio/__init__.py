@@ -32,7 +32,7 @@ from .tab_light import (RS_MT_hdris, RS_MT_light_presets, RS_OT_add_light, RS_OT
                         RS_OT_light_preset_delete, RS_OT_light_preset_save, RS_OT_light_setup,
                         RS_OT_lights_adjust, RS_OT_select_light, RS_OT_show_world, RS_OT_toggle_light,
                         RS_OT_world_restore, RS_PT_light_settings, RS_PT_lighting)
-from .tab_material import (RS_MT_material_new, RS_MT_material_presets_delete, RS_OT_material_assign,
+from .tab_material import (RS_MT_material_more, RS_MT_material_new, RS_MT_material_presets_delete, RS_OT_material_assign,
                            RS_OT_material_clean_unused, RS_OT_material_delete, RS_OT_material_favorite,
                            RS_OT_material_rename, RS_OT_material_select, RS_OT_material_variant,
                            draw_tile_menu, RS_OT_material_duplicate, RS_OT_material_group_toggle, RS_OT_material_new, RS_OT_material_to_base,
@@ -56,6 +56,22 @@ class RS_OT_open_chat(Operator):
 
     def execute(self, context):
         claude_link.show_chat(context.region)
+        return {'FINISHED'}
+
+
+class RS_OT_section_toggle(bpy.types.Operator):
+    bl_idname = "render_studio.section_toggle"
+    bl_label = "Show / Hide"
+    bl_description = "Open or close this section"
+    bl_options = {'INTERNAL'}
+
+    key: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    def execute(self, context):
+        wm = context.window_manager
+        keys = set(filter(None, wm.render_studio_sections.split("\n")))
+        keys.symmetric_difference_update({self.key})
+        wm.render_studio_sections = "\n".join(sorted(keys))
         return {'FINISHED'}
 
 
@@ -87,6 +103,7 @@ class RS_PT_tabs(Panel):
 
 classes = render_setup.classes + (
     RS_LightSettings,
+    RS_OT_section_toggle,
     RS_PT_tabs,
     RS_OT_low_scale,
     RS_PT_output,
@@ -156,6 +173,7 @@ classes = render_setup.classes + (
     RS_OT_material_to_base,
     RS_OT_pick_from_object,
     RS_OT_material_group_toggle,
+    RS_MT_material_more,
     RS_MT_material_new,
     RS_MT_material_presets_delete,
     RS_OT_hdri_step,
@@ -206,6 +224,8 @@ def register():
         name="Studio Tab", items=STUDIO_TABS, default='RENDER', options={'SKIP_SAVE'})
     # Material library groups toggled from their default (one name per line)
     bpy.types.WindowManager.render_studio_mat_open = StringProperty(options={'SKIP_SAVE'})
+    # Sections of the Studio tabs toggled from their default (one key per line)
+    bpy.types.WindowManager.render_studio_sections = StringProperty(options={'SKIP_SAVE'})
     bpy.types.WindowManager.render_studio_mat_source = EnumProperty(
         name="Library", options={'SKIP_SAVE'}, default='PROJECT',
         items=[('PROJECT', "Project", "The materials of this file"),
@@ -269,6 +289,7 @@ def unregister():
     del bpy.types.Scene.render_studio
     del bpy.types.WindowManager.render_studio_tab
     del bpy.types.WindowManager.render_studio_mat_open
+    del bpy.types.WindowManager.render_studio_sections
     del bpy.types.WindowManager.render_studio_mat_search
     del bpy.types.WindowManager.render_studio_mat_source
     bpy.types.UI_MT_button_context_menu.remove(draw_tile_menu)

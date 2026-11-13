@@ -5,12 +5,7 @@ import bpy
 from bpy.props import EnumProperty, StringProperty
 from bpy.types import Menu, Operator
 
-from . import background, environment, hdri, runner
-
-
-def _simple():
-    p = runner.prefs()
-    return p is not None and p.simple_view
+from . import background, environment, hdri
 
 
 def _light(name):
@@ -97,11 +92,11 @@ class RS_MT_scene_presets(Menu):
 
 
 def draw_scene_presets(layout, scene):
-    box = layout.box()
-    box.label(text="Scene", icon='SCENE_DATA')
-    row = box.row(align=True)
+    """One row: the scene preset (lights, World, backdrop, haze and look together), + saves the current one."""
+    row = layout.row(align=True)
+    row.scale_y = 1.2
     current = scene.render_studio.scene_preset
-    row.menu(RS_MT_scene_presets.bl_idname, text=current or "Choose a scene")
+    row.menu(RS_MT_scene_presets.bl_idname, text=current or "Scene preset", icon='SCENE_DATA')
     row.operator(RS_OT_scene_preset_save.bl_idname, text="", icon='ADD')
     if current and current in environment.saved_scenes():
         row.operator(RS_OT_scene_preset_delete.bl_idname, text="", icon='TRASH').name = current
@@ -192,6 +187,10 @@ def draw_light_extras(box, light):
         sub.operator(RS_OT_remove_flag.bl_idname, text="", icon='X').name = light.name
 
 
+def solo_light(scene):
+    return environment.solo_light(scene)
+
+
 def solo_icon(scene, light):
     return 'SOLO_ON' if environment.solo_light(scene) == light.name else 'SOLO_OFF'
 
@@ -220,74 +219,61 @@ class RS_OT_sun_from_hdri(Operator):
         return {'FINISHED'}
 
 
-def draw_world_extras(box, scene):
+def draw_world_extras(box, scene, simple=False):
+    """Sun from the HDRI and haze in one row."""
     rs = scene.render_studio
-    box.operator(RS_OT_sun_from_hdri.bl_idname, icon='LIGHT_SUN')
     row = box.row(align=True)
+    row.operator(RS_OT_sun_from_hdri.bl_idname, text="Sun from HDRI", icon='LIGHT_SUN')
     row.prop(rs, "haze_density", text="Haze")
-    if rs.haze_density > 0 and not _simple():
+    if rs.haze_density > 0 and not simple:
         sub = row.row(align=True)
-        sub.ui_units_x = 2.5
+        sub.ui_units_x = 2
         sub.prop(rs, "haze_color", text="")
 
 
-# ------------------------------------------------------------------ background (camera sees)
+# ------------------------------------------------------------------ backdrop: background and floor
 
-def draw_background(layout, context):
+def draw_backdrop(box, context, simple=False):
+    """Background (what the camera sees behind the product) and floor, one line each, details below."""
     scene = context.scene
-    rq = scene.render_studio
-    box = layout.box()
-    box.label(text="Background", icon='IMAGE_BACKGROUND')
+    rs = scene.render_studio
     col = box.column(align=True)
-    col.row(align=True).prop(rq, "background_mode", expand=True)
-    space = context.space_data
-    if rq.background_mode == 'COLOR':
-        if rq.use_gradient:
-            col.prop(rq, "background_color_top", text="")
-        col.prop(rq, "background_color", text="")
-        col = box.column(align=True)
-        col.prop(rq, "use_gradient", toggle=True)
+    split = col.split(factor=0.3, align=True)
+    split.label(text="Background")
+    split.row(align=True).prop(rs, "background_mode", expand=True)
+    if rs.background_mode == 'COLOR':
         row = col.row(align=True)
-        row.prop(rq, "noise_intensity", text="Noise")
-        if rq.noise_intensity > 0:
-            row.prop(rq, "noise_size", text="Size")
-        shading = getattr(space, "shading", None)
-        if shading is not None and shading.type in {'SOLID', 'WIREFRAME'}:
-            box.label(text="Shown in Material Preview and Rendered", icon='INFO')
-    elif rq.background_mode == 'NORMAL':
-        problems = background.world_problems(scene, space)
+        if rs.use_gradient:
+            row.prop(rs, "background_color_top", text="")
+        row.prop(rs, "background_color", text="")
+        row.prop(rs, "use_gradient", text="", icon='IPO_EASE_IN_OUT')
+        if not simple:
+            row = col.row(align=True)
+            row.prop(rs, "noise_intensity", text="Noise")
+            if rs.noise_intensity > 0:
+                row.prop(rs, "noise_size", text="Size")
+    elif rs.background_mode == 'NORMAL':
+        problems = background.world_problems(scene, context.space_data)
         if problems:
             sub = box.column(align=True)
             for text in problems:
                 sub.label(text=text, icon='ERROR')
             box.operator('render_studio.show_world', icon='WORLD')
-    if rq.background_mode != 'NORMAL':
-        sub = box.row()
-        sub.active = False
-        sub.label(text="The World still lights the scene", icon='INFO')
-
-
-# ------------------------------------------------------------------ floor
-
-def draw_floor(layout, scene):
-    rs = scene.render_studio
-    box = layout.box()
-    box.label(text="Floor", icon='MESH_PLANE')
-    box.row(align=True).prop(rs, "floor_mode", expand=True)
+    col = box.column(align=True)
+    split = col.split(factor=0.3, align=True)
+    split.label(text="Floor")
+    split.row(align=True).prop(rs, "floor_mode", expand=True)
     if rs.floor_mode == 'NONE':
         return
-    col = box.column(align=True)
-    col.prop(rs, "floor_color", text="")
-    col.prop(rs, "floor_roughness")
-    if not _simple():
-        col.prop(rs, "floor_size")
+    row = col.row(align=True)
+    row.prop(rs, "floor_color", text="")
+    row.prop(rs, "floor_roughness", text="Roughness", slider=True)
+    row.prop(rs, "floor_shadow_catcher", text="", icon='GHOST_ENABLED')
+    if not simple:
+        row = col.row(align=True)
+        row.prop(rs, "floor_size")
         if rs.floor_mode == 'COVE':
-            col.prop(rs, "floor_curve")
-    box.prop(rs, "floor_shadow_catcher", toggle=True)
-    if rs.floor_shadow_catcher and rs.background_mode == 'NORMAL':
-        sub = box.row()
-        sub.active = False
-        sub.label(text="Best with a transparent or colored background", icon='INFO')
+            row.prop(rs, "floor_curve")
 
 
 classes = (RS_OT_scene_preset, RS_OT_scene_preset_save, RS_OT_scene_preset_delete, RS_MT_scene_presets,

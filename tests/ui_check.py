@@ -195,6 +195,11 @@ for simple in (False, True):
             run(getattr(bpy.types, panel), ctx)
     run(bpy.types.RS_PT_tabs, ctx)
 studio_prefs.simple_view = False
+wm.render_studio_sections = "lights\nworld\nbackdrop\nlibrary"   # every section closed
+for tab, panel in (('LIGHT', "RS_PT_lighting"), ('MATERIAL', "RS_PT_material")):
+    wm.render_studio_tab = tab
+    run(getattr(bpy.types, panel), ctx)
+wm.render_studio_sections = ""
 scene_rs.floor_mode = 'NONE'
 scene_rs.haze_density = 0.0
 scene_rs.background_mode = 'NORMAL'

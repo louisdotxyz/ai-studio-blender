@@ -12,7 +12,7 @@ from bpy.types import Menu, Operator, Panel
 
 from . import cadswap, matpresets, runner
 from .matpresets import _color_input, _principled
-from .ui_common import MATERIAL_TAB_ORDER, _SidebarPanel, _unpin, studio_tab
+from .ui_common import MATERIAL_TAB_ORDER, _SidebarPanel, _unpin, section, studio_tab
 
 
 # Objects linked with the eyedropper form a group (same id in GROUP_KEY): Duplicate gives the
@@ -312,6 +312,31 @@ class RS_MT_material_new(Menu):
         layout.operator(RS_OT_material_preset_save.bl_idname, text="Save Current as Preset…", icon='ADD')
         if saved:
             layout.menu(RS_MT_material_presets_delete.bl_idname, icon='TRASH')
+
+
+class RS_MT_material_more(Menu):
+    """⋯ next to the material's name: what is needed less often."""
+    bl_idname = "RS_MT_material_more"
+    bl_label = "Material"
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.active_object
+        material = current_material(context)
+        has_slot = obj is not None and hasattr(obj.data, "materials")
+        if has_slot:
+            layout.operator(RS_OT_material_duplicate.bl_idname, text="Own Copy for This Object", icon='DUPLICATE')
+        if material is not None:
+            layout.operator(RS_OT_material_variant.bl_idname, text="New Variant", icon='COLOR')
+        if has_slot and material is not None and material.users > 1:
+            layout.operator(RS_OT_material_unlink.bl_idname, text="Unlink from the Others", icon='UNLINKED')
+        layout.operator(RS_OT_pick_from_object.bl_idname, text="Pick Color from Object",
+                        icon='EYEDROPPER').mode = 'COLOR'
+        layout.separator()
+        layout.menu(RS_MT_material_new.bl_idname, icon='ADD')
+        if material is not None:
+            layout.operator(RS_OT_material_to_base.bl_idname, icon='EXPORT')
+        layout.operator(RS_OT_open_shading.bl_idname, text="Shader Editor", icon='NODE_MATERIAL')
 
 
 class RS_OT_material_new(Operator):
@@ -1034,78 +1059,51 @@ class RS_PT_material(_SidebarPanel, Panel):
         layout = self.layout
         obj = context.active_object
         p = runner.prefs(context)
+        has_slot = obj is not None and hasattr(obj.data, "materials")
+        material = obj.active_material if has_slot else current_material(context)
         box = layout.box()
-        if obj is None or not hasattr(obj.data, "materials"):
-            # No object with materials: the current material (last switched or clicked) stays editable.
-            material = current_material(context)
-            row = box.row(align=True)
-            if material is None:
-                row.label(text="Select an object or click a material", icon='INFO')
-            else:
-                row.prop(material, "name", text="", icon='MATERIAL')
-                row.operator(RS_OT_material_variant.bl_idname, text="", icon='COLOR')
-            row.popover(RS_PT_material_settings.__name__, text="", icon='PREFERENCES')
-            if material is not None:
-                if p is None or p.mat_preview:
-                    box.template_icon(icon_value=layout.icon(material),
-                                      scale=float(p.mat_preview_size) if p is not None else 8.0)
-                self._draw_settings(layout, material, _principled(material), p)
-            self._draw_library(layout, context, material, None)
-            return
-        material = obj.active_material
-        node = _principled(material)
 
-        # 1. Preview, the active material and how it is shared
-        row = box.row()
-        row.label(text=obj.name, icon='OBJECT_DATA')
-        row.operator(RS_OT_open_shading.bl_idname, text="", icon='NODE_MATERIAL')
+        # 1. The material: [pick ▾][name][n×][eyedropper][⋯][gear], its preview, the slots
+        row = box.row(align=True)
+        if has_slot:
+            browse = row.row(align=True)
+            if material is not None:
+                browse.ui_units_x = 1.6   # just the material's icon: the list of materials to pick from
+            browse.prop(obj, "active_material", text="")
+        if material is not None:
+            row.prop(material, "name", text="", icon='NONE' if has_slot else 'MATERIAL')
+            if material.users > 1:
+                users = row.row(align=True)
+                users.enabled = False
+                users.label(text="%d×" % material.users)
+        elif not has_slot:
+            row.label(text="Select an object or click a material", icon='INFO')
+        row.operator(RS_OT_pick_from_object.bl_idname, text="", icon='EYEDROPPER').mode = 'MATERIAL'
+        row.menu(RS_MT_material_more.bl_idname, text="", icon='THREE_DOTS')
         row.popover(RS_PT_material_settings.__name__, text="", icon='PREFERENCES')
         if material is not None and (p is None or p.mat_preview):
             box.template_icon(icon_value=layout.icon(material),
                               scale=float(p.mat_preview_size) if p is not None else 8.0)
-        if len(obj.material_slots) > 1:
+        if has_slot and len(obj.material_slots) > 1:
             grid = box.grid_flow(row_major=True, columns=2, even_columns=True, align=True)
             for i, slot in enumerate(obj.material_slots):
                 grid.operator(RS_OT_material_slot.bl_idname, text=slot.material.name if slot.material else "(empty)",
                               depress=(i == obj.active_material_index)).index = i
-        col = box.column(align=True)
-        row = col.row(align=True)
-        browse = row.row(align=True)
-        if material is not None:
-            browse.ui_units_x = 1.6   # just the material's icon: the list of materials to pick from
-        browse.prop(obj, "active_material", text="")
-        if material is not None:
-            row.prop(material, "name", text="")   # rename right here
-        if material is not None and material.users > 1:
-            users = row.row(align=True)
-            users.enabled = False
-            users.label(text="%d×" % material.users)
-        row.operator(RS_OT_material_duplicate.bl_idname, text="", icon='DUPLICATE')
-        sub = row.row(align=True)
-        sub.enabled = material is not None
-        sub.operator(RS_OT_material_variant.bl_idname, text="", icon='COLOR')
-        sub = row.row(align=True)
-        sub.enabled = material is not None and material.users > 1
-        sub.operator(RS_OT_material_unlink.bl_idname, text="", icon='UNLINKED')
-        row.operator(RS_OT_pick_from_object.bl_idname, text="", icon='EYEDROPPER').mode = 'MATERIAL'
 
-        # 2. Quick settings
+        # 2. Its values, right under it
         if material is not None:
-            self._draw_settings(layout, material, node, p)
+            self._draw_settings(box, material, _principled(material), p)
 
         # 3. Library
-        self._draw_library(layout, context, material, node)
+        self._draw_library(layout, context, material, None)
 
     @staticmethod
     def _draw_settings(layout, material, node, p):
         tree = material.node_tree
         outputs = [n for n in tree.nodes if n.bl_idname == 'ShaderNodeOutputMaterial'] if tree else []
         out = next((n for n in outputs if n.is_active_output), outputs[0] if outputs else None)
-        box = layout.box()
-        row = box.row()
-        row.label(text="Quick Settings", icon='PROPERTIES')
-        if p is None or p.mat_view != 'COMPACT' or not p.mat_show_color:
-            row.operator(RS_OT_pick_from_object.bl_idname, text="", icon='EYEDROPPER').mode = 'COLOR'
+        box = layout.column()
+        box.separator(factor=0.5)
         if out is None:
             box.prop(material, "diffuse_color", text="Color")
             return
@@ -1122,24 +1120,22 @@ class RS_PT_material(_SidebarPanel, Panel):
     @staticmethod
     def _draw_library(layout, context, material, node):
         from ..i18n import tr
-        box = layout.box()
         wm = context.window_manager
         p = runner.prefs(context)
-        row = box.row()
-        row.label(text="Library", icon='ASSET_MANAGER')
-        row.operator(RS_OT_material_to_base.bl_idname, text="", icon='EXPORT')
-        row.menu(RS_MT_material_new.bl_idname, text="", icon='ADD')
+        box, head, is_open = section(layout, "library", "Library", 'ASSET_MANAGER')
+        if p is not None:
+            head.prop(p, "mat_library_view", expand=True, icon_only=True)
+        if not is_open:
+            return
         row = box.row(align=True)
         row.prop(wm, "render_studio_mat_source", expand=True)
-        if p is not None:
-            sub = row.row(align=True)
-            sub.prop(p, "mat_library_view", expand=True, icon_only=True)
         source = wm.render_studio_mat_source
         row = box.row(align=True)
         row.prop(wm, "render_studio_mat_search", text="", icon='VIEWZOOM')
         unused = len(unused_materials()) if source == 'PROJECT' else 0
         if unused:
             row.operator(RS_OT_material_clean_unused.bl_idname, text=str(unused), icon='TRASH')
+        row.menu(RS_MT_material_new.bl_idname, text="", icon='ADD')
         search = wm.render_studio_mat_search
         _ensure_base_library()
         from .. import setup_flow

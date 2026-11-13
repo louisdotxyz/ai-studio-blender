@@ -151,3 +151,26 @@ def _queue_progress_text():
     text = "%d/%d" % (RUN.position, RUN.total)
     left = RUN.total_left()
     return text + (" · %s left" % runner.format_time(left) if left is not None else "")
+
+
+# ------------------------------------------------------------------ collapsible sections
+
+def section(layout, key, text, icon, default_open=True):
+    """A box whose title row opens and closes it. Returns (box, header row, open?): extra buttons go
+    at the right end of the header row, the content into the box when it is open."""
+    import bpy
+    wm = bpy.context.window_manager
+    toggled = set(filter(None, getattr(wm, "render_studio_sections", "").split("\n")))
+    is_open = default_open != (key in toggled)
+    box = layout.box()
+    head = box.row(align=True)
+    left = head.row(align=True)
+    left.alignment = 'LEFT'
+    left.emboss = 'NONE'
+    left.operator("render_studio.section_toggle", text=text,
+                  icon='DOWNARROW_HLT' if is_open else 'RIGHTARROW').key = key
+    title_icon = left.row(align=True)
+    title_icon.label(text="", icon=icon)
+    right = head.row(align=True)
+    right.alignment = 'RIGHT'
+    return box, right, is_open
