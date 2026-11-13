@@ -377,6 +377,7 @@ def environment_tab():
     api.hdri_setup({"name": "Sun Test", "resolution": 256, "sky": {"top": [0.2, 0.3, 0.6], "horizon": [0.6, 0.7, 0.9],
                     "ground": [0.2, 0.2, 0.2]}, "strength": 1.0,
                     "sun": {"horizontal": 0, "vertical": 40, "size": 3, "strength": 80, "kelvin": 5600}})
+    rs.world_rotation = 0.0
     sun = api.sun_from_hdri()
     up = (sun.rotation_euler.to_matrix() @ Vector((0, 0, 1))).normalized()
     check("sun from HDRI: above the horizon at about 40°", sun.data.type == 'SUN'
@@ -384,6 +385,12 @@ def environment_tab():
     front = mod("studio.hdri_gen").FRONT
     turn = abs((math.atan2(up.y, up.x) - front + math.pi) % (2 * math.pi) - math.pi)
     check("sun from HDRI: from the sun's side", math.degrees(turn) < 8, math.degrees(turn))
+    rs.world_rotation = 0.5
+    turned = api.sun_from_hdri()
+    up2 = (turned.rotation_euler.to_matrix() @ Vector((0, 0, 1))).normalized()
+    delta = (math.atan2(up2.y, up2.x) - math.atan2(up.y, up.x) + math.pi) % (2 * math.pi) - math.pi
+    check("sun from HDRI follows the World rotation", abs(abs(delta) - 0.5) < 0.15, delta)
+    rs.world_rotation = 0.0
     for o in mod("studio.lights").scene_lights(scene):
         bpy.data.objects.remove(o)
     rs.floor_mode = 'NONE'
@@ -425,8 +432,16 @@ def shots_presets_check():
     shot.scene_preset, shot.variant, shot.quality = "Studio White", "", 'LOW'
     before = len(rs.items)
     runner = mod("studio.runner")
-    shots.render_shots(scene, [len(rs.shots) - 1])
-    shots._next_shot()
+    studio_prefs = runner.prefs()
+    auto, start = studio_prefs.auto_render, runner.RUN.start
+    studio_prefs.auto_render = False
+    runner.RUN.start = lambda *a, **k: None   # only the hand-over is tested here, not the render
+    try:
+        shots.render_shots(scene, [len(rs.shots) - 1])
+        shots._next_shot()
+    finally:
+        studio_prefs.auto_render = auto
+        runner.RUN.start = start
     check("shot: preset applied and camera queued", rs.scene_preset == "Studio White" and len(rs.items) == before + 1
           and rs.items[-1].camera == cam and rs.items[-1].quality == 'LOW', (rs.scene_preset, len(rs.items)))
     runner.RUN.cancel()
