@@ -112,7 +112,8 @@ def _file_changed(_arg=None, _arg2=None):
 def register():
     bpy.app.handlers.load_post.append(_file_changed)
     bpy.app.handlers.save_post.append(_file_changed)    # "Save As" changes the file too
-    if not bpy.app.background:   # background Blenders (renders, scripts) must not take the file over
+    # background Blenders (renders, scripts) must not take the file over; nor a second window opened for tests
+    if not bpy.app.background and not os.environ.get("AI_STUDIO_NO_LIVE"):
         sync()
         from . import claude_cli, live_clients
         prefs = get_prefs()
