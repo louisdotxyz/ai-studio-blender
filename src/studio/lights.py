@@ -201,8 +201,8 @@ def apply_setup(scene, target, spec, replace=True, tag=True):
         obj = next((o for o in old if role_of(o.name, prefixes, "light") == role), old[0] if old else None)
         if obj is not None:
             old.remove(obj)
-            data = obj.data
-            data.type = item["type"]
+            obj.data.type = item["type"]
+            data = obj.data   # fetched again: after a type change it is another RNA type (PointLight → AreaLight)
             data.color = (1.0, 1.0, 1.0)
             data.use_temperature = False
         else:
