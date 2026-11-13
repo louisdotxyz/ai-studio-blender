@@ -235,5 +235,12 @@ def tick():
     return 0.5 if STEPS else None
 
 
+def watchdog():
+    """Never leave the test window open."""
+    log("GUI_FAIL timeout, %d steps left" % len(STEPS))
+    bpy.ops.wm.quit_blender()
+
+
 log("START")
 bpy.app.timers.register(tick, first_interval=2.0)
+bpy.app.timers.register(watchdog, first_interval=90.0)
