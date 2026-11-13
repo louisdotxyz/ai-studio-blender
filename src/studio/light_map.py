@@ -33,7 +33,7 @@ def rect_for(region_width, left, right, bottom, ui_scale, size=1.0):
     covered by the toolbar, the sidebar and the asset shelf."""
     margin = 14.0 * ui_scale
     free = max(region_width - left - right - 2 * margin, 120.0)
-    width = min(free, BASE_WIDTH * ui_scale * size)
+    width = min(free, max(free * 0.45 * size, 240.0 * ui_scale), BASE_WIDTH * ui_scale * size)
     height = width * (HIGH - LOW) / (2 * math.pi)
     return (left + margin + (free - width) / 2.0, bottom + margin + 16.0 * ui_scale, width, height)
 

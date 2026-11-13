@@ -92,12 +92,24 @@ def setup():
         bpy.app.version_string, win.width, win.height, bpy.context.window_manager.render_studio_light_map))
 
 
+def splash_away():
+    view()[0].event_simulate(type='ESC', value='PRESS')
+
+
+def splash_gone():
+    view()[0].event_simulate(type='ESC', value='RELEASE')
+
+
 def map_drawn():
     shot("1_map.png")
     rect, around, height, point = light_on_map()
     state["start"] = (around, height, point, rect)
     check("light map: has a place in the viewport", rect[2] > 100 and rect[3] > 30, rect)
-    mouse('MOUSEMOVE', 'NOTHING', point)
+    mouse('MOUSEMOVE', 'NOTHING', (point[0] - 6, point[1] - 4))
+
+
+def hover():
+    mouse('MOUSEMOVE', 'NOTHING', state["start"][2])
 
 
 def press():
@@ -210,8 +222,34 @@ def new_light():
         area.tag_redraw()
 
 
+def studio_tab():
+    """Click the "Studio" tab of the sidebar (the second one), so the screenshots show the panel."""
+    win, area, _region = view()
+    ui = next(r for r in area.regions if r.type == 'UI')
+    scale = bpy.context.preferences.system.ui_scale
+    spot = (int(ui.x + ui.width - 11 * scale), int(ui.y + ui.height - 78 * scale))
+    state["tab"] = spot
+    win.event_simulate(type='MOUSEMOVE', value='NOTHING', x=spot[0], y=spot[1])
+
+
+def studio_tab_press():
+    view()[0].event_simulate(type='LEFTMOUSE', value='PRESS', x=state["tab"][0], y=state["tab"][1])
+
+
+def studio_tab_release():
+    view()[0].event_simulate(type='LEFTMOUSE', value='RELEASE', x=state["tab"][0], y=state["tab"][1])
+
+
 def panel():
     shot("4_panel.png")
+    with override():
+        mod("studio.light_items").select(bpy.context.scene, state["item"])
+    for area in view()[0].screen.areas:
+        area.tag_redraw()
+
+
+def panel_light():
+    shot("5_panel_light.png")
 
 
 def finish():
@@ -220,8 +258,9 @@ def finish():
     bpy.ops.wm.quit_blender()
 
 
-STEPS = [setup, map_drawn, press, drag_a, drag_b, release, dragged, shift_press, shift_drag, shift_release, brighter,
-         click_press, click_release, placed, ctrl_press, ctrl_release, new_light, panel, finish]
+STEPS = [splash_away, splash_gone, setup, map_drawn, hover, press, drag_a, drag_b, release, dragged, shift_press,
+         shift_drag, shift_release, brighter, click_press, click_release, placed, ctrl_press, ctrl_release, new_light,
+         studio_tab, studio_tab_press, studio_tab_release, panel, panel_light, finish]
 
 
 def tick():

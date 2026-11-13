@@ -529,8 +529,8 @@ def light_list_map_looks():
     check("studio World light: warm by Kelvin", pin.color[0] > pin.color[2] + 0.2, tuple(pin.color))
     # the map's geometry
     rect = lmap.rect_for(1200, 40, 300, 0, 1.0)
-    check("light map: between toolbar and sidebar, three times as wide as high",
-          rect[0] >= 40 and rect[0] + rect[2] <= 900 and abs(rect[3] * 3 - rect[2]) < 1e-6, rect)
+    check("light map: between toolbar and sidebar, three times as wide as high, under half the free width",
+          rect[0] >= 40 and rect[0] + rect[2] <= 900 and abs(rect[3] * 3 - rect[2]) < 1e-6 and rect[2] <= 430, rect)
     back = lmap.from_map(rect, *lmap.to_map(rect, 0.3, 0.4))
     check("light map: point and angles round trip", abs(back[0] - 0.3) < 1e-6 and abs(back[1] - 0.4) < 1e-6)
     boxes = [lmap.light_box(rect, 0.0, 0.3, 1.0, 0.6), lmap.light_box(rect, 0.05, 0.3, 0.1, 0.1)]
