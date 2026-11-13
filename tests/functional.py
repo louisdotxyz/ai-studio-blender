@@ -392,6 +392,57 @@ def environment_tab():
 
 
 @section
+def shots_presets_check():
+    scene = bpy.context.scene
+    rs = scene.render_studio
+    io = mod("studio.presets_io")
+    env = mod("studio.environment")
+    env.save_scene(scene, "IO Scene")
+    data = io.collect()
+    check("all presets in one file", "IO Scene" in data["scene"] and isinstance(data["light"], dict))
+    env.delete_scene("IO Scene")
+    counts = io.merge(data)
+    check("import brings them back", "IO Scene" in env.saved_scenes() and counts.get("scene"), counts)
+    try:
+        io.merge({"something": 1})
+        check("a foreign file is refused", False)
+    except ValueError:
+        check("a foreign file is refused", True)
+    env.delete_scene("IO Scene")
+    shots = mod("studio.shots")
+    problems = [t for t, _i in shots.render_problems(scene)]
+    check("render check runs", isinstance(problems, list), problems)
+    img = bpy.data.images.new("gone", 4, 4)
+    img.source = 'FILE'
+    img.filepath = "/nowhere/gone.png"
+    img.use_fake_user = True
+    check("render check: missing texture", any("gone" in t for t, _i in shots.render_problems(scene)))
+    bpy.data.images.remove(img)
+    cam = next(o for o in scene.objects if o.type == 'CAMERA')
+    scene.camera = cam
+    bpy.ops.render_studio.shot_add()
+    shot = rs.shots[-1]
+    shot.scene_preset, shot.variant, shot.quality = "Studio White", "", 'LOW'
+    before = len(rs.items)
+    runner = mod("studio.runner")
+    shots.render_shots(scene, [len(rs.shots) - 1])
+    shots._next_shot()
+    check("shot: preset applied and camera queued", rs.scene_preset == "Studio White" and len(rs.items) == before + 1
+          and rs.items[-1].camera == cam and rs.items[-1].quality == 'LOW', (rs.scene_preset, len(rs.items)))
+    runner.RUN.cancel()
+    shots._run["todo"].clear()
+    shots._run["busy"] = False
+    while len(rs.items) > before:
+        rs.items.remove(len(rs.items) - 1)
+    rs.shots.remove(len(rs.shots) - 1)
+    for o in mod("studio.lights").scene_lights(scene):
+        bpy.data.objects.remove(o)
+    rs.floor_mode = 'NONE'
+    rs.background_mode = 'NORMAL'
+    rs.look_glow = rs.look_contrast = rs.look_vignette = 0.0
+
+
+@section
 def other_addons():
     addons = mod("studio.addons")
     real = addons._enabled_modules

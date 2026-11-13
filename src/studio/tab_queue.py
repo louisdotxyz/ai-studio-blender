@@ -8,7 +8,7 @@ import bpy
 from bpy.props import (EnumProperty, FloatProperty, IntProperty, StringProperty)
 from bpy.types import Operator, Panel
 
-from . import core, runner
+from . import core, runner, shots
 from .ui_common import (QUEUE_TAB_ORDER, SCALE_PRESETS, _SidebarPanel, _item_progress_text, _look_through,
                         _queue_progress_text, _unpin, _user_resolution, active_camera, ensure_uids,
                         format_label, studio_tab)
@@ -435,6 +435,10 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
         layout = self.layout
         scene = context.scene
         rq = scene.render_studio
+        p = runner.prefs(context)
+        simple = p is not None and p.simple_view
+        if not RUN.busy:
+            shots.draw_check(layout, scene)
 
         box = layout.box()
         col = box.column()
@@ -442,8 +446,7 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
         row.label(text="", icon='SORTALPHA')
         row.prop(rq, "output_name", text="", placeholder=core.project_name())
         row.popover(RS_PT_output.__name__, text="", icon='PREFERENCES')
-        p = runner.prefs(context)
-        if p is not None:
+        if p is not None and not simple:
             row = col.row(align=True)
             row.label(text="", icon='FILE_FOLDER')
             row.prop(p, "output_root", text="", placeholder="Next to the .blend file")
@@ -473,6 +476,7 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
             newer.enabled = index > 0
             newer.operator(RS_OT_preview_step.bl_idname, text="", icon='TRIA_RIGHT').direction = -1
             head.operator(RS_OT_show_render.bl_idname, text="", icon='ZOOM_IN')
+            shots.draw_results(head)
             # As wide as the panel (the picture is square, the image fits inside it).
             scale = max(6.0, min(24.0, context.region.width / (20 * (context.preferences.system.ui_scale or 1.0)) - 2.5))
             if image is not None and path:
@@ -512,6 +516,8 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
         cam = active_camera(scene)
         if cam is not None and cam.type == 'CAMERA':
             col.label(text="Adds " + cam.name, icon='CAMERA_DATA')
+
+        shots.draw_shots(layout, scene)
 
         box = layout.box()
         col = box.column(align=True)

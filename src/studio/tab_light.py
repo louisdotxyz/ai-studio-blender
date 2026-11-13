@@ -8,7 +8,7 @@ import bpy
 from bpy.props import (BoolProperty, FloatProperty, IntProperty, StringProperty)
 from bpy.types import Menu, Operator, Panel
 
-from . import addons, api, background, env_ui, hdri, lights, runner
+from . import addons, api, background, env_ui, hdri, lights, presets_io, runner
 from .ui_common import (LIGHT_TAB_ORDER, _SidebarPanel, _report_value_error, _select_only, _unpin,
                         studio_tab)
 
@@ -396,6 +396,8 @@ class RS_PT_light_settings(Panel):
         op = sub.operator(RS_OT_lights_adjust.bl_idname, text="", icon='X')
         op.what, op.value = "KELVIN", 0
 
+        presets_io.draw(layout.box())
+
         box = layout.box()
         box.label(text="Shadows & Bounces", icon='LIGHT_SUN')
         if scene.render.engine != 'CYCLES':
@@ -542,7 +544,9 @@ class RS_PT_lighting(_SidebarPanel, Panel):
         env_ui.draw_floor(layout, scene)
 
         # Other add-ons: what they add, what this tab covers already
-        addons.draw_list(layout)
+        p = runner.prefs(context)
+        if p is None or not p.simple_view:
+            addons.draw_list(layout)
 
 
 def _draw_world(box, scene, rs):

@@ -5,7 +5,12 @@ import bpy
 from bpy.props import EnumProperty, StringProperty
 from bpy.types import Menu, Operator
 
-from . import background, environment, hdri
+from . import background, environment, hdri, runner
+
+
+def _simple():
+    p = runner.prefs()
+    return p is not None and p.simple_view
 
 
 def _light(name):
@@ -220,7 +225,7 @@ def draw_world_extras(box, scene):
     box.operator(RS_OT_sun_from_hdri.bl_idname, icon='LIGHT_SUN')
     row = box.row(align=True)
     row.prop(rs, "haze_density", text="Haze")
-    if rs.haze_density > 0:
+    if rs.haze_density > 0 and not _simple():
         sub = row.row(align=True)
         sub.ui_units_x = 2.5
         sub.prop(rs, "haze_color", text="")
@@ -274,9 +279,10 @@ def draw_floor(layout, scene):
     col = box.column(align=True)
     col.prop(rs, "floor_color", text="")
     col.prop(rs, "floor_roughness")
-    col.prop(rs, "floor_size")
-    if rs.floor_mode == 'COVE':
-        col.prop(rs, "floor_curve")
+    if not _simple():
+        col.prop(rs, "floor_size")
+        if rs.floor_mode == 'COVE':
+            col.prop(rs, "floor_curve")
     box.prop(rs, "floor_shadow_catcher", toggle=True)
     if rs.floor_shadow_catcher and rs.background_mode == 'NORMAL':
         sub = box.row()

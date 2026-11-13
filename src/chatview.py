@@ -394,6 +394,10 @@ def _draw_summary(row, start):
     if undone:
         label_text += " · " + tr("undone")
     right.label(text=label_text, translate=False)
+    first = next((m.get("step") for m in turn["tools"] if m.get("step")), 0)
+    if first and not undone:   # one click takes back everything this answer changed in the scene
+        undo = row.row(align=True)
+        undo.operator("claude.undo_steps", text="", icon='LOOP_BACK', emboss=False).first_step = first
 
 
 # ---------------------------------------------------------------------------

@@ -114,7 +114,7 @@ STUDIO_TABS = (
     ('RENDER', "Camera", "Camera, format and image", 'CAMERA_DATA', 0),
     ('LIGHT', "Environment", "Scene presets, lights, World, background and floor", 'WORLD', 1),
     ('MATERIAL', "Material", "Materials of the active object", 'MATERIAL', 2),
-    ('QUEUE', "Queue", "Render queue", 'RENDER_STILL', 3),
+    ('QUEUE', "Render", "Render queue, shots and the results", 'RENDER_STILL', 3),
 )
 
 

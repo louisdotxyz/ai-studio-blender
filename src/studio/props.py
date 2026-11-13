@@ -239,6 +239,17 @@ class RS_Item(PropertyGroup):
     percentage: IntProperty(options={'HIDDEN'})
 
 
+class RS_Shot(PropertyGroup):
+    """A shot (Render tab): camera + scene preset + material variant + quality."""
+    name: StringProperty(name="Name", default="Shot")
+    camera: PointerProperty(type=bpy.types.Object, poll=_is_camera, name="Camera")
+    scene_preset: StringProperty(name="Scene Preset", description="Applied before this shot renders "
+                                 "(empty: the scene as it is)")
+    variant: StringProperty(name="Variant", description="Material variant from Varianten.json (empty: none)")
+    quality: EnumProperty(name="Quality", items=(('LOW', "Low", "Preview quality"), ('HIGH', "High", "Final quality")),
+                          default='HIGH')
+
+
 class RS_LightSettings(PropertyGroup):
     """Per light (Object.render_studio_light): its own target and height."""
     short_name: StringProperty(
@@ -260,6 +271,7 @@ def _look_changed(settings, context):
 
 class RS_Settings(PropertyGroup):
     items: CollectionProperty(type=RS_Item)
+    shots: CollectionProperty(type=RS_Shot)
     # Output presets (gear menu in the Queue tab)
     still_format: EnumProperty(
         name="Still Format",
@@ -552,6 +564,9 @@ class RS_Preferences(PropertyGroup):
     mat_show_emission: BoolProperty(name="Emission", default=False)
     mat_show_transmission: BoolProperty(name="Transmission", default=False)
     mat_show_coat: BoolProperty(name="Coat", default=False)
+    simple_view: BoolProperty(
+        name="Simple View", description="Show only the main settings in the Studio tabs (the rest stays as it is)",
+        default=False)
     mat_library_view: EnumProperty(
         name="Library View",
         items=[('TILES', "Tiles", "Previews in a grid", 'IMGDISPLAY', 0),
