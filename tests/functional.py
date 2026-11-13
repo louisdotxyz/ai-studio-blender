@@ -637,6 +637,90 @@ def light_list_map_looks():
 
 
 @section
+def material_structures():
+    ms, api, presets = mod("studio.matstructures"), mod("studio.api"), mod("studio.matpresets")
+    cube = bpy.data.objects["Cube"]
+    before = list(cube.data.materials)
+    made = {}
+    for kind in ms.STRUCTURES:
+        material = made[kind] = ms.create(kind)
+        tree = material.node_tree
+        shader, group = presets._principled(material), tree.nodes.get(ms.NODE_GROUP)
+        ok = shader is not None and group is not None and group.inputs["Vector"].is_linked \
+            and group.node_tree.name == ms.PREFIX + ms.STRUCTURES[kind][0] and material[ms.STRUCTURE_KEY] == kind
+        if kind == 'RESIN':
+            out = next(n for n in tree.nodes if n.bl_idname == 'ShaderNodeOutputMaterial')
+            ok = ok and out.inputs["Volume"].is_linked and shader.inputs["Transmission Weight"].default_value == 1.0
+        else:
+            ok = ok and shader.inputs["Base Color"].is_linked and shader.inputs["Roughness"].is_linked \
+                and shader.inputs["Normal"].is_linked and tree.nodes.get(ms.NODE_BUMP) is not None
+        check("structure %s: one group between mapping and shader" % kind, ok)
+    check("structures: metals are metals", made['WORN_METAL'].metallic == 1.0
+          and presets._principled(made['HAMMERED']).inputs["Metallic"].default_value == 1.0
+          and presets._principled(made['SPECKLED']).inputs["Metallic"].default_value == 0.0)
+    again = ms.create('WORN_METAL')
+    check("structures: a second material shares the node group",
+          again.node_tree.nodes[ms.NODE_GROUP].node_tree == made['WORN_METAL'].node_tree.nodes[ms.NODE_GROUP].node_tree
+          and again != made['WORN_METAL'])
+    blocks = [g.name for g in bpy.data.node_groups if g.name.startswith(ms.PREFIX)]
+    check("structures: the building blocks are node groups of their own",
+          ms.PREFIX + "Scratches" in blocks and all(not n.endswith(".001") for n in blocks), blocks)
+    material = api.material_structure("speckled", name="Test Speckled", objects=[cube], fleck_size=2.0,
+                                      color=(0.2, 0.5, 0.3), amount=0.25)
+    group = material.node_tree.nodes[ms.NODE_GROUP]
+    check("structure from Claude: values by name, put on the object",
+          abs(group.inputs["Fleck Size"].default_value - 2.0) < 1e-6 and abs(group.inputs["Amount"].default_value - 0.25) < 1e-6
+          and abs(group.inputs["Color"].default_value[1] - 0.5) < 1e-6 and cube.active_material == material)
+    # wear over a plain material: what it had comes back when the layer goes
+    plain = bpy.data.materials.new("Test Plain")
+    shader = presets._principled(plain)
+    shader.inputs["Base Color"].default_value = (0.1, 0.2, 0.3, 1.0)
+    shader.inputs["Roughness"].default_value = 0.22
+    values = api.wear(plain, scratches=0.6, dust=0.1)
+    wear = plain.node_tree.nodes.get(ms.NODE_WEAR)
+    check("wear: between the material's values and the shader", wear is not None and shader.inputs["Base Color"].is_linked
+          and shader.inputs["Roughness"].is_linked and shader.inputs["Normal"].is_linked
+          and abs(wear.inputs["Roughness"].default_value - 0.22) < 1e-6 and abs(wear.inputs["Color"].default_value[2] - 0.3) < 1e-6
+          and abs(values["Scratches"] - 0.6) < 1e-6 and abs(values["Dust"] - 0.1) < 1e-6, values)
+    api.wear(plain, remove=True)
+    check("wear removed: values back, nothing left plugged in", not ms.has_wear(plain)
+          and not shader.inputs["Base Color"].is_linked and not shader.inputs["Normal"].is_linked
+          and abs(shader.inputs["Roughness"].default_value - 0.22) < 1e-6
+          and abs(shader.inputs["Base Color"].default_value[1] - 0.2) < 1e-6)
+    metal = made['WORN_METAL']
+    shader = presets._principled(metal)
+    source = shader.inputs["Base Color"].links[0].from_node
+    api.wear(metal)
+    wear = metal.node_tree.nodes[ms.NODE_WEAR]
+    check("wear over a structure: the structure feeds the wear layer",
+          wear.inputs["Color"].links[0].from_node == source and shader.inputs["Base Color"].links[0].from_node == wear
+          and metal.node_tree.nodes[ms.NODE_WEAR_BUMP].inputs["Normal"].links[0].from_node.name == ms.NODE_BUMP
+          and len(ms.control_nodes(metal)) == 2)
+    api.wear(metal, remove=True)
+    check("wear off a structure: as before", shader.inputs["Base Color"].links[0].from_node == source
+          and shader.inputs["Normal"].links[0].from_node.name == ms.NODE_BUMP)
+    scene = small_scene()
+    cube.data.materials.clear()
+    cube.data.materials.append(made['DARK_ANODIZED'])
+    api.wear(made['DARK_ANODIZED'], scratches=0.5, fingerprints=0.5, dust=0.3)
+    path, keep = os.path.join(TMP, "structure.png"), scene.render.filepath
+    scene.render.filepath = path
+    bpy.ops.render.render(write_still=True)
+    scene.render.filepath = keep
+    check("structure with wear renders", os.path.isfile(path) and os.path.getsize(path) > 2000)
+    tab = mod("studio.tab_material")
+    favs = {material.name}
+    check("library filter: all, favorites, project", tab._in_source(material, 'ALL', {}, favs)
+          and tab._in_source(material, 'FAVORITES', {}, favs) and not tab._in_source(plain, 'FAVORITES', {}, favs)
+          and tab._in_source(plain, 'PROJECT', {}, favs))
+    cube.data.materials.clear()
+    for old in before:
+        cube.data.materials.append(old)
+    for mat in list(made.values()) + [again, material, plain]:
+        bpy.data.materials.remove(mat)
+
+
+@section
 def shots_presets_check():
     scene = bpy.context.scene
     rs = scene.render_studio

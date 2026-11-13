@@ -10,7 +10,7 @@ import bpy
 from bpy.props import (BoolProperty, EnumProperty, IntProperty, StringProperty)
 from bpy.types import Menu, Operator, Panel
 
-from . import cadswap, matpresets, runner
+from . import cadswap, matpresets, matstructures, runner
 from .matpresets import _color_input, _principled
 from .ui_common import MATERIAL_TAB_ORDER, _SidebarPanel, _unpin, section, studio_tab
 
@@ -292,6 +292,71 @@ def _draw_compact_material(box, node, p):
                 col.prop(socket, "default_value", text=name)
 
 
+def _draw_structure(layout, material):
+    """The values of a structure and of the wear layer (their node groups' inputs), and how deep they go."""
+    for node in matstructures.control_nodes(material):
+        col = layout.column(align=True)
+        col.label(text=node.label or node.name, icon='NODE_MATERIAL')
+        for socket in node.inputs:
+            if socket.is_linked or socket.type == 'VECTOR' or not socket.enabled:
+                continue
+            col.prop(socket, "default_value", text=socket.name)
+    nodes = material.node_tree.nodes
+    for name, label in ((matstructures.NODE_BUMP, "Surface Depth"), (matstructures.NODE_WEAR_BUMP, "Wear Depth")):
+        bump = nodes.get(name)
+        if bump is not None:
+            layout.prop(bump.inputs["Strength"], "default_value", text=label, slider=True)
+
+
+class RS_OT_material_structure(Operator):
+    bl_idname = "render_studio.material_structure"
+    bl_label = "New Structure"
+    bl_description = "A new procedural material to go on from, for the selected objects"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    kind: EnumProperty(items=matstructures.ITEMS, options={'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, _context, props):
+        text = dict((k, d) for k, _n, d in matstructures.ITEMS).get(props.kind, "")
+        return text + ". Procedural (no images, no UVs): change its values here or open it in the Shader Editor"
+
+    def execute(self, context):
+        material = matstructures.create(self.kind)
+        objects = set(context.selected_objects)
+        if context.active_object is not None:
+            objects.add(context.active_object)
+        matpresets.assign(material, sorted(objects, key=lambda o: o.name))
+        remember(material)
+        return {'FINISHED'}
+
+
+class RS_OT_material_wear(Operator):
+    bl_idname = "render_studio.material_wear"
+    bl_label = "Wear"
+    bl_description = ("Scratches, fingerprints and dust over this material, each with its own amount "
+                      "(procedural; what the material had stays)")
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    remove: BoolProperty(default=False, options={'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, _context, props):
+        return "Take the wear layer off this material" if props.remove else cls.bl_description
+
+    @classmethod
+    def poll(cls, context):
+        return _principled(current_material(context)) is not None
+
+    def execute(self, context):
+        material = current_material(context)
+        if self.remove:
+            matstructures.remove_wear(material)
+        else:
+            matstructures.add_wear(material)
+        return {'FINISHED'}
+
+
 class RS_MT_material_new(Menu):
     """The "+" of the material library: a new material, empty or from a preset."""
     bl_idname = "RS_MT_material_new"
@@ -301,6 +366,11 @@ class RS_MT_material_new(Menu):
         layout = self.layout
         layout.operator(RS_OT_material_new.bl_idname, text="Empty", icon='MATERIAL').preset = ""
         layout.separator()
+        layout.label(text="Structures (procedural)")
+        for kind, name, _text in matstructures.ITEMS:
+            layout.operator(RS_OT_material_structure.bl_idname, text=name, icon='NODE_MATERIAL').kind = kind
+        layout.separator()
+        layout.label(text="Simple")
         for name in matpresets.BUILTIN:
             layout.operator(RS_OT_material_new.bl_idname, text=name, icon='BLANK1').preset = name
         saved = sorted(matpresets.saved())
@@ -332,6 +402,12 @@ class RS_MT_material_more(Menu):
             layout.operator(RS_OT_material_unlink.bl_idname, text="Unlink from the Others", icon='UNLINKED')
         layout.operator(RS_OT_pick_from_object.bl_idname, text="Pick Color from Object",
                         icon='EYEDROPPER').mode = 'COLOR'
+        if material is not None and _principled(material) is not None:
+            if matstructures.has_wear(material):
+                layout.operator(RS_OT_material_wear.bl_idname, text="Remove Wear", icon='X').remove = True
+            else:
+                layout.operator(RS_OT_material_wear.bl_idname, text="Add Wear (Scratches, Prints, Dust)",
+                                icon='MOD_NOISE')
         layout.separator()
         layout.menu(RS_MT_material_new.bl_idname, icon='ADD')
         if material is not None:
@@ -1005,8 +1081,13 @@ FAVORITES_GROUP = "Favorites"
 RECENT_GROUP = "Recent"
 
 
-def _in_source(material, source, used):
-    """Project: the file's own materials and the base copies it uses. Library: the base copies."""
+def _in_source(material, source, used, favs=()):
+    """All: everything. Project: the file's own materials and the base copies it uses. Library: the base
+    copies. Favorites: the ones with a heart."""
+    if source == 'ALL':
+        return True
+    if source == 'FAVORITES':
+        return material.name in favs
     if source == 'LIBRARY':
         return bool(material.get(BASE_KEY))
     return not material.get(BASE_KEY) or material in used
@@ -1027,23 +1108,23 @@ def _library_groups(search="", source='PROJECT'):
     by_name = {m.name: m for m in mats}
     groups = []
     top = [(m, _short(m)) for m in mats if m.name in favs]
-    if top:
+    if top and source != 'FAVORITES':
         groups.append((FAVORITES_GROUP, top))
     last = [(by_name[n], _short(by_name[n])) for n in recent() if n in by_name and n not in favs]
-    if last and not search:
+    if last and not search and source != 'FAVORITES':
         groups.append((RECENT_GROUP, last))
     kinds = {}
     for m in mats:
-        if _in_source(m, source, used):
+        if _in_source(m, source, used, favs):
             kinds.setdefault(material_kind(m), []).append((m, _short(m)))
     groups += [(kind, kinds[kind]) for kind in KINDS if kind in kinds]
     return groups
 
 
-LIBRARY_COLUMNS = 4
+LIBRARY_COLUMNS = 3
 
 
-LIBRARY_ICON_SCALE = 3.2
+LIBRARY_ICON_SCALE = 4.4
 
 
 class RS_PT_material(_SidebarPanel, Panel):
@@ -1112,6 +1193,7 @@ class RS_PT_material(_SidebarPanel, Panel):
                       and surface.links[0].from_node.bl_idname == 'ShaderNodeBsdfPrincipled' else None)
         if p is not None and p.mat_view == 'COMPACT' and principled is not None:
             _draw_compact_material(box, principled, p)
+            _draw_structure(box, material)
             return
         # The same view as Properties > Material > Surface: every setting of the shader or
         # node group that feeds the output, including the nodes plugged into it.
@@ -1141,7 +1223,7 @@ class RS_PT_material(_SidebarPanel, Panel):
         from .. import setup_flow
         if setup_flow.running() and setup_flow.flow["step"] == "materials":
             box.label(text="Creating the base materials…", icon='TIME')
-        if source == 'LIBRARY':
+        if source in {'LIBRARY', 'ALL'}:
             _schedule_base_append()   # copies the library's materials in (unused copies are not saved)
         groups = _library_groups(search, source)
         if not groups:
@@ -1151,6 +1233,7 @@ class RS_PT_material(_SidebarPanel, Panel):
                 box.label(text="No match" if search else "No materials yet", icon='INFO')
             return
         users = material_users()
+        favs = favorites()
         closed = set(wm.render_studio_mat_open.split("\n"))
         tiles = p is None or p.mat_library_view == 'TILES'
         for group, items in groups:
@@ -1180,6 +1263,10 @@ class RS_PT_material(_SidebarPanel, Panel):
                     name.operator(RS_OT_material_assign.bl_idname,
                                   text="%d× %s" % (count, short) if count else short,
                                   depress=(mat == material), emboss=(mat == material)).name = mat.name
+                    heart = name.row(align=True)
+                    heart.active = mat.name in favs
+                    heart.operator(RS_OT_material_favorite.bl_idname, text="", emboss=False,
+                                   icon='FUND' if mat.name in favs else 'HEART').name = mat.name
             else:
                 col = box.column(align=True)
                 for mat, _short_name in items:

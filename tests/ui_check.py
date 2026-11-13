@@ -176,12 +176,24 @@ for view in ('COMPACT', 'FULL'):
         run(bpy.types.RS_PT_material, ctx)
 # library: project / library, tiles / list; environment and render tabs with everything on
 studio_prefs = bpy.context.preferences.addons[PKG].preferences.studio
-for source in ('PROJECT', 'LIBRARY'):
+structures = sys.modules[PKG + ".studio.matstructures"]
+structure_mat = structures.create('WORN_METAL')
+structures.add_wear(structure_mat)
+if cube is not None:
+    cube.data.materials.clear()
+    cube.data.materials.append(structure_mat)
+    studio_prefs.mat_view = 'COMPACT'
+    wm.render_studio_tab = 'MATERIAL'
+    run(bpy.types.RS_PT_material, ctx)
+    run(bpy.types.RS_MT_material_more, ctx)
+sys.modules[PKG + ".studio.tab_material"].toggle_favorite(structure_mat.name)
+for source in ('ALL', 'PROJECT', 'LIBRARY', 'FAVORITES'):
     for lib_view in ('TILES', 'LIST'):
         wm.render_studio_mat_source = source
         studio_prefs.mat_library_view = lib_view
         wm.render_studio_tab = 'MATERIAL'
         run(bpy.types.RS_PT_material, ctx)
+sys.modules[PKG + ".studio.tab_material"].toggle_favorite(structure_mat.name)
 scene_rs = bpy.context.scene.render_studio
 scene_rs.floor_mode = 'COVE'
 scene_rs.haze_density = 0.02

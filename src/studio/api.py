@@ -187,6 +187,37 @@ def save_base_material(material, name=None):
     return baselib.save(material, name)
 
 
+def material_structure(kind, name=None, objects=None, **values):
+    """A new procedural material to go on from. kind: WORN_METAL (tumbled metal, scratches, patina),
+    LAYERED_EARTH (rammed earth, layers along Z), SPECKLED (recycled plastic, flecks), RESIN (amber, acetate:
+    clear, color deepens with thickness), HAMMERED (polished metal with dents), DARK_ANODIZED (dark metal,
+    long scratches, wipe marks). objects: objects or names it is put on. values: the structure's inputs by
+    name (color, roughness, scale, scratches, patina, color_a, color_b, layer_height, grain, fleck_size,
+    amount, dent_size, depth, smudges, bands, band_size …). Returns the material."""
+    from . import matpresets, matstructures
+    material = matstructures.create(str(kind).upper(), name)
+    if values:
+        matstructures.set_values(material, values)
+    if objects:
+        found = [bpy.data.objects[o] if isinstance(o, str) else o for o in objects]
+        matpresets.assign(material, found)
+    return material
+
+
+def wear(material, remove=False, **values):
+    """Scratches, fingerprints and dust over any material with a Principled BSDF. values: scratches,
+    fingerprints, dust (0-1 each), scale, dust_color. remove=True takes the layer off again."""
+    from . import matstructures
+    if isinstance(material, str):
+        material = bpy.data.materials[material]
+    if remove:
+        matstructures.remove_wear(material)
+        return None
+    matstructures.add_wear(material, **values)
+    return {s.name: (tuple(s.default_value) if s.type == 'RGBA' else s.default_value)
+            for s in material.node_tree.nodes[matstructures.NODE_WEAR].inputs if s.type != 'VECTOR' and not s.is_linked}
+
+
 def remove_base_material(name):
     """Take a material out of the base material library (ask the user first)."""
     from . import baselib

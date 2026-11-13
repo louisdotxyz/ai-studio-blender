@@ -36,7 +36,8 @@ from .tab_light import (RS_MT_hdris, RS_MT_light_presets, RS_OT_add_light, RS_OT
 from .tab_material import (RS_MT_material_more, RS_MT_material_new, RS_MT_material_presets_delete, RS_OT_material_assign,
                            RS_OT_material_clean_unused, RS_OT_material_delete, RS_OT_material_favorite,
                            RS_OT_material_rename, RS_OT_material_select, RS_OT_material_variant,
-                           draw_tile_menu, RS_OT_material_duplicate, RS_OT_material_group_toggle, RS_OT_material_new, RS_OT_material_to_base,
+                           draw_tile_menu, RS_OT_material_duplicate, RS_OT_material_group_toggle, RS_OT_material_new,
+                           RS_OT_material_structure, RS_OT_material_to_base, RS_OT_material_wear,
                            RS_OT_material_preset, RS_OT_material_preset_delete, RS_OT_material_preset_save,
                            RS_OT_material_presets_io, RS_OT_material_slot, RS_OT_material_unlink,
                            RS_OT_material_viewport, RS_OT_open_shading, RS_OT_pick_from_object,
@@ -163,6 +164,8 @@ classes = render_setup.classes + (
     RS_OT_material_variant,
     RS_OT_material_select,
     RS_OT_material_favorite,
+    RS_OT_material_structure,
+    RS_OT_material_wear,
     RS_OT_material_rename,
     RS_OT_material_delete,
     RS_OT_material_clean_unused,
@@ -238,8 +241,10 @@ def register():
     bpy.types.WindowManager.render_studio_sections = StringProperty(options={'SKIP_SAVE'})
     bpy.types.WindowManager.render_studio_mat_source = EnumProperty(
         name="Library", options={'SKIP_SAVE'}, default='PROJECT',
-        items=[('PROJECT', "Project", "The materials of this file"),
-               ('LIBRARY', "Library", "Your materials for every project (the base material library)")])
+        items=[('ALL', "All", "Every material: this file's and the library's", 'NONE', 0),
+               ('PROJECT', "Project", "The materials of this file", 'NONE', 1),
+               ('LIBRARY', "Library", "Your materials for every project (the base material library)", 'NONE', 2),
+               ('FAVORITES', "", "Your favorites (the heart on a tile)", 'FUND', 3)])
     bpy.types.WindowManager.render_studio_mat_search = StringProperty(
         name="Search", description="Show only materials whose name contains this", options={'SKIP_SAVE'})
     bpy.types.UI_MT_button_context_menu.append(draw_tile_menu)
