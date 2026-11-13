@@ -721,6 +721,7 @@ DE = {
     'Atmosphere': 'Atmosphäre',
     'Sun Height': 'Sonnenhöhe',
     'Sun Direction': 'Sonnenrichtung',
+    'Sun Strength': 'Sonnenstärke',
     'Haze': 'Dunst',
     'Clouds': 'Wolken',
     'Place Light': 'Licht platzieren',

@@ -75,7 +75,7 @@ def summary():
 
 # ---------------------------------------------------------------- atmosphere (PSA)
 
-ATMOSPHERE_FIELDS = (("elevation", "Sun Height"), ("azimuth", "Sun Direction"), ("sun_intensity", "Sun"),
+ATMOSPHERE_FIELDS = (("elevation", "Sun Height"), ("azimuth", "Sun Direction"), ("sun_intensity", "Sun Strength"),
                      ("atmosphere_density", "Haze"), ("clouds_amount", "Clouds"))
 
 
