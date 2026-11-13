@@ -12,7 +12,7 @@ import json
 
 import bpy
 
-from . import api, runner
+from . import addons, api, runner
 
 _FORMATS = {
     "light": ("light_setup", api.LIGHT_SETUP_FORMAT),
@@ -30,11 +30,13 @@ def _format(kind):
 def _context(args):
     kind = str(args.get("kind") or "light").lower()
     scene = bpy.context.scene
+    others = addons.summary()
+    extra = ("\n\nOther add-ons (use them for what they add):\n" + json.dumps(others, indent=1)) if others else ""
     if kind == "environment":
-        return api.environment_prompt(scene)
+        return api.environment_prompt(scene) + extra
     if kind not in _FORMATS:
         raise ValueError("kind must be light, hdri or environment")
-    return _format(kind) + "\n\nCurrent scene:\n" + json.dumps(api.scene_context(scene), indent=1)
+    return _format(kind) + "\n\nCurrent scene:\n" + json.dumps(api.scene_context(scene), indent=1) + extra
 
 
 def _light_setup(args):

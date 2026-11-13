@@ -15,7 +15,7 @@ import bpy
 from bpy.props import (EnumProperty, PointerProperty, StringProperty)
 from bpy.types import Operator, Panel
 
-from . import background, cameras, claude_link, core, foreign, hdri, lights, runner, sync, tab_queue
+from . import addons, background, cameras, claude_link, core, foreign, hdri, lights, runner, sync, tab_queue
 # Loaded for their side effects: the chat finds claude_tools (Claude's studio_* tools) in
 # sys.modules; api and variants are the helpers in execute_python.
 from . import api, baselib, claude_tools, variants  # noqa: F401
@@ -217,6 +217,7 @@ def register():
     cameras.register_history()
     background.register()
     foreign.register()
+    addons.register()
     cad_link.register()
 
     register_keymaps()
@@ -236,6 +237,7 @@ def unregister():
         runner.on_live_image.remove(tab_queue.on_live_image)
 
     cad_link.unregister()
+    addons.unregister()
     foreign.unregister()
     background.unregister()
     cameras.unregister_history()

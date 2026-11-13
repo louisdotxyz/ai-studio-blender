@@ -8,7 +8,7 @@ import bpy
 from bpy.props import (BoolProperty, FloatProperty, IntProperty, StringProperty)
 from bpy.types import Menu, Operator, Panel
 
-from . import api, background, hdri, lights, runner
+from . import addons, api, background, hdri, lights, runner
 from .ui_common import (LIGHT_TAB_ORDER, _SidebarPanel, _report_value_error, _select_only, _unpin,
                         studio_tab)
 
@@ -504,6 +504,7 @@ class RS_PT_lighting(_SidebarPanel, Panel):
         if not all_lights:
             box.label(text="No lights, pick a preset or add one", icon='INFO')
         active = rs.active_light
+        wrangler = addons.has("lightwrangler")
         col = box.column(align=True)
         for obj in all_lights:
             on = not obj.hide_render
@@ -519,6 +520,9 @@ class RS_PT_lighting(_SidebarPanel, Panel):
             power = sub.row(align=True)
             power.ui_units_x = 4.5
             power.prop(obj.data, "energy", text="")
+            if wrangler:
+                row.operator(addons.RS_OT_place_light.bl_idname, text="", emboss=False,
+                             icon='MOUSE_LMB_DRAG').name = obj.name
             if obj == active:
                 _draw_light_details(col.box(), obj, rs)
                 col.separator()
@@ -527,6 +531,11 @@ class RS_PT_lighting(_SidebarPanel, Panel):
         box = layout.box()
         box.label(text="World", icon='WORLD')
         _draw_world(box, scene, rs)
+        if addons.has("psa"):
+            addons.draw_atmosphere(box, scene)
+
+        # Other add-ons: what they add, what this tab covers already
+        addons.draw_list(layout)
 
 
 def _draw_world(box, scene, rs):

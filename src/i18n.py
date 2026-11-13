@@ -715,6 +715,32 @@ DE = {
     # -- 2.1 -------------------------------------------------------------------
     'Upload': 'Hochladen',
     'Claude or Local Model': 'Claude oder lokales Modell',
+    # -- 2.2: other add-ons --------------------------------------------------
+    'Other Add-ons': 'Andere Add-ons',
+    'Covered: ': 'Abgedeckt: ',
+    'Atmosphere': 'Atmosphäre',
+    'Sun Height': 'Sonnenhöhe',
+    'Sun Direction': 'Sonnenrichtung',
+    'Sun': 'Sonne',
+    'Haze': 'Dunst',
+    'Clouds': 'Wolken',
+    'Place Light': 'Licht platzieren',
+    'Turn Off Add-on': 'Add-on ausschalten',
+    'Turn Off': 'Ausschalten',
+    'Sky, sun, clouds, stars and fog (World)': 'Himmel, Sonne, Wolken, Sterne und Nebel (Welt)',
+    'Place a light by dragging on the product; gobos, IES, the scene as a 360° HDRI':
+        'Licht durch Ziehen auf dem Produkt platzieren; Gobos, IES, Szene als 360°-HDRI',
+    'Color grading (its own sidebar tab "Render Raw")': 'Farbkorrektur (eigener Tab «Render Raw»)',
+    'Physical camera: exposure, white balance': 'Physikalische Kamera: Belichtung, Weissabgleich',
+    'Light presets and the light list in this tab': 'Licht-Presets und Lichterliste in diesem Tab',
+    'Light presets (key, fill, rim) in this tab': 'Licht-Presets (Key, Fill, Rim) in diesem Tab',
+    'The three-point presets in this tab': 'Die Drei-Punkt-Presets in diesem Tab',
+    'Place this light by dragging on the product (Light Wrangler). Esc or right-click ends it':
+        'Licht durch Ziehen auf dem Produkt platzieren (Light Wrangler). Esc oder Rechtsklick beendet',
+    'Physical sky with sun, haze and clouds on the World (Physical Starlight & Atmosphere). Click again to take it off':
+        'Physikalischer Himmel mit Sonne, Dunst und Wolken als Welt (Physical Starlight & Atmosphere). Nochmals klicken entfernt ihn',
+    'Turn this add-on off: the Light tab does the same. It stays installed; turn it on again in Edit › Preferences › Add-ons':
+        'Dieses Add-on ausschalten: der Licht-Tab kann dasselbe. Es bleibt installiert; einschalten unter Bearbeiten › Einstellungen › Add-ons',
 }
 
 # Blender looks up operator names in the "Operator" context and everything else

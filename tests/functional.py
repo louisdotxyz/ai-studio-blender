@@ -309,6 +309,28 @@ def studio_tools_offered():
 
 
 @section
+def other_addons():
+    addons = mod("studio.addons")
+    real = addons._enabled_modules
+    addons._enabled_modules = lambda: ["physical-starlight-atmosphere", "bl_ext.blender_org.tri_lighting",
+                                       "bl_ext.user_default.light_wrangler", "something_else"]
+    try:
+        kinds = {a["key"]: a["kind"] for a in addons.found()}
+        check("other add-ons: used and covered ones found", kinds == {"psa": "use", "tri": "covered",
+                                                                      "lightwrangler": "use"}, kinds)
+        names = [s["name"] for s in addons.summary()]
+        check("other add-ons: listed for Claude", "Light Wrangler" in names and len(names) == 3, names)
+        text = mod("studio").claude_tools._context({"kind": "light"})
+        check("other add-ons: in the light context", "Other add-ons" in text and "psa.add_atmosphere" in text)
+    finally:
+        addons._enabled_modules = real
+    check("other add-ons: none here, nothing listed", isinstance(addons.found(), list))
+    check("refactor: ui and core still export their names",
+          all(hasattr(mod("ui"), n) for n in ("sync_skill_operators", "_setup_visible", "CLAUDE_PT_chat", "classes"))
+          and all(hasattr(mod("core"), n) for n in ("new_chat", "load_chat", "versions", "goto_version", "approve")))
+
+
+@section
 def queue_wait_tool():
     tools = mod("studio").claude_tools
     text = tools._queue({"action": "wait"})

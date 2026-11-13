@@ -18,4 +18,7 @@ Know:
 - Light per part (light linking): only when the wish needs it. One light per part, no drivers, constraints or
   helper empties. Link with object.light_linking.receiver_collection to a flat collection that holds the
   objects directly: nested collections inside it are not followed.
+- Other add-ons: studio_context lists the ones that are on and how to reach them (atmosphere from Physical
+  Starlight & Atmosphere, placing with Light Wrangler). Use them for what they add; do not rebuild a light setup
+  with add-ons the Light tab covers (Quick Studio Light, QLE, Tri-lighting).
 - Check: render_preview (max_size 600).

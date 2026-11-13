@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Chat state, main-thread timer, tool dispatch and chat history."""
+"""Chat state, main-thread timer and tool dispatch (chat history: chats.py, versions and approval: versions.py)."""
 
 import base64
 import json
@@ -652,173 +652,6 @@ def stop():
 
 
 # ---------------------------------------------------------------------------
-# Chat history (saved in the extension's user directory)
-
-def list_chats():
-    global _chats
-    if _chats is None:
-        _chats = _read_json("chats.json", [])
-        if not isinstance(_chats, list):
-            _chats = []
-    return _chats
-
-
-TITLE_WORDS = 5
-TITLE_CHARS = 32
-
-
-def short_title(text, taken=()):
-    """A few words of the first message ("Kamera frontal stellen"), a number when the same
-    title exists already ("… _02")."""
-    words = [w for w in re.sub(r"[\[\]{}()\"'`*_#>|]+", " ", text or "").split() if w]
-    title = ""
-    for word in words[:TITLE_WORDS]:
-        if title and len(title) + 1 + len(word) > TITLE_CHARS:
-            break
-        title = (title + " " + word).strip()
-    title = (title or "Chat")[:TITLE_CHARS].rstrip(" ,.;:!?-")
-    if title in taken:
-        n = 2
-        while "%s_%02d" % (title, n) in taken:
-            n += 1
-        title = "%s_%02d" % (title, n)
-    return title
-
-
-def save_current_chat():
-    if not session_id or not messages:
-        return
-    chats = list_chats()
-    entry = next((c for c in chats if c.get("id") == session_id), None)
-    if entry is None:
-        entry = {"id": session_id}
-        chats.insert(0, entry)
-    first_user = next((m for m in messages if m["role"] == "user"), None)
-    title = (first_user["text"] if first_user and first_user["text"] else
-             (first_user["attachments"][0]["name"] if first_user and first_user.get("attachments") else "Chat"))
-    global pending_title
-    if pending_title and not entry.get("renamed"):
-        entry.update(title=pending_title, renamed=True)
-        pending_title = ""
-    if not entry.get("renamed") and (not entry.get("title") or entry["title"] == "Chat" and first_user):
-        others = {c.get("title") for c in chats if c is not entry}
-        entry["title"] = short_title(title, others)
-    entry.update(updated=time.time(), messages=messages[-400:], context=dict(context))
-    prefs = get_prefs()
-    if prefs:  # the chat continues with the model it was used with
-        entry["model"] = {key: getattr(prefs, key) for key in MODEL_KEYS}
-    chats.sort(key=lambda c: -c.get("updated", 0))
-    del chats[MAX_SAVED_CHATS:]
-    try:
-        _write_json("chats.json", chats)
-    except OSError:
-        traceback.print_exc()
-
-
-_chat_serial = [0]   # changes with every new/loaded chat: code values are kept per chat
-
-
-def new_chat():
-    global session_id
-    if is_busy():
-        return
-    _chat_serial[0] += 1
-    save_current_chat()
-    messages.clear()
-    attachments.clear()
-    session_id = None
-    global pending_title
-    pending_title = ""
-    _last_sent.clear()
-    _skills_sent.clear()
-    context.update(used=0, window=0)
-    _restore_model(default_model())  # every new chat starts with the default model (preferences)
-    mark_dirty()
-
-
-def load_chat(chat_id):
-    global session_id
-    if is_busy():
-        return
-    _chat_serial[0] += 1
-    entry = next((c for c in list_chats() if c.get("id") == chat_id), None)
-    if entry is None:
-        return
-    save_current_chat()
-    messages[:] = [dict(m) for m in entry.get("messages", [])]
-    session_id = chat_id
-    _last_sent.clear()
-    _skills_sent.clear()
-    _restore_model(entry.get("model"))
-    context.update((entry.get("context") or {"used": 0, "window": 0}))
-    mark_dirty()
-
-
-def current_title():
-    entry = next((c for c in list_chats() if c.get("id") == session_id), None) if session_id else None
-    return entry.get("title", "") if entry else pending_title
-
-
-def set_current_title(title):
-    global pending_title
-    title = " ".join((title or "").split())[:70]
-    if session_id and any(c.get("id") == session_id for c in list_chats()):
-        if title:
-            rename_chat(session_id, title)
-    else:
-        pending_title = title
-    mark_dirty()
-
-
-MODEL_KEYS = ("backend", "model", "effort", "local_model", "local_effort")
-
-
-def default_model():
-    """What a new chat starts with: Preferences › General › Default Model and Effort."""
-    prefs = get_prefs()
-    choice = getattr(prefs, "default_model", 'sonnet')
-    if choice == 'LOCAL':
-        return {"backend": 'LOCAL'}
-    return {"backend": 'CLOUD', "model": choice, "effort": getattr(prefs, "default_effort", 'medium')}
-
-
-def _restore_model(saved):
-    prefs = get_prefs()
-    if not prefs or not isinstance(saved, dict):
-        return
-    for key in MODEL_KEYS:  # model before effort: switching the model resets the effort
-        if key in saved and getattr(prefs, key) != saved[key]:
-            try:
-                setattr(prefs, key, saved[key])
-            except (TypeError, ValueError):
-                pass  # e.g. a model that no longer exists
-
-
-def rename_chat(chat_id, title):
-    title = " ".join((title or "").split())[:70]
-    entry = next((c for c in list_chats() if c.get("id") == chat_id), None)
-    if entry is None or not title:
-        return
-    entry.update(title=title, renamed=True)
-    try:
-        _write_json("chats.json", list_chats())
-    except OSError:
-        traceback.print_exc()
-    mark_dirty()
-
-
-def delete_chat(chat_id):
-    global session_id
-    chats = list_chats()
-    chats[:] = [c for c in chats if c.get("id") != chat_id]
-    _write_json("chats.json", chats)
-    if session_id == chat_id and not is_busy():
-        messages.clear()
-        session_id = None
-    mark_dirty()
-
-
-# ---------------------------------------------------------------------------
 # Usage
 
 def load_usage():
@@ -886,143 +719,6 @@ def undo_from(first_step):
         notes.append(f"The user undid your changes: {names}. The scene is back in the state before them.")
     mark_dirty()
     return problem
-
-
-# ---------------------------------------------------------------------------
-# Versions: every code step of the model is a version; the timeline moves
-# through them with Blender's undo/redo (the scene marker tells where we are).
-
-_VERSION_LINE = re.compile(r"^[ \t]*Version:[ \t]*(.+?)[ \t]*$", re.M | re.I)
-
-
-def turns():
-    """The chat split into turns: a user message and everything until the next one.
-    Answers to ask_user (a user message right after a "question") stay in the turn.
-    [{"start", "end" (exclusive), "tools": [msg], "steps": [int], "word": str, "last_assistant": index}]"""
-    out, cur = [], None
-    for i, m in enumerate(messages):
-        if m["role"] == "user" and not (i and messages[i - 1]["role"] == "question"):
-            if cur:
-                cur["end"] = i
-            cur = {"start": i, "end": len(messages), "tools": [], "steps": [], "word": "",
-                   "last_assistant": -1}
-            out.append(cur)
-            continue
-        if cur is None:
-            cur = {"start": i, "end": len(messages), "tools": [], "steps": [], "word": "", "last_assistant": -1}
-            out.append(cur)
-        if m["role"] == "tool":
-            cur["tools"].append(m)
-            if m.get("step"):
-                cur["steps"].append(m["step"])
-        elif m["role"] == "assistant":
-            cur["last_assistant"] = i
-            cur["word"] = m.get("version") or cur["word"]
-    for t in out:
-        if not t["word"] and t["tools"]:
-            t["word"] = _fallback_word(t["tools"])
-    return out
-
-
-def _fallback_word(tools):
-    """A one-word name when the model gave none: the first longer word of the first code step."""
-    for m in tools:
-        if m.get("code"):
-            for word in re.findall(r"[\wÄÖÜäöüß-]{4,}", m["text"]):
-                return word[:1].upper() + word[1:]
-    return tr("Change")
-
-
-def _take_version_word():
-    """Moves "Version: <word>" lines of the answers into the messages (not shown as text)."""
-    for msg in messages:
-        if msg["role"] != "assistant" or "Version:" not in msg["text"] and "version:" not in msg["text"]:
-            continue
-        found = _VERSION_LINE.findall(msg["text"])
-        if found:
-            msg["version"] = found[-1].strip(" .\"'")[:20]
-            msg["text"] = _VERSION_LINE.sub("", msg["text"]).rstrip()
-
-
-def versions():
-    """One version per turn that changed the scene: [{"step": last step of the turn, "text": word}]."""
-    return [{"step": max(t["steps"]), "text": t["word"]} for t in turns() if t["steps"]]
-
-
-SUMMARY_KINDS = (  # (key, icon, label, tools, keywords in code descriptions)
-    ("material", 'MATERIAL', "Material", ("studio_base_material",), r"materi|beiz|farb|colou?r|textur|shader|rauheit|rough|glanz|holz"),
-    ("camera", 'CAMERA_DATA', "Camera", ("studio_camera",), r"kamera|camera|\bcam\b|brennweite|focal"),
-    ("light", 'LIGHT', "Light", ("studio_light_setup",), r"licht|light|lampe|schatten|shadow"),
-    ("world", 'WORLD', "World", ("studio_hdri_setup", "studio_environment_bake"), r"hdri|world|umgebung|himmel|sky"),
-    ("render", 'RENDER_STILL', "Render", ("render_preview", "studio_render_queue"), r"render"),
-    ("look", 'HIDE_OFF', "Looked", ("get_viewport_screenshot", "get_scene_info", "get_object_info",
-                                    "studio_context"), r"$^"),
-    ("object", 'MESH_DATA', "Objects", (), r""),
-)
-
-
-def summarize(tools):
-    """Counts per area for the icon row under an answer: [(icon, label, count)], steps, undone?"""
-    counts = {}
-    for m in tools:
-        name, text = m.get("tool", ""), m["text"].lower()
-        for key, _icon, _label, names, pattern in SUMMARY_KINDS:
-            if name in names or (m.get("code") and pattern and re.search(pattern, text)) \
-                    or (key == "object" and m.get("code")):
-                counts[key] = counts.get(key, 0) + 1
-                break
-    rows = [(icon, tr(label), counts[key]) for key, icon, label, _n, _p in SUMMARY_KINDS if key in counts]
-    steps = sum(1 for m in tools if m.get("step"))
-    undone = any(m.get("undone") for m in tools)
-    return rows, steps, undone
-
-
-def current_version():
-    try:
-        return int(bpy.context.scene.get(blender_tools.UNDO_MARKER, 0))
-    except Exception:
-        return 0
-
-
-def goto_version(step):
-    """Move the scene to the state right after ``step`` (0 = before the first step)."""
-    global history_rev
-    if is_busy():
-        return tr("Wait until the model is done.")
-    if bpy.context.mode != 'OBJECT':
-        return tr("Undo only works in Object Mode.")
-    current = current_version()
-    problem = ""
-    if step < current:
-        _count, problem = blender_tools.undo_claude_steps(step + 1)
-    elif step > current:
-        problem = blender_tools.redo_claude_steps(step)
-    now = current_version()
-    for m in messages:
-        if m["role"] == "tool" and m.get("step"):
-            m["undone"] = m["step"] > now
-    history_rev += 1
-    if now != current:
-        names = ", ".join(m["text"] for m in messages if m["role"] == "tool" and m.get("step") == now) or "–"
-        notes.append(f"The user moved the scene to version {now} ({names}); later steps are undone"
-                     if now < current else f"The user restored the scene to version {now} ({names}).")
-    mark_dirty()
-    return problem
-
-
-def approve(index, accept):
-    if not 0 <= index < len(pending):
-        return
-    task = pending.pop(index)
-    if task.done:
-        return
-    if accept:
-        task.finish(_run_live_code(task) if task.live else _run_code_task(task))
-    else:
-        add_message("info", tr("Rejected: {}").format(task.description or tr("Code")))
-        task.finish(mcp_server.text_result(
-            "The user rejected this code. Do not run it again; ask what they want instead.", True))
-    mark_dirty()
 
 
 # ---------------------------------------------------------------------------
@@ -1351,7 +1047,6 @@ def _handle_event(obj):
             if claude_cli.is_auth_error(text):
                 _set_login_needed(True)
             add_message("error", text)
-
 
 
 def _handle_done(rc, stderr):
@@ -1791,3 +1486,15 @@ def unregister():
     pending.clear()
     save_current_chat()
     mcp_server.stop()
+
+
+# Moved into their own modules; re-exported so `core.<name>` keeps working.
+from .chats import (
+    MODEL_KEYS, TITLE_CHARS, TITLE_WORDS, _chat_serial, _restore_model, current_title, default_model,
+    delete_chat, list_chats, load_chat, new_chat, rename_chat, save_current_chat, set_current_title,
+    short_title
+)  # noqa: E402,F401
+from .versions import (
+    SUMMARY_KINDS, _VERSION_LINE, _fallback_word, _take_version_word, approve, current_version, goto_version,
+    summarize, turns, versions
+)  # noqa: E402,F401
