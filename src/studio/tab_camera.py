@@ -310,11 +310,11 @@ class RS_PT_camera(_SidebarPanel, Panel):
             sub = row.row(align=True)
             sub.active = not locked
             sub.prop(space, "lock_camera", text="", icon='VIEW_CAMERA')
-        if data.type == 'PERSP':
-            row = col.row(align=True)
+        if data.type == 'PERSP':    # a grid: five equal buttons also in a narrow sidebar
+            grid = col.grid_flow(row_major=True, columns=len(LENS_PRESETS), even_columns=True, align=True)
             for mm in LENS_PRESETS:
-                row.operator(RS_OT_set_lens.bl_idname, text=str(mm),
-                             depress=abs(data.lens - mm) < 0.01).lens = mm
+                grid.operator(RS_OT_set_lens.bl_idname, text=str(mm),
+                              depress=abs(data.lens - mm) < 0.01).lens = mm
         draw_dof(box, cam, space)
         # Format: [3] : [4] [1500 × 2000, pressed = this camera keeps its format] (presets: the menu on top)
         own = cam.render_studio_camera
