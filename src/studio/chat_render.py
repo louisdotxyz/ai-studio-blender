@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Render controls right in the chat, above the skills (draw_inline, no popover): start renders without
-Claude. [High|Low] [still|film] [1K|2K|4K] · the cameras to render (all or some) · [Render (n)];
-the running render with cancel, or how many wait in the queue."""
+Claude. One row: [High|Low] [still|film] [All] [cameras ▾] … [Render (n)]; the size and format come
+from the Render tab. While rendering: progress with cancel; also how many wait in the queue."""
 
 import bpy
 from bpy.props import StringProperty
 from bpy.types import Operator, Panel
 
-from . import cameras, render_size
+from . import cameras
 from .runner import RUN
 from .ui_common import _item_progress_text
 
@@ -63,82 +63,64 @@ class RS_OT_chat_render(Operator):
 
 
 class RS_PT_chat_render(Panel):
+    """The cameras to render, picked in a small menu (stays open for several clicks)."""
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'HEADER'
-    bl_label = "Render"
-    bl_ui_units_x = 13
+    bl_label = "Cameras"
+    bl_ui_units_x = 9
 
     def draw(self, context):
         layout = self.layout
-        scene = context.scene
-        rq = scene.render_studio
-        if RUN.busy:
-            row = layout.row(align=True)
-            row.progress(factor=RUN.render_progress, type='BAR', text=_item_progress_text())
-            row.operator("render_studio.cancel", text="", icon='X')
-        row = layout.row(align=True)
-        row.prop_enum(rq, "quality", 'HIGH', text="High")
-        row.prop_enum(rq, "quality", 'LOW', text="Low")
-        sub = row.row(align=True)
-        sub.prop_enum(rq, "mode", 'STILL', text="", icon='IMAGE_DATA')
-        sub.prop_enum(rq, "mode", 'ANIM', text="", icon='RENDER_ANIMATION')
-        render_size.draw(layout, scene)
-        cams = cameras.scene_cameras(scene)
+        cams = cameras.scene_cameras(context.scene)
         names = chosen(context)
-        head = layout.row(align=True)
-        head.label(text="Cameras", icon='CAMERA_DATA')
-        head.operator(RS_OT_chat_camera.bl_idname, text="All",
-                      depress=bool(cams) and set(names) >= {o.name for o in cams}).name = "*"
         col = layout.column(align=True)
         for obj in cams:
             col.operator(RS_OT_chat_camera.bl_idname, text=obj.name, depress=obj.name in names,
                          icon='CHECKBOX_HLT' if obj.name in names else 'CHECKBOX_DEHLT').name = obj.name
         if not cams:
             col.label(text="No camera in the scene", icon='INFO')
-        row = layout.row()
-        row.scale_y = 1.3
-        row.enabled = bool(names)
-        row.operator(RS_OT_chat_render.bl_idname, text="Render (%d)" % len(names), icon='RENDER_STILL')
-        waiting = sum(1 for i in rq.items if i.camera)
-        if waiting and not RUN.busy:
-            layout.operator("render_studio.render_queue", text="Render Waiting Queue (%d)" % waiting,
-                            icon='SEQ_STRIP_DUPLICATE')
+
+
+def _camera_text(names, cams):
+    if cams and set(names) >= {o.name for o in cams} and len(cams) > 1:
+        return "All"
+    if len(names) == 1:
+        return names[0]
+    return "%d Cameras" % len(names) if names else "No Camera"
 
 
 def draw_inline(layout, context):
-    """Compact, right in the chat: [High|Low][still|film][1K|2K|4K] / the cameras / [Render (n)]."""
+    """One row in the chat: [High|Low] [still|film] [All] [cameras ▾]   [Render (n)] on the right.
+    Size, format and the rest come from the Render tab."""
     scene = context.scene
     rq = scene.render_studio
-    col = layout.column(align=True)
-    row = col.row(align=True)
-    row.prop_enum(rq, "quality", 'HIGH', text="High")
-    row.prop_enum(rq, "quality", 'LOW', text="Low")
-    row.prop_enum(rq, "mode", 'STILL', text="", icon='IMAGE_DATA')
-    row.prop_enum(rq, "mode", 'ANIM', text="", icon='RENDER_ANIMATION')
-    now = render_size.chosen(scene)
-    for name, length in render_size.SIZES:
-        row.operator(render_size.RS_OT_render_size.bl_idname, text=name, depress=name == now).length = length
     cams = cameras.scene_cameras(scene)
     names = chosen(context)
-    if cams:
-        grid = col.grid_flow(row_major=True, columns=3, even_columns=True, align=True)
-        if len(cams) > 1:
-            grid.operator(RS_OT_chat_camera.bl_idname, text="All",
-                          depress=set(names) >= {o.name for o in cams}).name = "*"
-        for obj in cams:
-            grid.operator(RS_OT_chat_camera.bl_idname, text=obj.name, depress=obj.name in names).name = obj.name
-    row = col.row(align=True)
-    row.scale_y = 1.3
+    row = layout.row(align=False)
+    row.scale_y = 1.2
+    left = row.row(align=True)
+    left.prop_enum(rq, "quality", 'HIGH', text="High")
+    left.prop_enum(rq, "quality", 'LOW', text="Low")
+    left.separator(factor=0.5)
+    left.prop_enum(rq, "mode", 'STILL', text="", icon='IMAGE_DATA')
+    left.prop_enum(rq, "mode", 'ANIM', text="", icon='RENDER_ANIMATION')
+    left.separator(factor=0.5)
+    if len(cams) > 1:
+        left.operator(RS_OT_chat_camera.bl_idname, text="All",
+                      depress=set(names) >= {o.name for o in cams}).name = "*"
+    left.popover(RS_PT_chat_render.__name__, text=_camera_text(names, cams), icon='CAMERA_DATA')
+    right = row.row(align=True)
+    right.alignment = 'RIGHT'
     if RUN.busy:
-        row.progress(factor=RUN.render_progress, type='BAR', text=_item_progress_text())
-        row.operator("render_studio.cancel", text="", icon='X')
+        right.progress(factor=RUN.render_progress, type='BAR', text=_item_progress_text())
+        right.operator("render_studio.cancel", text="", icon='X')
     else:
-        sub = row.row(align=True)
+        sub = right.row(align=True)
         sub.enabled = bool(names)
         sub.operator(RS_OT_chat_render.bl_idname, text="Render (%d)" % len(names), icon='RENDER_STILL')
         waiting = sum(1 for i in rq.items if i.camera)
         if waiting:
-            row.operator("render_studio.render_queue", text=str(waiting), icon='SEQ_STRIP_DUPLICATE')
+            right.operator("render_studio.render_queue", text=str(waiting), icon='SEQ_STRIP_DUPLICATE')
 
 
 classes = (RS_OT_chat_camera, RS_OT_chat_render, RS_PT_chat_render)
