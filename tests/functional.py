@@ -922,6 +922,14 @@ def chat_queue_finish_wear():
     bpy.ops.render_studio.look_reset()
 
 
+def _raises(func):
+    try:
+        func()
+    except (ValueError, RuntimeError):
+        return True
+    return False
+
+
 @section
 def krea_plan_scale_mask():
     import json as _json
@@ -1048,14 +1056,6 @@ def krea_plan_scale_mask():
     for name, value in render_state.items():
         if scene.objects.get(name) is not None:
             scene.objects[name].hide_render = value
-
-
-def _raises(func):
-    try:
-        func()
-    except (ValueError, RuntimeError):
-        return True
-    return False
 
 
 @section
