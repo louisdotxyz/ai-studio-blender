@@ -1209,9 +1209,9 @@ def variants_size_material_open():
           tm.current_material(bpy.context) == m2 and cube.active_material == m1)
     check("material: given to the clicked slot", tm.give_material(cube, 0, m2) and cube.material_slots[0].material == m2)
     bpy.ops.mesh.primitive_plane_add(size=0.2, location=(5, 5, 0))
-    check("material: another object, its own material again", tm.current_material(bpy.context) != m2)
     plane = bpy.context.active_object
     check("material: an object without slots gets one", tm.give_material(plane, 3, m1) and plane.material_slots[0].material == m1)
+    check("material: another object, its own material again", tm.current_material(bpy.context) == m1)
     for obj in (cube, plane):
         bpy.data.objects.remove(obj)
     # Krea: pressed buttons and the typed wish, several pictures, the place or a reference

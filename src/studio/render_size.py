@@ -23,10 +23,17 @@ def pixels(scene):
 
 
 def set_long_side(scene, length):
-    """The render's long side becomes `length` px (and stays it when the aspect ratio changes)."""
+    """The render's long side becomes exactly `length` px, the ratio stays (and it stays when the ratio
+    changes)."""
     render = scene.render
-    base = max(render.resolution_x, render.resolution_y, 1)
-    render.resolution_percentage = max(1, min(32767, round(length * 100 / base)))
+    ratio = render.resolution_x / max(render.resolution_y, 1)
+    if ratio >= 1:
+        size = (int(length), max(4, round(length / ratio)))
+    else:
+        size = (max(4, round(length * ratio)), int(length))
+    if (render.resolution_x, render.resolution_y) != size:
+        render.resolution_x, render.resolution_y = size
+    render.resolution_percentage = 100
     scene[KEY] = int(length)
 
 

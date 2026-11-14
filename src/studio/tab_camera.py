@@ -170,13 +170,16 @@ class RS_MT_formats(Menu):
         from .props import aspect_ratio
         for _short, long, w, h in FORMAT_PRESETS:
             op = layout.operator(RS_OT_set_resolution.bl_idname, text="%s (%d : %d)" % ((long,) + aspect_ratio(w, h)),
-                                 icon='CHECKMARK' if (render.resolution_x, render.resolution_y) == (w, h) else 'BLANK1')
+                                 icon='CHECKMARK' if _same_ratio(render, w, h) else 'BLANK1')
             op.width, op.height = w, h
 
 
+def _same_ratio(render, w, h):
+    return abs(render.resolution_x / max(render.resolution_y, 1) - w / h) < 0.004
+
+
 def format_name(render):
-    return next((short for short, _l, w, h in FORMAT_PRESETS if (render.resolution_x, render.resolution_y) == (w, h)),
-                "Format")
+    return next((short for short, _l, w, h in FORMAT_PRESETS if _same_ratio(render, w, h)), "Format")
 
 
 class RS_OT_camera_preset(Operator):

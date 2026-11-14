@@ -7,7 +7,7 @@ import json
 import os
 
 import bpy
-from bpy.props import BoolProperty, EnumProperty, StringProperty
+from bpy.props import BoolProperty, CollectionProperty, EnumProperty, IntProperty, StringProperty
 from bpy.types import Menu, Operator, Panel
 
 from . import image_edit, krea, krea_scene, look, runner, tab_queue
@@ -320,10 +320,10 @@ class RS_OT_krea_reference(Operator):
     bl_options = {'INTERNAL'}
 
     directory: StringProperty(subtype='DIR_PATH', options={'SKIP_SAVE'})
-    files: bpy.props.CollectionProperty(type=bpy.types.OperatorFileListElement, options={'SKIP_SAVE'})
+    files: CollectionProperty(type=bpy.types.OperatorFileListElement, options={'SKIP_SAVE'})
     filter_image: BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
     filter_folder: BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
-    remove: bpy.props.IntProperty(default=-1, options={'HIDDEN', 'SKIP_SAVE'})
+    remove: IntProperty(default=-1, options={'HIDDEN', 'SKIP_SAVE'})
 
     def invoke(self, context, event):
         if self.remove >= 0:
