@@ -11,7 +11,7 @@ from bpy.types import Menu, Operator, Panel
 from . import core, runner, shots
 from .ui_common import (QUEUE_TAB_ORDER, SCALE_PRESETS, _SidebarPanel, _item_progress_text, _look_through,
                         _queue_progress_text, _unpin, _user_resolution, active_camera, ensure_uids,
-                        format_label, studio_tab, tab_head)
+                        format_label, studio_tab)
 from .runner import RUN
 
 
@@ -454,9 +454,17 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
         if not RUN.busy:
             shots.draw_check(layout, scene)
 
-        # The same head as every tab: [quality ▾] [+ add to the queue] [settings]
-        tab_head(layout, RS_MT_render_presets.bl_idname,
-                 "High Quality" if rq.quality == 'HIGH' else "Low Quality", RS_OT_add.bl_idname, RS_PT_output.__name__)
+        # The head: [High] [Low] [still] [film]  [A] [B] [−] [+ variant] [settings]
+        from . import render_size, variants_ab
+        head = layout.row(align=True)
+        head.scale_y = 1.2
+        head.prop_enum(rq, "quality", 'HIGH', text="High")
+        head.prop_enum(rq, "quality", 'LOW', text="Low")
+        sub = head.row(align=True)
+        sub.prop_enum(rq, "mode", 'STILL', text="", icon='IMAGE_DATA')
+        sub.prop_enum(rq, "mode", 'ANIM', text="", icon='RENDER_ANIMATION')
+        variants_ab.draw(head, scene, 'RENDER')
+        head.popover(RS_PT_output.__name__, text="", icon='PREFERENCES')
         box = layout.box()
         col = box.column()
         row = col.row(align=True)
@@ -466,6 +474,7 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
             row = col.row(align=True)
             row.label(text="", icon='FILE_FOLDER')
             row.prop(p, "output_root", text="", placeholder="Next to the .blend file")
+        render_size.draw(col, scene)              # 1K / 2K / 4K on the long side, the ratio comes from the camera
         # The entry that renders now (its quick draft, then the image), or the newest render,
         # ◀ ▶ through the queue's images, the magnifier opens it big in the render window.
         images = runner.queue_images(scene)
@@ -514,26 +523,17 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
                     sub = pic.row()
                     sub.active = False
                     sub.label(text=os.path.basename(path), translate=False)
-        # [+ Add] [LQ|HQ] [still|animation] [clear]
-        row = col.row(align=True)
-        row.scale_y = 1.2
-        row.operator(RS_OT_add.bl_idname, text="Add", icon='ADD')
-        sub = row.row(align=True)
-        sub.prop_enum(rq, "quality", 'LOW', text="LQ")
-        sub.prop_enum(rq, "quality", 'HIGH', text="HQ")
-        sub = row.row(align=True)
-        sub.prop_enum(rq, "mode", 'STILL', text="", icon='IMAGE_DATA')
-        sub.prop_enum(rq, "mode", 'ANIM', text="", icon='RENDER_ANIMATION')
-        row.operator(RS_OT_clear.bl_idname, text="", icon='TRASH')
+        # [▶ Render <camera>] [clear the queue]; quality, still/film and size are in the head
         if rq.mode == 'ANIM':
             row = col.row(align=True)
             row.prop(scene, "frame_start", text="Start")
             row.prop(scene, "frame_end", text="End")
         cam = active_camera(scene)
-        if cam is not None and cam.type == 'CAMERA':
-            col.label(text="Adds " + cam.name, icon='CAMERA_DATA')
-
-        shots.draw_shots(layout, scene)
+        row = col.row(align=True)
+        row.scale_y = 1.3
+        row.operator(RS_OT_add.bl_idname, icon='RENDER_STILL' if rq.mode == 'STILL' else 'RENDER_ANIMATION',
+                     text="Render %s" % cam.name if cam is not None and cam.type == 'CAMERA' else "Render")
+        row.operator(RS_OT_clear.bl_idname, text="", icon='TRASH')
 
         box = layout.box()
         col = box.column(align=True)

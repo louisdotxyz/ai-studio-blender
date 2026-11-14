@@ -112,6 +112,8 @@ def _set_aspect(index):
             render = settings.id_data.render
             render.resolution_x, render.resolution_y = size
             settings["aspect_typed"] = ratio
+            from . import render_size
+            render_size.follow(settings.id_data)     # the chosen render size (1K/2K/4K) stays
             sync.schedule_fit()
     return set_
 

@@ -364,10 +364,13 @@ def draw_place_row(layout, context):
     """Click on the product: [Reflection] [Light] [Rim] / [Shade] [Shadow]. The pressed one is active."""
     rs = context.scene.render_studio
     on = tool_active(context)
-    col = layout.column(align=True)
-    row = col.row(align=True)
-    row.label(text="Click on the product", icon='MOUSE_LMB_DRAG')
-    grid = col.grid_flow(row_major=True, columns=3, even_columns=True, align=True)
+    # [🖱] [Reflection] [Light] [Rim] / [Shade] [Shadow]: the mouse says "click on the product"
+    split = layout.split(factor=0.12, align=True)
+    icon = split.column()
+    icon.alignment = 'CENTER'
+    icon.scale_y = 2.0
+    icon.label(text="", icon='MOUSE_LMB')
+    grid = split.grid_flow(row_major=True, columns=3, even_columns=True, align=True)
     for mode, label, _d in MODES:
         grid.operator(RS_OT_place_mode.bl_idname, text=label, depress=on and rs.place_mode == mode).mode = mode
 

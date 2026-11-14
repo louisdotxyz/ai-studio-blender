@@ -257,9 +257,10 @@ def krea_context():
 def krea_prepare(prompt, upload_url, model=None, environment=None, zoom=None, view=None, protect=None):
     """Krea with the user's plan (Krea connector): builds the full prompt (your English prompt + the product's
     true scale + keep the product), renders the mask that keeps the product untouched (Precise, protect) and
-    uploads render, mask and environment picture to upload_url (from Krea's get_upload_url). None = the Finish
-    tab's choice. model: PRECISE, NANO or AUTO; zoom CLOSER/KEEP/WIDER; view (camera height)
-    LOWER/KEEP/HIGHER. The product is what the user marked (Finish tab), else everything visible.
+    uploads render, mask and the user's pictures to upload_url (from Krea's get_upload_url). None = the Finish
+    tab's choice. model: PRECISE, NANO or AUTO; environment: pictures (paths, None = the ones added in the tab;
+    given here they count as the place); zoom CLOSER/KEEP/WIDER; view (camera height) LOWER/KEEP/HIGHER.
+    The product is what the user marked (Finish tab), else everything visible.
     Returns {"model": Krea model id, "input": pass as generate_image's input unchanged, "credits_about", ...}."""
     from . import tab_finish
     return tab_finish.prepare(bpy.context.scene, prompt, upload_url, model, environment, zoom, view, protect)
@@ -290,7 +291,7 @@ def krea_failed(reason):
     return reason
 
 
-def krea_refine(prompt, model="AUTO", environment="", zoom="KEEP", view="KEEP", protect=None):
+def krea_refine(prompt, model="AUTO", environment=None, zoom="KEEP", view="KEEP", protect=None):
     """Without Claude's Krea connector: refines the render shown in the Finish tab with the user's Krea API
     token (its own balance; in the background, the Finish tab shows it). Same arguments as krea_prepare."""
     from . import tab_finish

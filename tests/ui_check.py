@@ -195,11 +195,14 @@ wm.render_studio_tab = 'FINISH'
 run(bpy.types.RS_PT_finish, ctx)
 studio_p = bpy.context.preferences.addons[PKG].preferences.studio
 studio_p.krea_token = "test-token"
-wm.render_studio_krea_env = "/nonexistent/room.jpg"
+wm.render_studio_krea_refs = "/nonexistent/room.jpg\n/nonexistent/hand.jpg"
+wm.render_studio_krea_hand = True
+wm.render_studio_krea_zoom = 'CLOSER'
 wm.render_studio_krea_zoom = 'WIDER'
 run(bpy.types.RS_PT_finish, ctx)
 studio_p.krea_token = ""
-wm.render_studio_krea_env = ""
+wm.render_studio_krea_refs = ""
+wm.render_studio_krea_hand = False
 wm.render_studio_krea_zoom = 'KEEP'
 run(bpy.types.RS_PT_finish_settings, ctx)
 run(bpy.types.RS_MT_look_presets, ctx)

@@ -16,7 +16,8 @@ from bpy.props import (EnumProperty, PointerProperty, StringProperty)
 from bpy.types import Operator, Panel
 
 from . import (addons, background, cameras, claude_link, core, env_ui, environment, foreign, hdri,
-               light_paint, light_ui, lights, presets_io, runner, shots, sync, tab_finish, tab_queue)
+               light_paint, light_ui, lights, presets_io, render_size, runner, shots, sync, tab_finish, tab_queue,
+               variants_ab)
 # Loaded for their side effects: the chat finds claude_tools (Claude's studio_* tools) in
 # sys.modules; api and variants are the helpers in execute_python.
 from . import api, baselib, claude_tools, light_items, looks, variants  # noqa: F401
@@ -35,6 +36,7 @@ from .tab_light import (RS_MT_hdris, RS_MT_light_presets, RS_OT_add_light, RS_OT
                         RS_OT_lights_adjust, RS_OT_select_light, RS_OT_show_world, RS_OT_toggle_light,
                         RS_OT_world_restore, RS_PT_light_settings, RS_PT_lighting)
 from .tab_material import (RS_MT_material_more, RS_MT_material_new, RS_MT_material_presets_delete, RS_OT_material_assign,
+                           RS_OT_material_open,
                            RS_OT_material_clean_unused, RS_OT_material_delete, RS_OT_material_favorite,
                            RS_OT_material_rename, RS_OT_material_select, RS_OT_material_variant,
                            draw_tile_menu, RS_OT_material_duplicate, RS_OT_material_group_toggle, RS_OT_material_new,
@@ -173,6 +175,7 @@ classes = render_setup.classes + (
     RS_OT_look_preset,
     RS_OT_look_reset,
     RS_OT_material_assign,
+    RS_OT_material_open,
     RS_OT_material_variant,
     RS_OT_material_select,
     RS_OT_material_favorite,
@@ -283,6 +286,8 @@ def register():
     light_paint.register()
     light_ui.register()
     tab_finish.register()
+    variants_ab.register()
+    render_size.register()
     presets_io.register()
     shots.register()
     cad_link.register()
@@ -306,6 +311,8 @@ def unregister():
     cad_link.unregister()
     shots.unregister()
     presets_io.unregister()
+    render_size.unregister()
+    variants_ab.unregister()
     tab_finish.unregister()
     light_ui.unregister()
     light_paint.unregister()

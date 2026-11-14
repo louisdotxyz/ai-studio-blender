@@ -30,7 +30,7 @@ IN_CHAT = {"camera", "light", "material"}
 # Earlier shipped versions (sha1 of the file): a copy the user never changed gets the new text.
 UPGRADES = {"cad": {"e7b3d80ae27d22995023a36ddcaab3b3761f1b97"},
             "camera": {"925c6fe6c1b6442c271e4c0547a76407d2d139b7"},
-            "finish": {"2c8e2980a4e3960e845ceaa0933402ef1aa3a520", "9ea64e3d802313f63d87e93dd73bf6399efdb5d1"},
+            "finish": {"2c8e2980a4e3960e845ceaa0933402ef1aa3a520", "3a398b13b482836e9cbd207528b050c89c18fe95", "9ea64e3d802313f63d87e93dd73bf6399efdb5d1"},
             "material": {"6ce2e39e716956cfeadf82e2b4e65e6e6800d243", "0b5914cfc5e631ebaf7906c58f86cd84c29c8dba",
                          "8943cce70de0d1325a652aa55edc0fdaca5b1855"},
             "light": {"836f400f42ede6f5a887089f90528bf1e29da481", "dd0b9b9a2a01ef17ccf380bfc53708180e61224e",

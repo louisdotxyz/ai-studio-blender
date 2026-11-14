@@ -288,18 +288,81 @@ class RS_OT_contact_sheet(Operator):
         return {'FINISHED'}
 
 
+def compare_pair(scene):
+    """The render shown in the preview and the one before it (else the newest two)."""
+    from . import tab_queue
+    images = [p for p in runner.queue_images(scene) if p and os.path.isfile(p)
+              and not os.path.basename(p).startswith("Contact Sheet")]
+    shown = tab_queue._selected_image(images) or (images[0] if images else "")
+    if shown in images and images.index(shown) + 1 < len(images):
+        return [shown, images[images.index(shown) + 1]]
+    return images[:2]
+
+
+def _split_compare(names, tries=[0]):
+    """In the render window: two image editors side by side, left the newer render, right the older."""
+    images = [bpy.data.images.get(n) for n in names]
+    if None in images:
+        return None
+    for window in bpy.context.window_manager.windows:
+        if not window.screen.is_temporary:
+            continue
+        areas = [a for a in window.screen.areas if a.type == 'IMAGE_EDITOR']
+        if not areas:
+            continue
+        if len(areas) == 1:
+            area = areas[0]
+            region = next(r for r in area.regions if r.type == 'WINDOW')
+            with bpy.context.temp_override(window=window, screen=window.screen, area=area, region=region):
+                bpy.ops.screen.area_split(direction='VERTICAL', factor=0.5)
+            areas = [a for a in window.screen.areas if a.type == 'IMAGE_EDITOR']
+        areas.sort(key=lambda a: a.x)
+        for area, image in zip(areas, images):
+            area.spaces.active.image = image
+            region = next(r for r in area.regions if r.type == 'WINDOW')
+            try:
+                with bpy.context.temp_override(window=window, screen=window.screen, area=area, region=region):
+                    bpy.ops.image.view_all(fit_view=True)
+            except RuntimeError:
+                pass
+            area.tag_redraw()
+        tries[0] = 0
+        return None
+    tries[0] += 1               # the window comes a moment later
+    if tries[0] > 20:
+        tries[0] = 0
+        return None
+    return 0.1
+
+
 class RS_OT_compare_renders(Operator):
     bl_idname = "render_studio.compare_renders"
     bl_label = "Compare"
-    bl_description = "The last two renders side by side (in Preview)"
+    bl_description = ("This render and the one before it side by side in a Blender window (zoom and move each "
+                      "side on its own)")
     bl_options = {'INTERNAL'}
 
     def execute(self, context):
-        paths = recent_images(context.scene, 2)
+        paths = compare_pair(context.scene)
         if len(paths) < 2:
             self.report({'WARNING'}, "Render at least two images first")
             return {'CANCELLED'}
-        _open(paths[:2])
+        names = []
+        for path in paths:
+            image = bpy.data.images.load(path, check_existing=True)
+            image.reload()
+            names.append(image.name)
+        if any(w.screen.is_temporary for w in context.window_manager.windows):
+            bpy.app.timers.register(lambda: _split_compare(names), first_interval=0.01)   # already open
+            return {'FINISHED'}
+        view = context.preferences.view
+        old = view.render_display_type
+        view.render_display_type = 'WINDOW'       # always its own window, whatever the preference says
+        try:
+            bpy.ops.render.view_show('INVOKE_DEFAULT')
+        finally:
+            view.render_display_type = old
+        bpy.app.timers.register(lambda: _split_compare(names), first_interval=0.15)
         return {'FINISHED'}
 
 

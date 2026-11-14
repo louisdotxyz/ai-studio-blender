@@ -1060,7 +1060,7 @@ def krea_plan_scale_mask():
     krea.upload_to = lambda url, path, fields=None: uploads.append(path) or "https://assets/%d.png" % len(uploads)
     finish.current_image = lambda _scene: render
     wm = bpy.context.window_manager
-    wm.render_studio_krea_model, wm.render_studio_krea_env = 'AUTO', ""
+    wm.render_studio_krea_model, wm.render_studio_krea_refs = 'AUTO', ""
     wm.render_studio_krea_zoom = wm.render_studio_krea_view = 'KEEP'
     try:
         p = finish.prepare(scene, "A hand holds the pod", "https://upload/presigned", protect=True)
@@ -1144,8 +1144,96 @@ def finish_image_adjust():
     check("adjust: the saved image is brighter", value > 0.55, value)
     bpy.ops.render_studio.edit_reset()
     check("adjust: reset", edit.is_neutral(edit.values(scene)))
-    check("adjust: look is in the camera tab, Krea and adjustments in Finish",
-          hasattr(mod("studio.tab_finish"), "draw_look") and "draw_look" in open(mod("studio.tab_camera").__file__).read())
+    check("adjust: look, Krea and adjustments in Finish, not in the camera tab",
+          "draw_look(layout, context)" in open(mod("studio.tab_finish").__file__).read()
+          and "draw_look" not in open(mod("studio.tab_camera").__file__).read())
+
+
+@section
+def variants_size_material_open():
+    ab, size = mod("studio.variants_ab"), mod("studio.render_size")
+    tm, krea, finish = mod("studio.tab_material"), mod("studio.krea"), mod("studio.tab_finish")
+    scene = bpy.context.scene
+    # material variants: which material sits on which object
+    m1, m2 = bpy.data.materials.new("Var Red"), bpy.data.materials.new("Var Blue")
+    bpy.ops.mesh.primitive_cube_add(size=0.2, location=(3, 3, 0))
+    cube = bpy.context.active_object
+    cube.name = "Var Cube"
+    cube.data.materials.append(m1)
+    ab.add(scene, 'MATERIAL')
+    cube.material_slots[0].material = m2
+    ab.switch(scene, 'MATERIAL', 0)
+    check("variants: material A comes back", cube.material_slots[0].material == m1 and ab.names(scene, 'MATERIAL') == ["A", "B"])
+    ab.switch(scene, 'MATERIAL', 1)
+    check("variants: material B comes back", cube.material_slots[0].material == m2 and ab.active(scene, 'MATERIAL') == 1)
+    ab.remove(scene, 'MATERIAL')
+    check("variants: removing down to one clears them", ab.names(scene, 'MATERIAL') == [] and cube.material_slots[0].material == m1)
+    # camera variants: place and lens of the camera looked through
+    cam = scene.camera
+    if cam is not None:
+        keep_matrix, keep_lens = cam.matrix_world.copy(), cam.data.lens
+        ab.add(scene, 'CAMERA')
+        cam.data.lens = 135
+        cam.location.x += 1.0
+        bpy.context.view_layer.update()
+        ab.switch(scene, 'CAMERA', 0)
+        bpy.context.view_layer.update()
+        check("variants: camera A brings place and lens back",
+              abs(cam.data.lens - keep_lens) < 1e-4 and (cam.matrix_world.translation - keep_matrix.translation).length < 1e-4)
+        ab.switch(scene, 'CAMERA', 1)
+        check("variants: camera B again", abs(cam.data.lens - 135) < 1e-4)
+        ab.remove(scene, 'CAMERA')
+        cam.matrix_world, cam.data.lens = keep_matrix, keep_lens
+    # render size: 1K/2K/4K on the long side, it stays when the ratio changes
+    rq = scene.render_studio
+    keep = (scene.render.resolution_x, scene.render.resolution_y, scene.render.resolution_percentage, rq.quality)
+    rq.aspect_x, rq.aspect_y = 3, 4
+    size.set_long_side(scene, 2048)
+    check("size: 2K on the long side", abs(size.long_side(scene) - 2048) <= 4 and size.chosen(scene) == "2K", size.pixels(scene))
+    rq.aspect_x, rq.aspect_y = 16, 9
+    check("size: stays 2K when the ratio changes", abs(size.long_side(scene) - 2048) <= 4
+          and size.pixels(scene)[0] > size.pixels(scene)[1], size.pixels(scene))
+    ab.add(scene, 'RENDER')
+    rq.quality = 'LOW' if keep[3] == 'HIGH' else 'HIGH'
+    size.set_long_side(scene, 4096)
+    ab.switch(scene, 'RENDER', 0)
+    check("variants: render A brings quality and size back", rq.quality == keep[3] and size.chosen(scene) == "2K")
+    ab.remove(scene, 'RENDER')
+    scene.render.resolution_x, scene.render.resolution_y, scene.render.resolution_percentage, rq.quality = keep
+    scene.pop(size.KEY, None)
+    # a library material: open it to change it, then give it to the object clicked
+    bpy.context.view_layer.objects.active = cube
+    cube.select_set(True)
+    tm.open_material(bpy.context, m2)
+    check("material: a library click opens it, also when another is on the object",
+          tm.current_material(bpy.context) == m2 and cube.active_material == m1)
+    check("material: given to the clicked slot", tm.give_material(cube, 0, m2) and cube.material_slots[0].material == m2)
+    bpy.ops.mesh.primitive_plane_add(size=0.2, location=(5, 5, 0))
+    check("material: another object, its own material again", tm.current_material(bpy.context) != m2)
+    plane = bpy.context.active_object
+    check("material: an object without slots gets one", tm.give_material(plane, 3, m1) and plane.material_slots[0].material == m1)
+    for obj in (cube, plane):
+        bpy.data.objects.remove(obj)
+    # Krea: pressed buttons and the typed wish, several pictures, the place or a reference
+    wm = bpy.context.window_manager
+    wm.render_studio_krea_hand, wm.render_studio_krea_prompt = True, "on a wooden table"
+    text = finish.wish(wm)
+    check("krea: buttons and text make the wish", text.startswith("Add a realistic adult hand") and
+          text.endswith("on a wooden table.") and not wm.render_studio_krea_protect)
+    wm.render_studio_krea_hand, wm.render_studio_krea_prompt, wm.render_studio_krea_protect = False, "", True
+    body = krea.request_body('PRECISE', "x", "https://r", 400, 300, ["https://a", "https://b", "https://c", "https://d"],
+                             mask_url="https://m", room=False)
+    check("krea: pictures as references (three with a mask), not as a place",
+          body["reference_images"] == ["https://a", "https://b", "https://c"] and krea.REF_TEXT.strip() in body["prompt"])
+    nano = krea.request_body('NANO', "x", "https://r", 400, 300, "https://a\nhttps://b")
+    check("krea: the free model gets render and pictures", nano["image_urls"] == ["https://r", "https://a", "https://b"]
+          and krea.ENV_TEXT.strip() in nano["prompt"])
+    check("krea: a place picture with Room needs the free model", krea.pick_model('AUTO', True) == 'NANO'
+          and krea.pick_model('AUTO', False) == 'PRECISE')
+    bpy.ops.render_studio.krea_frame(target="zoom", value='CLOSER')
+    first = wm.render_studio_krea_zoom
+    bpy.ops.render_studio.krea_frame(target="zoom", value='CLOSER')
+    check("krea: camera buttons switch on and off", first == 'CLOSER' and wm.render_studio_krea_zoom == 'KEEP')
 
 
 @section

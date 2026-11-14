@@ -25,6 +25,8 @@ def scene_resolution(scene):
 def set_scene_resolution(scene, resolution):
     if scene_resolution(scene) != tuple(resolution):
         scene.render.resolution_x, scene.render.resolution_y = resolution
+        from . import render_size
+        render_size.follow(scene)        # the chosen render size (1K/2K/4K) stays
 
 
 def camera_resolution(obj):

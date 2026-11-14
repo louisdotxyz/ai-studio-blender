@@ -67,17 +67,32 @@ def view_key(view):
 
 ENV_TEXT = (" Place the product into the environment of the reference image: its space, surfaces, light and colors, "
             "with matching shadows and reflections.")
+REF_TEXT = (" Use the reference images for what the request describes (for example a hand pose, props or a style); "
+            "do not copy anything else from them.")
+MAX_REFERENCES = 4
+
+
+def _refs(references):
+    """A list of reference files or URLs from a list, a single string or newline-separated text."""
+    if not references:
+        return []
+    if isinstance(references, str):
+        references = references.split("\n")
+    return [r for r in (str(x).strip() for x in references) if r]
+
+
+# The toggles of the Finish tab: (key, label, sentence for Krea, keep the product untouched?)
+SCENE = (
+    ('hand', "Hand", "Add a realistic adult hand that holds the product naturally, matching the existing light.", False),
+    ('inuse', "In Use", "Show the product in use by a person, cropped so the product stays the hero of the image.",
+     False),
+    ('room', "Room", "Place the product in a fitting real-world setting with matching light and soft shadows.", True),
+    ('props', "Props", "Add a few tasteful props around the product, out of focus, matching the existing light.", True),
+)
 # What Krea charges for one picture (its own price list, krea.ai/app/api/pricing); None = not published
 PRICES = {'PRECISE': None, 'NANO': 0.15}
 # Compute units of the plan for one picture (Krea's quotes, Nov 2026); the real price comes from the preflight
 UNITS = {'PRECISE': 163, 'NANO': 111}
-# (label, text, keep the product untouched: a hand's fingers go over it, props stay around it)
-IDEAS = (
-    ("Hand", "Add a realistic adult hand that holds the product naturally, matching the existing light.", False),
-    ("In Use", "Show the product in use by a person, cropped so the product stays the hero of the image.", False),
-    ("Setting", "Place the product in a fitting real-world setting with matching light and soft shadows.", True),
-    ("Props", "Add a few tasteful props around the product, out of focus, matching the existing light.", True),
-)
 KEEP = " Keep the product exactly as it is: same shape, proportions, materials, colors, details and text."
 KEEP_FRAME = " Keep the camera angle and the framing."
 POLL = 2.0
@@ -96,6 +111,7 @@ def model_path(key):
 
 
 def pick_model(key, environment="", zoom='KEEP', view='KEEP'):
+    """environment: True when the product goes into a new place (references with "Room")."""
     """Auto: Precise edits in place (product and size exact); a new environment, zooming out or another
     perspective needs the whole picture anew: Free."""
     if key != 'AUTO':
@@ -103,11 +119,12 @@ def pick_model(key, environment="", zoom='KEEP', view='KEEP'):
     return 'NANO' if environment or zoom_key(zoom) != 'KEEP' or view_key(view) != 'KEEP' else 'PRECISE'
 
 
-def full_prompt(prompt, environment="", zoom='KEEP', view='KEEP', scale=""):
-    """The user's sentence plus what the tab's choices mean, the product's true scale and "keep it"."""
+def full_prompt(prompt, environment="", zoom='KEEP', view='KEEP', scale="", room=True):
+    """The user's sentence plus what the tab's choices mean, the product's true scale and "keep it".
+    environment: reference images go with it; room: they show the place (else hand, props, style …)."""
     text = prompt.strip().rstrip(".") + "." if prompt.strip() else ""
     if environment:
-        text += ENV_TEXT
+        text += ENV_TEXT if room else REF_TEXT
     zoom, view = zoom_key(zoom), view_key(view)
     text += ZOOM_TEXT.get(zoom, "") + VIEW_TEXT.get(view, "")
     if scale:
@@ -197,20 +214,21 @@ def nearest_ratio(width, height):
 
 
 def request_body(key, prompt, image_url, width, height, environment_url="", zoom='KEEP', view='KEEP',
-                 scale="", mask_url=""):
+                 scale="", mask_url="", room=True):
     """The JSON for one model; the render's size goes with it where the model takes one, an environment
     picture as the second image (Free) or as a reference (Precise); the mask (white = Krea may change it,
     the product black) only for Precise, which edits in place."""
-    text = full_prompt(prompt, bool(environment_url), zoom, view, scale)
+    refs = _refs(environment_url)
+    text = full_prompt(prompt, bool(refs), zoom, view, scale, room)
     if key == 'NANO':
-        return {"prompt": text, "image_urls": [image_url] + ([environment_url] if environment_url else []),
+        return {"prompt": text, "image_urls": [image_url] + refs[:MAX_REFERENCES],
                 "width": width, "height": height, "aspect_ratio": nearest_ratio(width, height),
                 "resolution": "2K" if max(width, height) > 1100 else "1K"}
     body = {"prompt": text, "image_url": image_url, "quality": "high"}
     if mask_url:
         body["mask_url"] = mask_url
-    if environment_url:
-        body["reference_images"] = [environment_url]
+    if refs:
+        body["reference_images"] = refs[:3 if mask_url else MAX_REFERENCES]
     return body
 
 
@@ -299,14 +317,15 @@ def upload_to(upload_url, path, fields=None):
     return url
 
 
-def _work(key, model, prompt, source, width, height, target, environment, zoom, view, scale="", mask=""):
+def _work(key, model, prompt, source, width, height, target, environment, zoom, view, scale="", mask="", room=True):
     try:
         job["state"] = "upload"
         image_url = upload(key, source)
-        environment_url = upload(key, environment) if environment else ""
+        environment_url = [upload(key, path) for path in _refs(environment)]
         mask_url = upload(key, mask) if mask and model == 'PRECISE' else ""
         job["state"] = "working"
-        body = request_body(model, prompt, image_url, width, height, environment_url, zoom, view, scale, mask_url)
+        body = request_body(model, prompt, image_url, width, height, environment_url, zoom, view, scale, mask_url,
+                            room)
         started = _call("POST", "/generate/" + "image/" + model_path(model), key, json.dumps(body).encode(),
                         {"Content-Type": "application/json"})
         job_id = started.get("job_id") if isinstance(started, dict) else ""
@@ -335,7 +354,8 @@ def _work(key, model, prompt, source, width, height, target, environment, zoom, 
         job.update(state="error", text=str(exc))
 
 
-def start(model, prompt, source, width, height, environment="", zoom='KEEP', view='KEEP', scale="", mask=""):
+def start(model, prompt, source, width, height, environment="", zoom='KEEP', view='KEEP', scale="", mask="",
+          room=True):
     """Starts refining `source` (a render file) in the background with the API token. scale: the sentence
     about the product's true size; mask: a mask file (Precise only). Returns (result path, model used)."""
     key = token()
@@ -345,16 +365,17 @@ def start(model, prompt, source, width, height, environment="", zoom='KEEP', vie
         raise ValueError("Krea is still working on the last image")
     if not source or not os.path.isfile(source):
         raise ValueError("Render an image first")
-    environment = bpy.path.abspath(environment) if environment else ""
-    if environment and not os.path.isfile(environment):
-        raise ValueError("The environment picture is missing: %s" % environment)
+    environment = [bpy.path.abspath(p) for p in _refs(environment)]
+    for path in environment:
+        if not os.path.isfile(path):
+            raise ValueError("The picture is missing: %s" % path)
     if not prompt.strip() and not environment and zoom_key(zoom) == 'KEEP' and view_key(view) == 'KEEP':
         raise ValueError("Write what Krea should change")
-    model = pick_model(model, environment, zoom, view)
+    model = pick_model(model, bool(environment) and room, zoom, view)
     target = result_path(source)
     job.update(state="upload", text="", source=source, result="", started=time.monotonic(), model=model, quote=None)
     thread = threading.Thread(target=_work, args=(key, model, prompt, source, width, height, target, environment,
-                                                  zoom, view, scale, mask), daemon=True)
+                                                  zoom, view, scale, mask, room), daemon=True)
     job["thread"] = thread
     thread.start()
     if not bpy.app.timers.is_registered(_finish):

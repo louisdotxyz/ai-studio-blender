@@ -579,6 +579,12 @@ class RS_OT_pick_from_object(Operator):
 
 def _material_under_mouse(context, event):
     """(material, object) of the face under the mouse in any 3D viewport of the window."""
+    ray = _ray_under_mouse(context, event)
+    return material_at_ray(context, *ray) if ray else (None, None)
+
+
+def _ray_under_mouse(context, event):
+    """(origin, direction) of the mouse in the 3D viewport it is over, or None."""
     from bpy_extras import view3d_utils
     x, y = event.mouse_x, event.mouse_y
     for area in context.window.screen.areas:
@@ -598,8 +604,33 @@ def _material_under_mouse(context, event):
                 # Orthographic camera view: Blender puts the ray start in the middle of the clip
                 # range (500 m ahead with a clip end of 1 km) – move it back onto the camera plane.
                 origin = origin - direction * (origin - camera.matrix_world.translation).dot(direction)
-            return material_at_ray(context, origin, direction)
-    return None, None
+            return origin, direction
+    return None
+
+
+def slot_at_ray(context, origin, direction):
+    """(object, slot index) of the face a ray hits first, or (None, -1)."""
+    depsgraph = context.evaluated_depsgraph_get()
+    hit, _loc, _normal, index, obj, _matrix = context.scene.ray_cast(depsgraph, origin, direction)
+    if not hit or obj is None:
+        return None, -1
+    original = getattr(obj, "original", obj)
+    data = getattr(original.evaluated_get(depsgraph), "data", None)
+    slot = 0
+    if isinstance(data, bpy.types.Mesh) and 0 <= index < len(data.polygons):
+        slot = data.polygons[index].material_index
+    return original, slot
+
+
+def give_material(obj, slot, material):
+    """Puts `material` into the slot of `obj` (a new slot if it has none)."""
+    if not hasattr(obj.data, "materials"):
+        return False
+    if not obj.material_slots:
+        obj.data.materials.append(material)
+    else:
+        obj.material_slots[min(slot, len(obj.material_slots) - 1)].material = material
+    return True
 
 
 def material_at_ray(context, origin, direction):
@@ -694,6 +725,68 @@ class RS_MT_material_presets_delete(Menu):
             self.layout.operator(RS_OT_material_preset_delete.bl_idname, text=name, icon='X').name = name
 
 
+class RS_OT_material_open(Operator):
+    """A library material: click opens it to change it; then click an object in the viewport to give it
+    the material (the face's slot). Esc, right-click or a click anywhere else: only open."""
+    bl_idname = "render_studio.material_open"
+    bl_label = "Open Material"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    name: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, _context, props):
+        material = bpy.data.materials.get(props.name)
+        count = len(material_users().get(material, ())) if material is not None else 0
+        used = "Used by %d object%s" % (count, "" if count == 1 else "s") if count else "Not used"
+        return (props.name + "\n" + used + ".\nClick: open it to change it, then click an object in the viewport "
+                "to give it this material. Ctrl: select the objects that use it. Right-click: more")
+
+    def invoke(self, context, event):
+        material = bpy.data.materials.get(self.name)
+        if material is None:
+            return {'CANCELLED'}
+        if event.ctrl or event.oskey:
+            return bpy.ops.render_studio.material_select(name=material.name)
+        open_material(context, material)
+        if context.window is None:
+            return {'FINISHED'}
+        context.window.cursor_modal_set('PAINT_BRUSH')
+        context.workspace.status_text_set("Click an object to give it %s · Esc or a click elsewhere: just change it"
+                                          % material.name)
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        material = bpy.data.materials.get(self.name)
+        if material is None:
+            return {'CANCELLED'}
+        open_material(context, material)
+        return {'FINISHED'}
+
+    def _end(self, context):
+        context.window.cursor_modal_restore()
+        context.workspace.status_text_set(None)
+
+    def modal(self, context, event):
+        if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
+            self._end(context)
+            return {'FINISHED'}
+        if event.type != 'LEFTMOUSE' or event.value != 'PRESS':
+            return {'PASS_THROUGH'}
+        self._end(context)
+        ray = _ray_under_mouse(context, event)
+        if ray is None:                       # a click in a panel: that click counts, we are done
+            return {'FINISHED', 'PASS_THROUGH'}
+        obj, slot = slot_at_ray(context, *ray)
+        material = bpy.data.materials.get(self.name)
+        if obj is None or material is None or not give_material(obj, slot, material):
+            return {'FINISHED'}
+        _keep(material)
+        self.report({'INFO'}, "%s → %s" % (material.name, obj.name))
+        return {'FINISHED'}
+
+
 class RS_OT_material_assign(Operator):
     bl_idname = "render_studio.material_assign"
     bl_label = "Assign Material"
@@ -752,8 +845,21 @@ def remember(material):
         add_recent(material.name)
 
 
+# A material opened from the library to change it, while this object was active (another object: gone)
+_editing = {"name": "", "object": ""}
+
+
+def open_material(context, material):
+    obj = context.active_object
+    _editing.update(name=material.name, object=obj.name if obj is not None else "")
+    remember(material)
+
+
 def current_material(context):
     obj = context.active_object
+    opened = bpy.data.materials.get(_editing["name"]) if _editing["name"] else None
+    if opened is not None and _editing["object"] == (obj.name if obj is not None else ""):
+        return opened
     if obj is not None and hasattr(obj.data, "materials") and obj.active_material is not None:
         return obj.active_material
     return bpy.data.materials.get(_current[0]) if _current[0] else None
@@ -1052,13 +1158,17 @@ class RS_OT_material_clean_unused(Operator):
 def draw_tile_menu(self, context):
     """Right-click on a library tile: the material's own entries in Blender's button menu."""
     op = getattr(context, "button_operator", None)
-    if op is None or op.bl_rna.identifier != "RENDER_STUDIO_OT_material_assign":
+    if op is None or op.bl_rna.identifier not in {"RENDER_STUDIO_OT_material_assign", "RENDER_STUDIO_OT_material_open"}:
         return
     material = bpy.data.materials.get(op.name)
     if material is None:
         return
     layout = self.layout
     layout.separator()
+    give = layout.operator(RS_OT_material_assign.bl_idname, text="Give to Selected Objects", icon='MATERIAL')
+    give.name, give.only_selected = material.name, True
+    layout.operator(RS_OT_material_assign.bl_idname, text="Replace the Current Material Everywhere",
+                    icon='FILE_REFRESH').name = material.name
     layout.operator(RS_OT_material_select.bl_idname, icon='RESTRICT_SELECT_OFF').name = material.name
     fav = material.name in favorites()
     layout.operator(RS_OT_material_favorite.bl_idname, icon='SOLO_ON' if fav else 'SOLO_OFF',
@@ -1253,10 +1363,12 @@ class RS_PT_material(_SidebarPanel, Panel):
         obj = context.active_object
         p = runner.prefs(context)
         has_slot = obj is not None and hasattr(obj.data, "materials")
-        material = obj.active_material if has_slot else current_material(context)
-        # the same head in every tab: [preset ▾] [+ save] [settings]
-        tab_head(layout, RS_MT_material_new.bl_idname, "New Material", RS_OT_material_preset_save.bl_idname,
-                 RS_PT_material_settings.__name__, icon='MATERIAL')
+        material = current_material(context)
+        # the same head in every tab: [new ▾] [A] [B] [−] [+ variant] [settings]
+        from . import variants_ab
+        head, _props = tab_head(layout, RS_MT_material_new.bl_idname, "New Material", icon='MATERIAL')
+        variants_ab.draw(head, context.scene, 'MATERIAL')
+        head.popover(RS_PT_material_settings.__name__, text="", icon='PREFERENCES')
         box = layout.box()
 
         # 1. The material: [pick ▾][name][n×][eyedropper][⋯][gear], its preview, the slots
@@ -1273,9 +1385,17 @@ class RS_PT_material(_SidebarPanel, Panel):
                 users.enabled = False
                 users.label(text="%d×" % material.users)
         elif not has_slot:
-            row.label(text="Select an object or click a material", icon='INFO')
+            row.label(text="Click a material or an object", icon='INFO')
         row.operator(RS_OT_pick_from_object.bl_idname, text="", icon='EYEDROPPER').mode = 'MATERIAL'
         row.menu(RS_MT_material_more.bl_idname, text="", icon='THREE_DOTS')
+        if has_slot and material is not None and material != obj.active_material:
+            # opened from the library, not on the selected object: give it to it, or click an object
+            hint = box.row(align=True)
+            sub = hint.row(align=True)
+            sub.active = False
+            sub.label(text="Not on %s" % obj.name, icon='INFO', translate=False)
+            give = hint.operator(RS_OT_material_assign.bl_idname, text="Give to It", icon='MATERIAL')
+            give.name, give.only_selected = material.name, True
         if material is not None and (p is None or p.mat_preview):
             box.template_icon(icon_value=layout.icon(material),
                               scale=float(p.mat_preview_size) if p is not None else 8.0)
@@ -1386,7 +1506,7 @@ class RS_PT_material(_SidebarPanel, Panel):
                     pic.template_icon(icon_value=layout.icon(mat), scale=LIBRARY_ICON_SCALE)
                     name = cell.row(align=True)
                     name.scale_y = 0.75
-                    name.operator(RS_OT_material_assign.bl_idname,
+                    name.operator(RS_OT_material_open.bl_idname,
                                   text="%d× %s" % (count, short) if count else short,
                                   depress=(mat == material), emboss=(mat == material)).name = mat.name
                     heart = name.row(align=True)
@@ -1399,7 +1519,7 @@ class RS_PT_material(_SidebarPanel, Panel):
                     count = len(users.get(mat, ()))
                     line = col.row(align=True)
                     line.active = bool(count) or mat == material or bool(mat.get(BASE_KEY))
-                    line.operator(RS_OT_material_assign.bl_idname, text=mat.name.replace(" | ", " · "),
+                    line.operator(RS_OT_material_open.bl_idname, text=mat.name.replace(" | ", " · "),
                                   icon_value=layout.icon(mat), depress=(mat == material)).name = mat.name
                     info = line.row(align=True)
                     info.ui_units_x = 1.6

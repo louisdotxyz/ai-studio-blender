@@ -7,7 +7,8 @@ chat: no
 ---
 A finished render goes to Krea (Finish tab), paid with the user's Krea plan through the Krea connector
 (mcp__claude_ai_Krea__*). You write the prompt from the user's short wish. Answer in 1-2 sentences.
-The render (and an environment picture) are attached: look at them first.
+The render and the user's pictures ("Picture (the place)" / "Picture (reference)") are attached: look at
+them first. The wish already holds the sentences of the buttons the user pressed (Hand, In Use, Room, Props).
 0. Load the tools in one ToolSearch call: "select:mcp__blender__execute_python,mcp__claude_ai_Krea__get_upload_url,
    mcp__claude_ai_Krea__generate_image,mcp__claude_ai_Krea__get_job". No Krea tools: tell the user to connect
    Krea in Claude (Settings › Connectors) or add an API token for ▶, and stop.
@@ -21,7 +22,7 @@ The render (and an environment picture) are attached: look at them first.
    protect=False when a hand or a person touches the product (fingers go over it); say so then.
 3. get_upload_url, then in execute_python:
    p = api.krea_prepare(prompt, upload_url, model=…, environment=None, zoom=None, view=None, protect=…)
-   (None = the Finish tab's choice; zoom CLOSER/KEEP/WIDER, view = camera height LOWER/KEEP/HIGHER, from
+   (None = the Finish tab's choice, also for the pictures: leave environment=None; zoom CLOSER/KEEP/WIDER, view = camera height LOWER/KEEP/HIGHER, from
    the wish: "näher" CLOSER, "weiter weg" WIDER, "von oben" HIGHER). It returns {"model", "input", ...}:
    pass both on unchanged. The product's size is measured from what the user marked as the product
    (Finish tab); the message's "Product:" line shows it. If it looks wrong (much bigger than the product),
