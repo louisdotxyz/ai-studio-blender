@@ -196,6 +196,15 @@ def camera_tab():
 def camera_shot():
     shot("6_panel_camera.png")
     with override():
+        cube = bpy.data.objects.get("Cube") or next(o for o in bpy.context.scene.objects if o.type == 'MESH')
+        for obj in bpy.context.selected_objects:
+            obj.select_set(False)
+        cube.select_set(True)
+        bpy.context.view_layer.objects.active = cube
+        mat = mod("studio.matstructures").create('DARK_ANODIZED', "Gehäuse Alu eloxiert")
+        mod("studio.matstructures").add_wear(mat, fingerprints=0.4)
+        cube.data.materials.clear()
+        cube.data.materials.append(mat)
         bpy.context.window_manager.render_studio_tab = 'MATERIAL'
     for area in view()[0].screen.areas:
         area.tag_redraw()
@@ -203,6 +212,14 @@ def camera_shot():
 
 def material_shot():
     shot("7_panel_material.png")
+    with override():
+        bpy.context.window_manager.render_studio_tab = 'FINISH'
+    for area in view()[0].screen.areas:
+        area.tag_redraw()
+
+
+def finish_shot():
+    shot("8_panel_finish.png")
 
 
 def idle():
@@ -213,7 +230,7 @@ def idle():
 
 STEPS = [splash_away, splash_gone, setup, tool_on, tool_hover, click_press, click_release, placed, ctrl_press,
          ctrl_release, new_light, studio_tab, studio_tab_press, studio_tab_release, idle, panel, idle, camera_tab,
-         idle, idle, camera_shot, idle, idle, material_shot, finish]
+         idle, idle, camera_shot, idle, idle, material_shot, idle, idle, finish_shot, finish]
 
 
 def tick():
