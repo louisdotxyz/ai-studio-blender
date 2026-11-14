@@ -967,7 +967,8 @@ def krea_plan_scale_mask():
     scene.collection.objects.link(other)
     scene.camera = other
     scene.render.resolution_x, scene.render.resolution_y = 400, 300
-    render = os.path.join(TMP, "Pod_Krea_Test_Cam_01.png")
+    bpy.context.view_layer.update()            # new objects get their place only with an update
+    render = os.path.join(TMP, "Pod_Krea Test Cam_01.png")
     img = bpy.data.images.new("krea render", 400, 300)
     img.filepath_raw, img.file_format = render, 'PNG'
     img.save()

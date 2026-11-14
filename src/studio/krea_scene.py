@@ -7,6 +7,7 @@ from projecting it through the camera the render was made with (its name is in t
 """
 
 import os
+import re
 
 import bpy
 from bpy_extras.object_utils import world_to_camera_view
@@ -21,14 +22,19 @@ RENDER_KEYS = ("engine", "resolution_x", "resolution_y", "resolution_percentage"
                "use_compositing", "use_sequencer", "use_border", "pixel_aspect_x", "pixel_aspect_y")
 
 
+def _plain(text):
+    """Spaces and underscores alike, any case: file names and camera names compare by this."""
+    return re.sub(r"[\s_]+", "_", text).lower()
+
+
 def render_camera(scene, path):
     """The camera a render file was made with (its name is part of the file name), else the scene's."""
-    name = os.path.basename(path or "")
+    name = _plain(os.path.basename(path or ""))
     best, best_len = None, 0
     for obj in scene.objects:
         if obj.type != 'CAMERA':
             continue
-        key = studio_core.safe_name(obj.name)
+        key = _plain(studio_core.safe_name(obj.name))
         if key and key in name and len(key) > best_len:
             best, best_len = obj, len(key)
     return best or scene.camera
