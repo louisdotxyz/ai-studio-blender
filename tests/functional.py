@@ -762,6 +762,13 @@ def tabs_unified():
     check("look reset: nothing of ours left", rs.look_saturation == 1.0 and scene.view_settings.exposure == 0.0
           and (tree is None or not [n for n in tree.nodes if n.name.startswith(look.PREFIX)]))
     # a material straight into the library (the batch from pictures calls this once per picture)
+    prefs = mod("studio.runner").prefs()
+    keep_library, library = prefs.material_library, os.path.join(TMP, "Library Test.blend")
+    seed = bpy.data.materials.new("Seed")
+    seed.asset_mark()
+    bpy.data.libraries.write(library, {seed}, fake_user=True)
+    bpy.data.materials.remove(seed)
+    prefs.material_library = library
     name = api.library_material("Test Bibliothek gesprenkelt", structure="speckled", kind="plastic",
                                 wear={"dust": 0.2}, amount=0.3)
     built = bpy.data.materials.get("Test Bibliothek gesprenkelt")
@@ -779,6 +786,7 @@ def tabs_unified():
         api.remove_base_material(mat_name)
     for m in (built, red):
         bpy.data.materials.remove(m)
+    prefs.material_library = keep_library
 
 
 @section
