@@ -3,11 +3,11 @@
 
 import bpy
 from bpy.props import (BoolProperty, FloatProperty, IntProperty, StringProperty)
-from bpy.types import Operator, Panel
+from bpy.types import Menu, Operator, Panel
 
-from . import cameras, look, runner, sync
+from . import cameras, env_ui, look, runner, sync
 from .props import FORMAT_PRESETS, PPI
-from .ui_common import (RENDER_TAB_ORDER, _SidebarPanel, _look_through, _unpin,
+from .ui_common import (RENDER_TAB_ORDER, _SidebarPanel, _look_through, _unpin, section, tab_head,
                         active_camera, studio_tab)
 
 
@@ -115,6 +115,59 @@ class RS_OT_camera_from_view(Operator):
 LENS_PRESETS = (24, 35, 50, 85, 135)
 
 
+class RS_OT_camera_preset(Operator):
+    bl_idname = "render_studio.camera_preset"
+    bl_label = "Camera Preset"
+    bl_description = "A new camera for this view of the product, and look through it"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    view: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, _context, props):
+        preset = next((p for p in cameras.VIEW_PRESETS if p[0] == props.view), None)
+        if preset is None:
+            return cls.bl_description
+        kind = "orthographic (no perspective, true proportions)" if preset[4] else "%d mm" % preset[5]
+        return "A new camera: %s, %s. Around the camera's orbit object (otherwise the 3D cursor)" % (preset[1], kind)
+
+    def execute(self, context):
+        try:
+            cam = cameras.camera_preset(context.scene, context.view_layer, self.view)
+        except ValueError as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        _look_through(context, cam)
+        self.report({'INFO'}, "%s created" % cam.name)
+        return {'FINISHED'}
+
+
+class RS_MT_camera_presets(Menu):
+    """The preset menu of the Camera tab: standard views as new cameras, the formats."""
+    bl_idname = "RS_MT_camera_presets"
+    bl_label = "Camera Presets"
+
+    def draw(self, context):
+        layout = self.layout
+        render = context.scene.render
+        layout.label(text="Orthographic")
+        for key, name, _a, _h, ortho, _lens, _room in cameras.VIEW_PRESETS:
+            if ortho:
+                layout.operator(RS_OT_camera_preset.bl_idname, text=name, icon='VIEW_ORTHO').view = key
+        layout.separator()
+        layout.label(text="Perspective")
+        for key, name, _a, _h, ortho, _lens, _room in cameras.VIEW_PRESETS:
+            if not ortho:
+                layout.operator(RS_OT_camera_preset.bl_idname, text=name, icon='VIEW_PERSPECTIVE').view = key
+        layout.operator(RS_OT_camera_from_view.bl_idname, text="From the Viewport", icon='VIEW_CAMERA')
+        layout.separator()
+        layout.label(text="Format")
+        for _short, long, w, h in FORMAT_PRESETS:
+            op = layout.operator(RS_OT_set_resolution.bl_idname, text="%s (%d × %d)" % (long, w, h),
+                                 icon='CHECKMARK' if (render.resolution_x, render.resolution_y) == (w, h) else 'BLANK1')
+            op.width, op.height = w, h
+
+
 class RS_OT_toggle_ortho(Operator):
     bl_idname = "render_studio.toggle_ortho"
     bl_label = "Orthographic / Perspective"
@@ -212,7 +265,11 @@ class RS_PT_camera(_SidebarPanel, Panel):
         render = scene.render
         cam = active_camera(scene)
 
-        # Camera bar, orbit object and lock
+        # The same head as every tab: [presets ▾] [+ a copy of this camera] [settings]
+        tab_head(layout, RS_MT_camera_presets.bl_idname, "Preset", RS_OT_duplicate_camera.bl_idname,
+                 RS_PT_frame.__name__)
+
+        # Camera: name, back, the cameras of the scene, orbit object and lock
         box = layout.box()
         row = box.row(align=True)
         if cam is not None and cam.type == 'CAMERA':
@@ -224,12 +281,9 @@ class RS_PT_camera(_SidebarPanel, Panel):
         back = row.row(align=True)
         back.enabled = steps > 0 and not rq.camera_locked
         back.operator(RS_OT_camera_back.bl_idname, text="", icon='LOOP_BACK')
-        row.popover(RS_PT_frame.__name__, text="", icon='PREFERENCES')
         grid = box.grid_flow(row_major=True, columns=3, even_columns=True, align=True)
         for obj in cameras.scene_cameras(scene):
             grid.operator(RS_OT_set_camera.bl_idname, text=obj.name, depress=(obj == cam)).name = obj.name
-        grid.operator(RS_OT_duplicate_camera.bl_idname, text="", icon='ADD')
-        grid.operator(RS_OT_camera_from_view.bl_idname, text="", icon='VIEW_CAMERA')
         if cam is None or cam.type != 'CAMERA':
             box.label(text="No scene camera")
             return
@@ -240,7 +294,7 @@ class RS_PT_camera(_SidebarPanel, Panel):
         sub.prop(rq, "orbit_target", text="", icon='PIVOT_CURSOR', placeholder="Orbit Around: 3D Cursor")
         row.prop(rq, "camera_locked", text="", icon='LOCKED' if locked else 'UNLOCKED')
 
-        # Lens, format, scale
+        # Lens, depth of field and format: one line each
         data = cam.data
         space = context.space_data
         box = layout.box()
@@ -261,16 +315,10 @@ class RS_PT_camera(_SidebarPanel, Panel):
             for mm in LENS_PRESETS:
                 row.operator(RS_OT_set_lens.bl_idname, text=str(mm),
                              depress=abs(data.lens - mm) < 0.01).lens = mm
-        draw_dof(box, cam, space)
-
-        col = box.column(align=True)
-        row = col.row(align=True)
-        for label, _long, w, h in FORMAT_PRESETS:
-            op = row.operator(RS_OT_set_resolution.bl_idname, text=label,
-                              depress=(render.resolution_x, render.resolution_y) == (w, h))
-            op.width, op.height = w, h
-        # "4 : 5" with a narrow colon, the pin keeps the format for this camera
-        col.separator(factor=0.5)
+        draw_dof(col, cam, space)
+        # Format: [3] : [4] [pin = this camera keeps it] and the size in pixels (presets: the menu on top)
+        own = cam.render_studio_camera
+        pct = render.resolution_percentage / 100
         row = col.row(align=True)
         row.prop(rq, "aspect_x", text="")
         sub = row.row(align=True)
@@ -278,26 +326,30 @@ class RS_PT_camera(_SidebarPanel, Panel):
         sub.alignment = 'CENTER'
         sub.label(text=":")
         row.prop(rq, "aspect_y", text="")
-        own = cam.render_studio_camera
         sub = row.row(align=True)
-        sub.prop(own, "use_resolution", text="", icon='PINNED' if own.use_resolution else 'UNPINNED')
-        pct = render.resolution_percentage / 100
-        sub = col.row()
-        sub.alignment = 'CENTER'
+        sub.ui_units_x = 5.5
         sub.active = False
-        sub.label(text="%d × %d px · %d ppi" % (round(render.resolution_x * pct), round(render.resolution_y * pct), PPI))
+        sub.alignment = 'CENTER'
+        sub.label(text="%d × %d" % (round(render.resolution_x * pct), round(render.resolution_y * pct)))
+        row.prop(own, "use_resolution", text="", icon='PINNED' if own.use_resolution else 'UNPINNED')
 
         # Orbit around the picked object (or the 3D cursor)
-        box = layout.box()
-        col = box.column(align=True)
-        col.enabled = not locked
-        col.prop(rq, "orbit_horizontal")
-        col.prop(rq, "orbit_vertical")
-        if cam.data.type != 'ORTHO':   # orthographic: the distance changes nothing in the picture
-            col.prop(rq, "orbit_distance")
-        col.prop(rq, "orbit_height")
-        col.prop(rq, "orbit_side_offset")
-        col.prop(rq, "orbit_up_offset")
+        box, _head, is_open = section(layout, "orbit", "Orbit", 'ORIENTATION_GIMBAL')
+        if is_open:
+            col = box.column(align=True)
+            col.enabled = not locked
+            col.prop(rq, "orbit_horizontal")
+            col.prop(rq, "orbit_vertical")
+            if cam.data.type != 'ORTHO':   # orthographic: the distance changes nothing in the picture
+                col.prop(rq, "orbit_distance")
+            col.prop(rq, "orbit_height")
+            col.prop(rq, "orbit_side_offset")
+            col.prop(rq, "orbit_up_offset")
+
+        # Backdrop: what the camera sees behind the product, and the floor it stands on
+        box, _head, is_open = section(layout, "backdrop", "Backdrop", 'IMAGE_BACKGROUND')
+        if is_open:
+            env_ui.draw_backdrop(box, context)
 
         look.draw(layout, scene)
 
@@ -387,23 +439,22 @@ def dof_hint(space):
 
 
 def draw_dof(layout, cam, space):
-    """Depth of field: one toggle; aperture and focus only while it is on."""
+    """Depth of field in one line: [on] [aperture] [focus on …] [orbit object] [selected object].
+    A second line only for the focus distance (without a focus object) or a hint."""
     dof = cam.data.dof
-    col = layout.column(align=True)
-    col.prop(dof, "use_dof", text="Depth of Field", toggle=True, icon='CAMERA_DATA')
+    row = layout.row(align=True)
     if not dof.use_dof:
+        row.prop(dof, "use_dof", text="Depth of Field", toggle=True, icon='CAMERA_DATA')
         return
-    row = col.row(align=True)
-    for fstop in FSTOPS:
-        row.operator(RS_OT_set_fstop.bl_idname, text="f/%g" % fstop,
-                     depress=abs(dof.aperture_fstop - fstop) < 0.01).fstop = fstop
-    col.prop(dof, "aperture_fstop", text="Aperture")
-    row = col.row(align=True)
-    row.prop(dof, "focus_object", text="", placeholder="Focus: Distance")
+    row.prop(dof, "use_dof", text="", toggle=True, icon='CAMERA_DATA')
+    row.prop(dof, "aperture_fstop", text="f/")
+    sub = row.row(align=True)
+    sub.ui_units_x = 6
+    sub.prop(dof, "focus_object", text="", placeholder="Focus")
     row.operator(RS_OT_dof_focus.bl_idname, text="", icon='PIVOT_CURSOR').target = "ORBIT"
     row.operator(RS_OT_dof_focus.bl_idname, text="", icon='RESTRICT_SELECT_OFF').target = "ACTIVE"
     if dof.focus_object is None:
-        col.prop(bpy.context.scene.render_studio, "cam_focus_distance", text="Distance")   # 1 mm steps
+        layout.prop(bpy.context.scene.render_studio, "cam_focus_distance", text="Focus Distance")   # 1 mm steps
     hint = dof_hint(space)
     if hint:
         row = layout.row()

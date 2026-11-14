@@ -464,7 +464,7 @@ def light_placing_and_worlds():
 def light_list_map_looks():
     scene = bpy.context.scene
     rs = scene.render_studio
-    items, paint, lmap = mod("studio.light_items"), mod("studio.light_paint"), mod("studio.light_map")
+    items, paint = mod("studio.light_items"), mod("studio.light_paint")
     looks, env, api, lights_mod = mod("studio.looks"), mod("studio.environment"), mod("studio.api"), mod("studio.lights")
     deg = math.degrees
     for o in lights_mod.scene_lights(scene):
@@ -527,27 +527,6 @@ def light_list_map_looks():
     check("studio World light: size keeps its shape", abs(pin.width - 1.0) < 1e-5 and abs(pin.height - 0.6) < 1e-5)
     pin.kelvin = 3000
     check("studio World light: warm by Kelvin", pin.color[0] > pin.color[2] + 0.2, tuple(pin.color))
-    # the map's geometry
-    rect = lmap.rect_for(1200, 40, 300, 0, 1.0)
-    check("light map: between toolbar and sidebar, three times as wide as high, under half the free width",
-          rect[0] >= 40 and rect[0] + rect[2] <= 900 and abs(rect[3] * 3 - rect[2]) < 1e-6 and rect[2] <= 430, rect)
-    back = lmap.from_map(rect, *lmap.to_map(rect, 0.3, 0.4))
-    check("light map: point and angles round trip", abs(back[0] - 0.3) < 1e-6 and abs(back[1] - 0.4) < 1e-6)
-    boxes = [lmap.light_box(rect, 0.0, 0.3, 1.0, 0.6), lmap.light_box(rect, 0.05, 0.3, 0.1, 0.1)]
-    check("light map: a small light in front of a big one can be picked",
-          lmap.pick(rect, boxes, *lmap.to_map(rect, 0.05, 0.3)) == 1
-          and lmap.pick(rect, boxes, *lmap.to_map(rect, -0.4, 0.3)) == 0
-          and lmap.pick(rect, boxes, rect[0] + 2, rect[1] + 2) is None)
-    edge = [lmap.light_box(rect, math.pi - 0.05, 0.3, 0.4, 0.3)]
-    check("light map: a light at the edge is picked on both sides",
-          lmap.pick(rect, edge, rect[0] + 3, lmap.to_map(rect, 0, 0.3)[1]) == 0)
-    cut = lmap.clip(lmap.box_points(rect[0] - 50, rect[1] - 50, rect[0] + 50, rect[1] + 50), rect)
-    check("light map: shapes are cut at the map's edge", len(cut) == 4 and len(lmap.fan(cut)) == 6
-          and all(px >= rect[0] - 1e-6 and py >= rect[1] - 1e-6 for px, py in cut), cut)
-    check("light map: nothing left of a shape outside",
-          not lmap.clip(lmap.box_points(rect[0] - 90, rect[1], rect[0] - 50, rect[1] + 20), rect)
-          and len(lmap.shape_tris(rect[0] + 100, rect[1] + 50, 20, 10, True, rect, edge=2.0)) == 28 * 6)
-    check("light map: the picture behind lines up with the camera", abs(lmap.backdrop_u(-math.pi / 2, 0.0) - 0.25) < 1e-9)
     # placing on the product: shade and shadow
     view, normal = Vector((0, 1, 0)), Vector((0, -1, 0))
     shade = paint.light_direction(view, normal, 'SHADE')
@@ -710,14 +689,96 @@ def material_structures():
     check("structure with wear renders", os.path.isfile(path) and os.path.getsize(path) > 2000)
     tab = mod("studio.tab_material")
     favs = {material.name}
-    check("library filter: all, favorites, project", tab._in_source(material, 'ALL', {}, favs)
-          and tab._in_source(material, 'FAVORITES', {}, favs) and not tab._in_source(plain, 'FAVORITES', {}, favs)
-          and tab._in_source(plain, 'PROJECT', {}, favs))
+    check("library: favorites and project", tab._in_source(material, 'FAVORITES', {}, favs)
+          and not tab._in_source(plain, 'FAVORITES', {}, favs) and tab._in_source(plain, 'PROJECT', {}, favs))
+    kinds = tab.library_kinds('PROJECT')
+    groups = tab._library_groups("", 'PROJECT', "Metal")
+    check("library: filter by kind", "Metal" in kinds and len(groups) == 1 and groups[0][0] == "Metal"
+          and all(tab.material_kind(m) == "Metal" for m, _short in groups[0][1]), (kinds, [g[0] for g in groups]))
     cube.data.materials.clear()
     for old in before:
         cube.data.materials.append(old)
     for mat in list(made.values()) + [again, material, plain]:
         bpy.data.materials.remove(mat)
+
+
+@section
+def tabs_unified():
+    scene = bpy.context.scene
+    rs = scene.render_studio
+    kinds, presets, api, tab = mod("studio.matkinds"), mod("studio.matpresets"), mod("studio.api"), mod("studio.tab_material")
+    cams, look, lights_mod = mod("studio.cameras"), mod("studio.look"), mod("studio.lights")
+    # material kinds: what the kind fixes, and only the controls that fit
+    mat = bpy.data.materials.new("Test Gehäuse")
+    node = presets._principled(mat)
+    node.inputs["Metallic"].default_value = 0.6
+    kinds.apply(mat, node, "Plastic")
+    check("kind: a plastic is not metallic, and has no Metallic control", node.inputs["Metallic"].default_value == 0.0
+          and tab.material_kind(mat) == "Plastic" and "Metallic" not in [n for n, _l in kinds.CONTROLS["Plastic"]]
+          and [n for n, _l in kinds.CONTROLS["Plastic"]][:2] == ["Base Color", "Roughness"])
+    kinds.apply(mat, node, "Metal")
+    check("kind: a metal is metallic", node.inputs["Metallic"].default_value == 1.0 and tab.material_kind(mat) == "Metal")
+    kinds.apply(mat, node, "Glass")
+    check("kind: glass lets light through", node.inputs["Transmission Weight"].default_value == 1.0
+          and "IOR" in [n for n, _l in kinds.CONTROLS["Glass"]])
+    check("kinds: color and roughness first for every surface",
+          all([n for n, _l in kinds.CONTROLS[k]][:2] == ["Base Color", "Roughness"] for k in kinds.KINDS if k != "Light"))
+    bpy.data.materials.remove(mat)
+    # camera presets: orthographic sides, hero, detail
+    before, old_camera = set(cams.scene_cameras(scene)), scene.camera
+    center, radius = lights_mod.subject(scene, rs.orbit_target)
+    made = {key: cams.camera_preset(scene, bpy.context.view_layer, key) for key, *_rest in cams.VIEW_PRESETS}
+    front, top, hero, detail = made['FRONT'], made['TOP'], made['HERO'], made['DETAIL']
+    aim = (front.matrix_world.to_3x3() @ Vector((0, 0, -1))).normalized()
+    check("camera preset: front is orthographic, in front of the product, looking at it",
+          front.data.type == 'ORTHO' and front.matrix_world.translation.y < center.y - radius
+          and abs(front.matrix_world.translation.x - center.x) < 1e-3 and aim.y > 0.999
+          and abs(front.data.ortho_scale - 2.5 * radius) < 1e-4, (tuple(front.matrix_world.translation), aim))
+    check("camera preset: top looks down", top.matrix_world.translation.z > center.z + radius
+          and (top.matrix_world.to_3x3() @ Vector((0, 0, -1))).z < -0.99)
+    check("camera preset: hero and detail are perspective, detail is closer",
+          hero.data.type == 'PERSP' and abs(hero.data.lens - 85) < 1e-3 and abs(detail.data.lens - 100) < 1e-3
+          and (detail.matrix_world.translation - center).length < (hero.matrix_world.translation - center).length
+          and (hero.matrix_world.translation - center).length > radius)
+    check("camera presets: eight cameras, each with its own name",
+          len(set(cams.scene_cameras(scene)) - before) == len(cams.VIEW_PRESETS) and len({c.name for c in made.values()}) == 8)
+    for cam in made.values():
+        data = cam.data
+        bpy.data.objects.remove(cam)
+        if data.users == 0:
+            bpy.data.cameras.remove(data)
+    scene.camera = old_camera
+    # look: saturation is one more node of ours, gone again at 1
+    bg = mod("studio.background")
+    rs.look_saturation = 0.6
+    tree = bg.compositor_tree(scene)
+    node = tree.nodes.get(look.SATURATION) if tree else None
+    check("look: saturation in the compositor", node is not None and node.inputs["Image"].is_linked)
+    rs.look_glow = 0.3
+    check("look: saturation and glow in one chain", tree.nodes.get(look.GLOW) is not None
+          and tree.nodes[look.GLOW].inputs["Image"].links[0].from_node == tree.nodes[look.SATURATION])
+    bpy.ops.render_studio.look_reset()
+    tree = bg.compositor_tree(scene)
+    check("look reset: nothing of ours left", rs.look_saturation == 1.0 and scene.view_settings.exposure == 0.0
+          and (tree is None or not [n for n in tree.nodes if n.name.startswith(look.PREFIX)]))
+    # a material straight into the library (the batch from pictures calls this once per picture)
+    name = api.library_material("Test Bibliothek gesprenkelt", structure="speckled", kind="plastic",
+                                wear={"dust": 0.2}, amount=0.3)
+    built = bpy.data.materials.get("Test Bibliothek gesprenkelt")
+    check("library material: built, with its kind and wear, saved to the library",
+          name == "Test Bibliothek gesprenkelt" and built is not None and built.get(tab.BASE_KEY) == name
+          and tab.material_kind(built) == "Plastic" and mod("studio.matstructures").has_wear(built))
+    plain = api.library_material("Test Bibliothek Lack rot", kind="Plastic", color=(0.6, 0.02, 0.02), roughness=0.25,
+                                 coat_weight=1.0)
+    red = bpy.data.materials.get("Test Bibliothek Lack rot")
+    shader = presets._principled(red)
+    check("library material: a plain one by kind and values", plain == "Test Bibliothek Lack rot"
+          and abs(shader.inputs["Roughness"].default_value - 0.25) < 1e-6 and shader.inputs["Coat Weight"].default_value == 1.0
+          and abs(shader.inputs["Base Color"].default_value[0] - 0.6) < 1e-6 and shader.inputs["Metallic"].default_value == 0.0)
+    for mat_name in (name, plain):
+        api.remove_base_material(mat_name)
+    for m in (built, red):
+        bpy.data.materials.remove(m)
 
 
 @section

@@ -187,7 +187,10 @@ if cube is not None:
     run(bpy.types.RS_PT_material, ctx)
     run(bpy.types.RS_MT_material_more, ctx)
 sys.modules[PKG + ".studio.tab_material"].toggle_favorite(structure_mat.name)
-for source in ('ALL', 'PROJECT', 'LIBRARY', 'FAVORITES'):
+wm.render_studio_mat_kind = "Metal"
+run(bpy.types.RS_PT_material, ctx)
+wm.render_studio_mat_kind = ""
+for source in ('PROJECT', 'LIBRARY', 'FAVORITES'):
     for lib_view in ('TILES', 'LIST'):
         wm.render_studio_mat_source = source
         studio_prefs.mat_library_view = lib_view

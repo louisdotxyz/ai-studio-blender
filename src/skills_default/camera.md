@@ -21,3 +21,6 @@ user's cameras without asking.
   (studio_camera action="place" or directly). No photo and unclear goal: offer 2-3 classic views with ask_user.
 - Final cameras go into the render queue on request (studio_render_queue action="add").
 - Check: render_preview(camera="<name>"), small (max_size 600).
+- Standard views as new cameras: api.camera_view("FRONT" | "BACK" | "LEFT" | "RIGHT" | "TOP" | "ISO") are
+  orthographic (true proportions, for side views and drawings), "HERO" a three-quarter view at 85 mm,
+  "DETAIL" a close one at 100 mm. They orbit the camera's orbit object (otherwise the 3D cursor).

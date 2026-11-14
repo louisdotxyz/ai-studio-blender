@@ -6,12 +6,12 @@ import time
 
 import bpy
 from bpy.props import (EnumProperty, FloatProperty, IntProperty, StringProperty)
-from bpy.types import Operator, Panel
+from bpy.types import Menu, Operator, Panel
 
 from . import core, runner, shots
 from .ui_common import (QUEUE_TAB_ORDER, SCALE_PRESETS, _SidebarPanel, _item_progress_text, _look_through,
                         _queue_progress_text, _unpin, _user_resolution, active_camera, ensure_uids,
-                        format_label, studio_tab)
+                        format_label, studio_tab, tab_head)
 from .runner import RUN
 
 
@@ -421,6 +421,21 @@ class RS_PT_output(Panel):
             box.prop(p, "worker_gpu_only")
 
 
+class RS_MT_render_presets(Menu):
+    """The preset menu of the Render tab: quality and what is rendered."""
+    bl_idname = "RS_MT_render_presets"
+    bl_label = "Render Presets"
+
+    def draw(self, context):
+        layout = self.layout
+        rq = context.scene.render_studio
+        layout.prop_enum(rq, "quality", 'HIGH', text="High Quality")
+        layout.prop_enum(rq, "quality", 'LOW', text="Low Quality")
+        layout.separator()
+        layout.prop_enum(rq, "mode", 'STILL', text="Still Image", icon='IMAGE_DATA')
+        layout.prop_enum(rq, "mode", 'ANIM', text="Animation", icon='RENDER_ANIMATION')
+
+
 class RS_PT_render_queue(_SidebarPanel, Panel):
     """The queue, in its own tab. New name in 0.14: a pinned panel shows up in every tab,
     and Blender keeps the pin per panel name in the file (RS_PT_panel, RS_PT_queue)."""
@@ -439,12 +454,14 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
         if not RUN.busy:
             shots.draw_check(layout, scene)
 
+        # The same head as every tab: [quality ▾] [+ add to the queue] [settings]
+        tab_head(layout, RS_MT_render_presets.bl_idname,
+                 "High Quality" if rq.quality == 'HIGH' else "Low Quality", RS_OT_add.bl_idname, RS_PT_output.__name__)
         box = layout.box()
         col = box.column()
         row = col.row(align=True)
         row.label(text="", icon='SORTALPHA')
         row.prop(rq, "output_name", text="", placeholder=core.project_name())
-        row.popover(RS_PT_output.__name__, text="", icon='PREFERENCES')
         if p is not None:
             row = col.row(align=True)
             row.label(text="", icon='FILE_FOLDER')

@@ -8,7 +8,7 @@ import bpy
 from bpy.props import (BoolProperty, FloatProperty, IntProperty, StringProperty)
 from bpy.types import Menu, Operator, Panel
 
-from . import (addons, api, background, env_ui, hdri, light_map, light_paint, light_ui, lights, presets_io,
+from . import (addons, api, background, env_ui, hdri, light_paint, light_ui, lights, presets_io,
                runner)
 from .ui_common import (LIGHT_TAB_ORDER, _SidebarPanel, _report_value_error, _select_only, _unpin, section,
                         studio_tab)
@@ -408,11 +408,8 @@ class RS_PT_light_settings(Panel):
         row.operator(RS_OT_light_preset_save.bl_idname, text="Save Light Preset", icon='ADD')
         if current and current in lights.saved_presets():
             row.operator(RS_OT_light_preset_delete.bl_idname, text="", icon='TRASH').name = current
-        box = layout.box()
-        box.label(text="Light Map", icon='IMAGE_PLANE')
-        box.prop(context.window_manager, "render_studio_light_map_size", slider=True)
-        box.operator(light_ui.RS_OT_light_mirror.bl_idname, text="Mirror All Lights",
-                     icon='MOD_MIRROR').everything = True
+        layout.operator(light_ui.RS_OT_light_mirror.bl_idname, text="Mirror All Lights",
+                        icon='MOD_MIRROR').everything = True
         presets_io.draw(layout.box())
         addons.draw_list(layout)
 
@@ -501,24 +498,30 @@ class RS_PT_lighting(_SidebarPanel, Panel):
         rs = scene.render_studio
         layout = self.layout
 
-        # Scene: one row, everything below as one preset; looks: several lighting moods of this file
-        env_ui.draw_scene_presets(layout, scene)
-        light_ui.draw_looks(layout, scene)
+        # The same head as every tab: [presets ▾] [looks A B …] [+ save scene] [settings]
+        light_ui.draw_head(layout, scene, RS_PT_light_settings.__name__)
 
-        # Lights: one list (eye, kind, name, brightness); click a light's icon for its settings.
-        # The same lights are points on the light map in the 3D viewport.
+        # The open light, always here: how a click on the product places it, and its few values
+        light_ui.draw_open_light(layout, context)
+
+        # Lights: the ones that are on (eye, kind, name, brightness), the others folded into one line
         box, head, is_open = section(layout, "lights", "Lights", 'LIGHT')
-        current = current_preset(scene)
-        head.menu(RS_MT_light_presets.bl_idname, text=current or "Preset")
         head.menu(light_ui.RS_MT_light_new.bl_idname, text="", icon='ADD')
-        head.operator(light_map.RS_OT_light_map.bl_idname, text="", icon='IMAGE_PLANE',
-                      depress=context.window_manager.render_studio_light_map)
-        head.popover(RS_PT_light_settings.__name__, text="", icon='PREFERENCES')
         if is_open:
             light_ui.draw_list(box, context)
 
-        # World: the HDRI that lights the scene (also behind a transparent or colored background)
-        box, head, is_open = section(layout, "world", "World", 'WORLD')
+        # World: one line (what it is, how bright); everything else inside
+        box, head, is_open = section(layout, "world", "World", 'WORLD', default_open=False)
+        path = hdri.current_path(scene)
+        name = {'STUDIO': "Studio", 'SKY': "Sky"}.get(rs.world_mode) or (hdri.display_name(path) if path else "")
+        if name:
+            sub = head.row(align=True)
+            sub.active = False
+            sub.label(text=name, translate=rs.world_mode != 'IMAGE')
+        if path:
+            power = head.row(align=True)
+            power.ui_units_x = 4.5
+            power.prop(rs, "world_strength", text="")
         if is_open:
             box.row(align=True).prop(rs, "world_mode", expand=True)
             if rs.world_mode == 'STUDIO':
@@ -528,16 +531,9 @@ class RS_PT_lighting(_SidebarPanel, Panel):
             else:
                 _draw_world(box, scene, rs)
             col = box.column(align=True)
-            if rs.world_mode != 'IMAGE' and hdri.current_path(scene):
-                col.prop(rs, "world_strength")
-                if rs.world_mode == 'STUDIO':
-                    col.prop(rs, "world_rotation")
+            if rs.world_mode == 'STUDIO' and path:
+                col.prop(rs, "world_rotation")
             env_ui.draw_world_extras(col, scene, sun=rs.world_mode == 'IMAGE')
-
-        # Backdrop: what the camera sees behind the product, and the floor it stands on
-        box, head, is_open = section(layout, "backdrop", "Backdrop", 'IMAGE_BACKGROUND')
-        if is_open:
-            env_ui.draw_backdrop(box, context)
 
 
 def _draw_world(box, scene, rs):
@@ -555,8 +551,6 @@ def _draw_world(box, scene, rs):
         icon = hdri.preview_icon(path)
         if icon:
             box.template_icon(icon_value=icon, scale=6.0)   # preview of the HDRI
-        col = box.column(align=True)
-        col.prop(rs, "world_strength")
-        col.prop(rs, "world_rotation")
+        box.prop(rs, "world_rotation")
     elif scene.world is not None and background.world_background_node(scene) is not None:
         box.prop(rs, "world_background_strength", text="Strength")

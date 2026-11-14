@@ -10,9 +10,9 @@ import bpy
 from bpy.props import (BoolProperty, EnumProperty, IntProperty, StringProperty)
 from bpy.types import Menu, Operator, Panel
 
-from . import cadswap, matpresets, matstructures, runner
+from . import cadswap, matkinds, matpresets, matstructures, runner
 from .matpresets import _color_input, _principled
-from .ui_common import MATERIAL_TAB_ORDER, _SidebarPanel, _unpin, section, studio_tab
+from .ui_common import MATERIAL_TAB_ORDER, _SidebarPanel, _unpin, section, studio_tab, subsection, tab_head
 
 
 # Objects linked with the eyedropper form a group (same id in GROUP_KEY): Duplicate gives the
@@ -232,14 +232,6 @@ class RS_PT_material_settings(Panel):
         if p is None:
             return
         box = layout.box()
-        box.label(text="Shown Values", icon='PROPERTIES')
-        box.row(align=True).prop(p, "mat_view", expand=True)
-        grid = box.grid_flow(row_major=True, columns=2, even_columns=True, align=True)
-        grid.active = p.mat_view == 'COMPACT'
-        for key in ("color", "roughness", "metallic", "normal", "emission", "transmission", "coat"):
-            grid.prop(p, "mat_show_" + key, toggle=True)
-
-        box = layout.box()
         box.label(text="Preview", icon='MATERIAL')
         row = box.row(align=True)
         row.prop(p, "mat_preview", text="Show", toggle=True)
@@ -261,35 +253,47 @@ class RS_PT_material_settings(Panel):
         row.operator(RS_OT_material_presets_io.bl_idname, text="", icon='FILE_FOLDER').action = "OPEN"
 
 
-_COMPACT_INPUTS = (
-    ("color", ("Base Color",)),
-    ("roughness", ("Roughness",)),
-    ("metallic", ("Metallic",)),
-    ("normal", ("Normal",)),
-    ("emission", ("Emission Color", "Emission Strength")),
-    ("transmission", ("Transmission Weight", "IOR")),
-    ("coat", ("Coat Weight", "Coat Roughness")),
-)
+class RS_OT_material_kind(Operator):
+    bl_idname = "render_studio.material_kind"
+    bl_label = "Material Kind"
+    bl_description = ("What this material is. Sets what the kind fixes (a metal is metallic, glass lets light "
+                      "through) and shows only the controls that fit")
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    kind: EnumProperty(items=[(k, k, "") for k in matkinds.KINDS], options={'SKIP_SAVE'})
+
+    def execute(self, context):
+        material = current_material(context)
+        if material is None:
+            return {'CANCELLED'}
+        matkinds.apply(material, _principled(material), self.kind)
+        return {'FINISHED'}
 
 
-def _draw_compact_material(box, node, p):
-    """Only the Principled inputs chosen in the Material settings; textures show as linked."""
+def _draw_kind_controls(box, material, node):
+    """[Kind ▾], then the same few controls for every material, only the ones the kind has. An input with
+    something plugged in shows what feeds it (its values follow below, under the structure)."""
+    kind = material_kind(material)
+    row = box.row(align=True)
+    row.operator_menu_enum(RS_OT_material_kind.bl_idname, "kind", text=kind, icon='MATERIAL')
     col = box.column(align=True)
-    for key, names in _COMPACT_INPUTS:
-        if not getattr(p, "mat_show_" + key):
+    for name, label in matkinds.CONTROLS.get(kind, matkinds.CONTROLS["Other"]):
+        socket = node.inputs.get(name)
+        if socket is None:
             continue
-        for name in names:
-            socket = node.inputs.get(name)
-            if socket is None:
-                continue
-            if socket.is_linked:
-                src = socket.links[0].from_node
-                if name == "Normal" and "Strength" in src.inputs:   # Normal Map / Bump node
-                    col.prop(src.inputs["Strength"], "default_value", text="Normal Strength")
-                else:
-                    col.label(text="%s: %s" % (name, src.label or src.name), icon='NODE_TEXTURE')
-            elif name != "Normal":
-                col.prop(socket, "default_value", text=name)
+        if socket.is_linked:
+            src = socket.links[0].from_node
+            line = col.row()
+            line.active = False
+            line.label(text="%s: %s" % (label, src.label or src.name), icon='NODE_TEXTURE', translate=False)
+        else:
+            col.prop(socket, "default_value", text=label)
+    normal = node.inputs.get("Normal")
+    if normal is not None and normal.is_linked:
+        src = normal.links[0].from_node
+        known = {matstructures.NODE_BUMP, matstructures.NODE_WEAR_BUMP}
+        if "Strength" in src.inputs and src.name not in known:     # Normal Map / Bump node
+            col.prop(src.inputs["Strength"], "default_value", text="Surface Depth")
 
 
 def _draw_structure(layout, material):
@@ -773,7 +777,7 @@ def add_recent(name):
 
 
 # What a material is, for the library groups: a word in its name first, then its shader values.
-KINDS = ("Metal", "Plastic", "Glass", "Rubber", "Wood", "Fabric", "Light", "Other")
+KINDS = matkinds.KINDS
 _KIND_WORDS = (   # (kind, exact words, word beginnings)
     ("Glass", {"pc", "pmma"}, ("glass", "glas", "acryl", "plexi", "clear", "klar", "transpar", "frosted",
                                 "milchig", "satin", "diffus", "lens", "linse")),
@@ -792,6 +796,9 @@ _KIND_WORDS = (   # (kind, exact words, word beginnings)
 
 def material_kind(material):
     """One of KINDS: words in the name (German or English) decide first, then the shader."""
+    picked = matkinds.stored(material)
+    if picked:
+        return picked
     words = [w for w in re.split(r"[^a-z0-9äöü]+", material.name.lower()) if w]
     for kind, exact, starts in _KIND_WORDS:
         if any(w in exact or w.startswith(starts) for w in words):
@@ -1082,10 +1089,8 @@ RECENT_GROUP = "Recent"
 
 
 def _in_source(material, source, used, favs=()):
-    """All: everything. Project: the file's own materials and the base copies it uses. Library: the base
-    copies. Favorites: the ones with a heart."""
-    if source == 'ALL':
-        return True
+    """Project: the file's own materials and the base copies it uses. Library: the base copies.
+    Favorites: the ones with a heart."""
     if source == 'FAVORITES':
         return material.name in favs
     if source == 'LIBRARY':
@@ -1099,7 +1104,28 @@ def _short(material):
     return rest.strip() if sep and rest.strip() else material.name
 
 
-def _library_groups(search="", source='PROJECT'):
+def library_kinds(source='PROJECT'):
+    """The kinds that have materials in this source, in KINDS order (for the filter row)."""
+    favs, used = favorites(), material_users()
+    found = {material_kind(m) for m in _library_materials() if _in_source(m, source, used, favs)}
+    return [kind for kind in KINDS if kind in found]
+
+
+class RS_OT_material_kind_filter(Operator):
+    bl_idname = "render_studio.material_kind_filter"
+    bl_label = "Show Kind"
+    bl_description = "Show only the materials of this kind (click again: all kinds)"
+    bl_options = {'INTERNAL'}
+
+    kind: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    def execute(self, context):
+        wm = context.window_manager
+        wm.render_studio_mat_kind = "" if wm.render_studio_mat_kind == self.kind else self.kind
+        return {'FINISHED'}
+
+
+def _library_groups(search="", source='PROJECT', kind=""):
     """[(group, [(material, short name)])]: favorites and recently used ones on top (from both sources),
     then the source's materials by kind (KINDS order)."""
     search = search.strip().lower()
@@ -1107,6 +1133,9 @@ def _library_groups(search="", source='PROJECT'):
     mats = [m for m in _library_materials() if not search or search in m.name.lower()]
     by_name = {m.name: m for m in mats}
     groups = []
+    if kind:          # one kind: its materials, nothing else
+        own = [(m, _short(m)) for m in mats if _in_source(m, source, used, favs) and material_kind(m) == kind]
+        return [(kind, own)] if own else []
     top = [(m, _short(m)) for m in mats if m.name in favs]
     if top and source != 'FAVORITES':
         groups.append((FAVORITES_GROUP, top))
@@ -1142,6 +1171,9 @@ class RS_PT_material(_SidebarPanel, Panel):
         p = runner.prefs(context)
         has_slot = obj is not None and hasattr(obj.data, "materials")
         material = obj.active_material if has_slot else current_material(context)
+        # the same head in every tab: [preset ▾] [+ save] [settings]
+        tab_head(layout, RS_MT_material_new.bl_idname, "New Material", RS_OT_material_preset_save.bl_idname,
+                 RS_PT_material_settings.__name__, icon='MATERIAL')
         box = layout.box()
 
         # 1. The material: [pick ▾][name][n×][eyedropper][⋯][gear], its preview, the slots
@@ -1161,7 +1193,6 @@ class RS_PT_material(_SidebarPanel, Panel):
             row.label(text="Select an object or click a material", icon='INFO')
         row.operator(RS_OT_pick_from_object.bl_idname, text="", icon='EYEDROPPER').mode = 'MATERIAL'
         row.menu(RS_MT_material_more.bl_idname, text="", icon='THREE_DOTS')
-        row.popover(RS_PT_material_settings.__name__, text="", icon='PREFERENCES')
         if material is not None and (p is None or p.mat_preview):
             box.template_icon(icon_value=layout.icon(material),
                               scale=float(p.mat_preview_size) if p is not None else 8.0)
@@ -1191,13 +1222,16 @@ class RS_PT_material(_SidebarPanel, Panel):
         surface = out.inputs["Surface"]
         principled = (surface.links[0].from_node if surface.is_linked
                       and surface.links[0].from_node.bl_idname == 'ShaderNodeBsdfPrincipled' else None)
-        if p is not None and p.mat_view == 'COMPACT' and principled is not None:
-            _draw_compact_material(box, principled, p)
-            _draw_structure(box, material)
+        if principled is None:
+            # no Principled BSDF (an emission stripe, a mix of shaders …): the shader's own settings
+            box.template_node_view(tree, out, surface)
             return
-        # The same view as Properties > Material > Surface: every setting of the shader or
-        # node group that feeds the output, including the nodes plugged into it.
-        box.template_node_view(tree, out, surface)
+        _draw_kind_controls(box, material, principled)
+        _draw_structure(box, material)
+        # The same view as Properties > Material > Surface: every setting of the shader, including
+        # the nodes plugged into it.
+        if subsection(box, "mat_all", "All Settings", default_open=p is not None and p.mat_view == 'FULL'):
+            box.template_node_view(tree, out, surface)
 
     @staticmethod
     def _draw_library(layout, context, material, node):
@@ -1217,15 +1251,21 @@ class RS_PT_material(_SidebarPanel, Panel):
         unused = len(unused_materials()) if source == 'PROJECT' else 0
         if unused:
             row.operator(RS_OT_material_clean_unused.bl_idname, text=str(unused), icon='TRASH')
-        row.menu(RS_MT_material_new.bl_idname, text="", icon='ADD')
         search = wm.render_studio_mat_search
+        kinds = library_kinds(source)
+        kind = wm.render_studio_mat_kind if wm.render_studio_mat_kind in kinds else ""
+        if len(kinds) > 1:      # filter by kind: only the kinds this source has
+            chips = box.grid_flow(row_major=True, columns=4, even_columns=True, align=True)
+            chips.scale_y = 0.9
+            for name in kinds:
+                chips.operator(RS_OT_material_kind_filter.bl_idname, text=name, depress=name == kind).kind = name
         _ensure_base_library()
         from .. import setup_flow
         if setup_flow.running() and setup_flow.flow["step"] == "materials":
             box.label(text="Creating the base materials…", icon='TIME')
-        if source in {'LIBRARY', 'ALL'}:
+        if source in {'LIBRARY', 'FAVORITES'}:
             _schedule_base_append()   # copies the library's materials in (unused copies are not saved)
-        groups = _library_groups(search, source)
+        groups = _library_groups(search, source, kind)
         if not groups:
             if source == 'LIBRARY' and base_library_file() and not search:
                 box.label(text="Loading…", icon='TIME')
@@ -1237,7 +1277,7 @@ class RS_PT_material(_SidebarPanel, Panel):
         closed = set(wm.render_studio_mat_open.split("\n"))
         tiles = p is None or p.mat_library_view == 'TILES'
         for group, items in groups:
-            is_open = bool(search) or group not in closed
+            is_open = bool(search) or bool(kind) or group not in closed
             head = box.row(align=True)
             left = head.row(align=True)
             left.alignment = 'LEFT'

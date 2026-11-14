@@ -380,9 +380,6 @@ def draw_studio(box, scene):
     sub = row.row(align=True)
     sub.ui_units_x = 2
     sub.prop(rs, "studio_color", text="")
-    sub = box.row()
-    sub.active = False
-    sub.label(text="Its lights are in the list above", icon='INFO')
 
 
 def draw_sky(box, scene):

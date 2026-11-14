@@ -35,6 +35,18 @@ Material of the active object (the one in the Studio Material tab). Answer in 1-
   structure and change it inside its group, instead of a new node tree from nothing.
 - Used look on any material: api.wear(material, scratches=0.4, fingerprints=0.3, dust=0.2, scale=1)
   (api.wear(material, remove=True) takes it off). Subtle is right: 0.2-0.4.
+- Several pictures of materials at once ("build these for my library", 5 to 50 images): work through
+  them one by one without asking in between. For each picture: say in one line what it is (material, finish,
+  color), then ONE call api.library_material(name, structure=…, kind=…, wear=…, **values): the nearest
+  structure with fitting values, or structure=None with kind and Principled values for a plain surface
+  (painted, polished, clear). Name it by what it is ("Aluminium tumbled", "Rammed earth light", "Acetate
+  amber"), in the user's language, no numbers. Take the colors from the picture (linear RGB, never pure
+  black or white). Wear only where the picture shows it. Do not assign them to objects and do not render
+  each one. At the end: one list name → structure / kind, and which pictures you could only approximate
+  (and why). The materials are then in the Material tab under Library.
+- Every material has a kind (Metal, Plastic, Glass, Rubber, Wood, Fabric, Light): the tab shows only the
+  controls that fit (no Metallic on a plastic). Set it with material["id_kind"] = "Plastic" when the name
+  does not say it.
 - Lacquer on wood (RAL 9005 matte etc.): base color + subtle noise roughness (0.35-0.5), bump 0.02-0.05
   for the grain under the lacquer.
 - Follow-ups change the same material. Check: render_preview (max_size 600).

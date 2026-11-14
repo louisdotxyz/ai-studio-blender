@@ -1,5 +1,5 @@
-"""In a real Blender window (not headless): the light map and placing on the product, driven by simulated
-mouse events; saves screenshots to look at.
+"""In a real Blender window (not headless): placing a light by a click on the product, driven by simulated
+mouse events; saves screenshots of the Environment, Camera and Material tabs to look at.
 
     AI_STUDIO_NO_LIVE=1 BLENDER_USER_RESOURCES=<test profile> Blender --enable-event-simulate \
         --python tests/gui_light.py -- <output folder>
@@ -57,14 +57,6 @@ def mouse(kind, value, pos, **mods):
     win.event_simulate(type=kind, value=value, x=int(region.x + pos[0]), y=int(region.y + pos[1]), **mods)
 
 
-def light_on_map():
-    items, lmap = mod("studio.light_items"), mod("studio.light_map")
-    with override():
-        rect = lmap.map_rect(bpy.context)
-        around, height = items.angles(bpy.context.scene, state["item"])
-    return rect, around, height, lmap.to_map(rect, around, height)
-
-
 # ------------------------------------------------------------------ the steps, one per timer tick
 
 def setup():
@@ -88,8 +80,7 @@ def setup():
                     region.active_panel_category = "Studio"
                 except Exception as exc:
                     log("NOTE sidebar tab: %s" % exc)
-    log("NOTE Blender %s, window %dx%d, map on: %s" % (
-        bpy.app.version_string, win.width, win.height, bpy.context.window_manager.render_studio_light_map))
+    log("NOTE Blender %s, window %dx%d" % (bpy.app.version_string, win.width, win.height))
 
 
 def splash_away():
@@ -98,87 +89,6 @@ def splash_away():
 
 def splash_gone():
     view()[0].event_simulate(type='ESC', value='RELEASE')
-
-
-def map_drawn():
-    shot("1_map.png")
-    rect, around, height, point = light_on_map()
-    state["start"] = (around, height, point, rect)
-    check("light map: has a place in the viewport", rect[2] > 100 and rect[3] > 30, rect)
-    mouse('MOUSEMOVE', 'NOTHING', (point[0] - 6, point[1] - 4))
-
-
-def hover():
-    mouse('MOUSEMOVE', 'NOTHING', state["start"][2])
-
-
-def press():
-    mouse('LEFTMOUSE', 'PRESS', state["start"][2])
-
-
-def drag_a():
-    x, y = state["start"][2]
-    mouse('MOUSEMOVE', 'NOTHING', (x + 40, y + 10))
-
-
-def drag_b():
-    x, y = state["start"][2]
-    mouse('MOUSEMOVE', 'NOTHING', (x + 90, y + 24))
-
-
-def release():
-    x, y = state["start"][2]
-    mouse('LEFTMOUSE', 'RELEASE', (x + 90, y + 24))
-
-
-def dragged():
-    lmap = mod("studio.light_map")
-    around0, height0, _point, rect = state["start"]
-    _rect, around, height, _p = light_on_map()
-    want_a = around0 + 90 / rect[2] * 2 * math.pi
-    want_h = height0 + 24 / rect[3] * (lmap.HIGH - lmap.LOW)
-    check("light map: dragging a light moves it", abs(around - want_a) < 0.02 and abs(height - want_h) < 0.02,
-          "around %.3f (want %.3f), height %.3f (want %.3f)" % (around, want_a, height, want_h))
-    shot("2_dragged.png")
-    scene = view()[0].scene
-    state["energy"] = state["item"][1].data.energy
-    state["point"] = light_on_map()[3]
-    mouse('MOUSEMOVE', 'NOTHING', state["point"])
-    state["pins"] = len(scene.render_studio.hdri_pins)
-
-
-def shift_press():
-    mouse('LEFTMOUSE', 'PRESS', state["point"], shift=True)
-
-
-def shift_drag():
-    x, y = state["point"]
-    mouse('MOUSEMOVE', 'NOTHING', (x, y + 45), shift=True)
-
-
-def shift_release():
-    x, y = state["point"]
-    mouse('LEFTMOUSE', 'RELEASE', (x, y + 45), shift=True)
-
-
-def brighter():
-    energy = state["item"][1].data.energy
-    check("light map: Shift + drag changes the brightness", abs(energy / state["energy"] - math.exp(45 / 90.0)) < 0.05,
-          "%.1f → %.1f" % (state["energy"], energy))
-    # now the tool: a click on the product places the open light
-    paint = mod("studio.light_paint")
-    win, area, region = view()
-    with override():
-        scene = bpy.context.scene
-        scene.render_studio.place_mode = 'ILLUMINATION'
-        check("place tool: becomes the active tool", paint.activate_tool(bpy.context) and paint.tool_active(bpy.context))
-        rv3d = area.spaces.active.region_3d
-        cube = bpy.data.objects.get("Cube") or next(o for o in scene.objects if o.type == 'MESH')
-        spot = view3d_utils.location_3d_to_region_2d(region, rv3d, cube.matrix_world.translation)
-        state["spot"] = (spot.x, spot.y)
-        state["ray"] = paint._ray(bpy.context, region, rv3d, state["spot"])
-    check("place tool: the product is under the click", state["ray"] is not None, state["spot"])
-    mouse('MOUSEMOVE', 'NOTHING', state["spot"])
 
 
 def click_press():
@@ -248,19 +158,56 @@ def panel():
         area.tag_redraw()
 
 
-def panel_light():
-    shot("5_panel_light.png")
-
-
 def finish():
     log("GUI_OK %d/%d" % (sum(results), len(results)) if all(results) and results else
         "GUI_FAIL %d/%d" % (sum(results), len(results)))
     bpy.ops.wm.quit_blender()
 
 
-STEPS = [splash_away, splash_gone, setup, map_drawn, hover, press, drag_a, drag_b, release, dragged, shift_press,
-         shift_drag, shift_release, brighter, click_press, click_release, placed, ctrl_press, ctrl_release, new_light,
-         studio_tab, studio_tab_press, studio_tab_release, panel, panel_light, finish]
+def tool_on():
+    """A click on the product places the open light (the tool of the Environment tab)."""
+    paint = mod("studio.light_paint")
+    _win, area, region = view()
+    with override():
+        scene = bpy.context.scene
+        scene.render_studio.place_mode = 'ILLUMINATION'
+        check("place tool: becomes the active tool", paint.activate_tool(bpy.context) and paint.tool_active(bpy.context))
+        rv3d = area.spaces.active.region_3d
+        cube = bpy.data.objects.get("Cube") or next(o for o in scene.objects if o.type == 'MESH')
+        spot = view3d_utils.location_3d_to_region_2d(region, rv3d, cube.matrix_world.translation)
+        state["spot"] = (spot.x, spot.y)
+        state["ray"] = paint._ray(bpy.context, region, rv3d, state["spot"])
+    check("place tool: the product is under the click", state["ray"] is not None, state["spot"])
+    mouse('MOUSEMOVE', 'NOTHING', (state["spot"][0] - 5, state["spot"][1] - 5))
+
+
+def tool_hover():
+    mouse('MOUSEMOVE', 'NOTHING', state["spot"])
+
+
+def camera_tab():
+    shot("5_panel_light.png")
+    with override():
+        bpy.context.window_manager.render_studio_tab = 'RENDER'
+    for area in view()[0].screen.areas:
+        area.tag_redraw()
+
+
+def camera_shot():
+    shot("6_panel_camera.png")
+    with override():
+        bpy.context.window_manager.render_studio_tab = 'MATERIAL'
+    for area in view()[0].screen.areas:
+        area.tag_redraw()
+
+
+def material_shot():
+    shot("7_panel_material.png")
+
+
+STEPS = [splash_away, splash_gone, setup, tool_on, tool_hover, click_press, click_release, placed, ctrl_press,
+         ctrl_release, new_light, studio_tab, studio_tab_press, studio_tab_release, panel, camera_tab, camera_shot,
+         material_shot, finish]
 
 
 def tick():

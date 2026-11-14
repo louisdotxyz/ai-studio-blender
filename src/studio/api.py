@@ -204,6 +204,45 @@ def material_structure(kind, name=None, objects=None, **values):
     return material
 
 
+def library_material(name, structure=None, kind=None, wear=None, **values):
+    """Builds one material and puts it straight into the library (the Library of the Material tab, for
+    every project); one of the same name is replaced. For a batch from reference images: one call per
+    image. structure: WORN_METAL, LAYERED_EARTH, SPECKLED, RESIN, HAMMERED, DARK_ANODIZED (values: the
+    structure's inputs, see material_structure) or None for a plain material. kind: Metal, Plastic,
+    Glass, Rubber, Wood, Fabric, Light (decides what is fixed, e.g. metallic, and the controls in the
+    tab). values of a plain material: Principled inputs by name (color, roughness, ior, coat_weight,
+    sheen_weight, subsurface_weight, emission_strength …). wear: {"scratches": 0.3, "fingerprints": 0.2,
+    "dust": 0.1} or None. Returns the name in the library."""
+    from . import baselib, matkinds, matpresets, matstructures
+    material_values = dict(values)
+    if structure:
+        material = matstructures.create(str(structure).upper(), name)
+        matstructures.set_values(material, material_values)
+    else:
+        material = bpy.data.materials.new(name)
+    node = matpresets._principled(material)
+    if kind:
+        matkinds.apply(material, node, str(kind).title())
+    if node is not None and not structure:
+        matkinds.set_values(node, material_values)
+        color = node.inputs["Base Color"].default_value
+        material.diffuse_color = tuple(color)
+        material.roughness = node.inputs["Roughness"].default_value
+    if wear:
+        matstructures.add_wear(material, **wear)
+    return baselib.save(material, name)
+
+
+def camera_view(view):
+    """A new camera for a standard view of the product: FRONT, BACK, LEFT, RIGHT, TOP, ISO (orthographic),
+    HERO (three-quarter, 85 mm), DETAIL (close, 100 mm). Returns the camera."""
+    from . import cameras
+    scene = bpy.context.scene
+    camera = cameras.camera_preset(scene, bpy.context.view_layer, str(view).upper())
+    scene.camera = camera
+    return camera
+
+
 def wear(material, remove=False, **values):
     """Scratches, fingerprints and dust over any material with a Principled BSDF. values: scratches,
     fingerprints, dust (0-1 each), scale, dust_color. remove=True takes the layer off again."""

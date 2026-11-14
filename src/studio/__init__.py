@@ -15,7 +15,7 @@ import bpy
 from bpy.props import (EnumProperty, PointerProperty, StringProperty)
 from bpy.types import Operator, Panel
 
-from . import (addons, background, cameras, claude_link, core, env_ui, environment, foreign, hdri, light_map,
+from . import (addons, background, cameras, claude_link, core, env_ui, environment, foreign, hdri,
                light_paint, light_ui, lights, presets_io, runner, shots, sync, tab_queue)
 # Loaded for their side effects: the chat finds claude_tools (Claude's studio_* tools) in
 # sys.modules; api and variants are the helpers in execute_python.
@@ -24,7 +24,8 @@ from .props import (RS_CameraSettings, RS_HdriPin, RS_Item, RS_LightSettings, RS
                     RS_Settings, _apply_clipping)
 from .ui_common import STUDIO_TABS, _queue_progress_text, _unpin
 from .keymaps import register_keymaps, unregister_keymaps
-from .tab_camera import (RS_OT_camera_back, RS_OT_camera_from_view, RS_OT_dof_focus, RS_OT_duplicate_camera,
+from .tab_camera import (RS_MT_camera_presets, RS_OT_camera_back, RS_OT_camera_from_view, RS_OT_camera_preset,
+                         RS_OT_dof_focus, RS_OT_duplicate_camera,
                          RS_OT_fit_frame, RS_OT_reset_frame, RS_OT_set_camera, RS_OT_set_fstop,
                          RS_OT_set_lens, RS_OT_toggle_ortho, RS_OT_set_resolution, RS_OT_set_scale, RS_PT_camera, RS_PT_frame)
 from .tab_light import (RS_MT_hdris, RS_MT_light_presets, RS_OT_add_light, RS_OT_bounces_preset,
@@ -37,17 +38,18 @@ from .tab_material import (RS_MT_material_more, RS_MT_material_new, RS_MT_materi
                            RS_OT_material_clean_unused, RS_OT_material_delete, RS_OT_material_favorite,
                            RS_OT_material_rename, RS_OT_material_select, RS_OT_material_variant,
                            draw_tile_menu, RS_OT_material_duplicate, RS_OT_material_group_toggle, RS_OT_material_new,
-                           RS_OT_material_structure, RS_OT_material_to_base, RS_OT_material_wear,
+                           RS_OT_material_kind, RS_OT_material_kind_filter, RS_OT_material_structure, RS_OT_material_to_base,
+                           RS_OT_material_wear,
                            RS_OT_material_preset, RS_OT_material_preset_delete, RS_OT_material_preset_save,
                            RS_OT_material_presets_io, RS_OT_material_slot, RS_OT_material_unlink,
                            RS_OT_material_viewport, RS_OT_open_shading, RS_OT_pick_from_object,
                            RS_PT_material, RS_PT_material_settings)
-from .tab_queue import (RS_OT_add, RS_OT_cancel, RS_OT_clear, RS_OT_low_scale, RS_OT_move,
+from .tab_queue import (RS_MT_render_presets, RS_OT_add, RS_OT_cancel, RS_OT_clear, RS_OT_low_scale, RS_OT_move,
                         RS_OT_preview_step, RS_OT_remove, RS_OT_render_queue, RS_OT_show_render,
                         RS_OT_view_camera, RS_PT_output, RS_PT_render_queue, draw_statusbar)
 from .runner import RUN
 from . import cad_link, render_setup
-from .look import RS_OT_look_preset
+from .look import RS_OT_look_preset, RS_OT_look_reset
 
 
 class RS_OT_open_chat(Operator):
@@ -105,6 +107,7 @@ classes = render_setup.classes + (
     RS_PT_tabs,
     RS_OT_low_scale,
     RS_PT_output,
+    RS_MT_render_presets,
     RS_OT_set_fstop,
     RS_OT_dof_focus,
     RS_OT_lights_adjust,
@@ -136,6 +139,8 @@ classes = render_setup.classes + (
     RS_OT_duplicate_camera,
     RS_OT_camera_back,
     RS_OT_camera_from_view,
+    RS_OT_camera_preset,
+    RS_MT_camera_presets,
     RS_OT_show_render,
     RS_OT_set_lens,
     RS_OT_toggle_ortho,
@@ -160,12 +165,15 @@ classes = render_setup.classes + (
     RS_OT_material_preset_save,
     RS_OT_material_preset_delete,
     RS_OT_look_preset,
+    RS_OT_look_reset,
     RS_OT_material_assign,
     RS_OT_material_variant,
     RS_OT_material_select,
     RS_OT_material_favorite,
     RS_OT_material_structure,
     RS_OT_material_wear,
+    RS_OT_material_kind,
+    RS_OT_material_kind_filter,
     RS_OT_material_rename,
     RS_OT_material_delete,
     RS_OT_material_clean_unused,
@@ -241,10 +249,11 @@ def register():
     bpy.types.WindowManager.render_studio_sections = StringProperty(options={'SKIP_SAVE'})
     bpy.types.WindowManager.render_studio_mat_source = EnumProperty(
         name="Library", options={'SKIP_SAVE'}, default='PROJECT',
-        items=[('ALL', "All", "Every material: this file's and the library's", 'NONE', 0),
-               ('PROJECT', "Project", "The materials of this file", 'NONE', 1),
+        items=[('PROJECT', "Project", "The materials of this file", 'NONE', 1),
                ('LIBRARY', "Library", "Your materials for every project (the base material library)", 'NONE', 2),
                ('FAVORITES', "", "Your favorites (the heart on a tile)", 'FUND', 3)])
+    bpy.types.WindowManager.render_studio_mat_kind = StringProperty(
+        name="Kind", description="Show only materials of this kind", options={'SKIP_SAVE'})
     bpy.types.WindowManager.render_studio_mat_search = StringProperty(
         name="Search", description="Show only materials whose name contains this", options={'SKIP_SAVE'})
     bpy.types.UI_MT_button_context_menu.append(draw_tile_menu)
@@ -265,7 +274,6 @@ def register():
     addons.register()
     env_ui.register()
     light_paint.register()
-    light_map.register()
     light_ui.register()
     presets_io.register()
     shots.register()
@@ -291,7 +299,6 @@ def unregister():
     shots.unregister()
     presets_io.unregister()
     light_ui.unregister()
-    light_map.unregister()
     light_paint.unregister()
     env_ui.unregister()
     addons.unregister()
@@ -312,6 +319,7 @@ def unregister():
     del bpy.types.WindowManager.render_studio_mat_open
     del bpy.types.WindowManager.render_studio_sections
     del bpy.types.WindowManager.render_studio_mat_search
+    del bpy.types.WindowManager.render_studio_mat_kind
     del bpy.types.WindowManager.render_studio_mat_source
     bpy.types.UI_MT_button_context_menu.remove(draw_tile_menu)
     for cls in reversed(classes):

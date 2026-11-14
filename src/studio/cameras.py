@@ -435,6 +435,46 @@ def camera_around(scene, view_layer, name, horizontal, vertical, distance, focal
     return _named(cam, name)
 
 
+# Camera presets (Camera tab, the preset menu): key, name, where the camera stands around the product
+# (degrees in the world: -90 = in front, at -Y, as Blender's front view), its height, orthographic?,
+# focal length, how much room around the product (1 = it just fits).
+VIEW_PRESETS = (
+    ('FRONT', "Front", -90.0, 0.0, True, 50.0, 1.25),
+    ('BACK', "Back", 90.0, 0.0, True, 50.0, 1.25),
+    ('LEFT', "Left", 180.0, 0.0, True, 50.0, 1.25),
+    ('RIGHT', "Right", 0.0, 0.0, True, 50.0, 1.25),
+    ('TOP', "Top", -90.0, 89.9, True, 50.0, 1.25),
+    ('ISO', "Iso", -45.0, 35.264, True, 50.0, 1.35),
+    ('HERO', "Hero 3/4", -55.0, 20.0, False, 85.0, 1.3),
+    ('DETAIL', "Detail", -60.0, 15.0, False, 100.0, 0.55),
+)
+
+
+def camera_preset(scene, view_layer, key):
+    """A new camera for a standard view of the product (the camera's orbit object, otherwise the 3D
+    cursor): the orthographic sides, top and iso, a hero three-quarter view, a close detail."""
+    import math
+    from . import lights
+    preset = next((p for p in VIEW_PRESETS if p[0] == key), None)
+    if preset is None:
+        raise ValueError("View must be one of %s" % ", ".join(p[0] for p in VIEW_PRESETS))
+    _key, name, around, height, ortho, lens, room = preset
+    center, radius = lights.subject(scene, scene.render_studio.orbit_target)
+    cam = _new_camera(scene, view_layer, name)
+    cam.data.lens = lens
+    if ortho:
+        cam.data.type = 'ORTHO'
+        cam.data.ortho_scale = 2.0 * radius * room
+        distance = max(4.0 * radius, cam.data.clip_start * 4.0)
+    else:       # far enough that the product fits the narrower side of the picture
+        render = scene.render
+        aspect = min(render.resolution_x, render.resolution_y) / max(render.resolution_x, render.resolution_y, 1)
+        half = math.atan(cam.data.sensor_width / 2.0 / lens * aspect)
+        distance = radius * room / math.sin(half)
+    lights.place(cam, center, math.radians(around), math.radians(height), distance)
+    return _named(cam, name)
+
+
 # ---------------------------------------------------------------------------
 # Camera history: "back" after the camera was moved by accident.
 # Before a camera starts moving, its position (and focal length) is pushed onto a

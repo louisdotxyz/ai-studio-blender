@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Look: glow, contrast and vignette in the Blender 5 compositor (Render Raw does not run there).
+"""Look: the finish of the image (Camera tab).
 
-Three nodes of our own ("AS Glow", "AS Contrast", "AS Vignette …") right in front of the
-compositor output, after everything else (also the background color). A value of 0 takes the
-effect out again; with all three at 0 nothing of ours is left in the tree.
+Exposure and white balance are Blender's own (Color Management of the scene). Saturation, glow, contrast
+and vignette are nodes of our own ("AS Look …") right in front of the compositor output, after everything
+else (also the background color). A neutral value takes an effect out again; with all of them neutral
+nothing of ours is left in the tree. (Render Raw does not run in the Blender 5 compositor.)
 """
 
 import bpy
@@ -13,6 +14,7 @@ from . import background
 
 PREFIX = "AS Look"
 GLOW, CONTRAST, VIGNETTE = PREFIX + " Glow", PREFIX + " Contrast", PREFIX + " Vignette"
+SATURATION = PREFIX + " Saturation"
 
 PRESETS = {
     "Clean": (0.0, 0.0, 0.0),
@@ -28,9 +30,10 @@ def _ours(tree):
 
 def _remove(tree):
     """Take our nodes out and connect what fed them straight to where they went."""
-    first = tree.nodes.get(GLOW) or tree.nodes.get(CONTRAST) or tree.nodes.get(VIGNETTE + " Mix")
+    first = (tree.nodes.get(SATURATION) or tree.nodes.get(GLOW) or tree.nodes.get(CONTRAST)
+             or tree.nodes.get(VIGNETTE + " Mix"))
     last_out = None
-    for name in (VIGNETTE + " Mix", CONTRAST, GLOW):
+    for name in (VIGNETTE + " Mix", CONTRAST, GLOW, SATURATION):
         node = tree.nodes.get(name)
         if node is not None:
             last_out = node
@@ -58,16 +61,17 @@ def _node(tree, name, idname, x, y):
     return node
 
 
-def apply(scene, glow, contrast, vignette):
-    """Build the nodes for these strengths (0-1 each)."""
+def apply(scene, glow, contrast, vignette, saturation=1.0):
+    """Build the nodes for these strengths (0-1 each; saturation 1 = as rendered)."""
+    saturated = abs(saturation - 1.0) > 0.005
     tree = background.compositor_tree(scene)
     if tree is None:
-        if not (glow or contrast or vignette):
+        if not (glow or contrast or vignette or saturated):
             return
         tree = background._new_tree()
         background.set_compositor_tree(scene, tree)
     _remove(tree)
-    if not (glow or contrast or vignette):
+    if not (glow or contrast or vignette or saturated):
         return
     out = background._output_node(tree)
     if out is None:
@@ -76,6 +80,15 @@ def apply(scene, glow, contrast, vignette):
     x, y = out.location.x, out.location.y
     out.location.x += 900
     image = into
+    if saturated:
+        node = _node(tree, SATURATION, 'CompositorNodeHueSat', x, y)
+        if "Saturation" in node.inputs:
+            node.inputs["Saturation"].default_value = saturation
+        else:       # before the node's values became sockets
+            node.color_saturation = saturation
+        tree.links.new(image, node.inputs["Image"])
+        image = node.outputs["Image"]
+        x += 220
     if glow:
         node = _node(tree, GLOW, 'CompositorNodeGlare', x, y)
         node.inputs["Type"].default_value = 'Fog Glow'
@@ -119,7 +132,7 @@ def apply(scene, glow, contrast, vignette):
 
 def on_change(settings, context):
     scene = settings.id_data
-    apply(scene, settings.look_glow, settings.look_contrast, settings.look_vignette)
+    apply(scene, settings.look_glow, settings.look_contrast, settings.look_vignette, settings.look_saturation)
 
 
 class RS_OT_look_preset(bpy.types.Operator):
@@ -141,10 +154,45 @@ class RS_OT_look_preset(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class RS_OT_look_reset(bpy.types.Operator):
+    bl_idname = "render_studio.look_reset"
+    bl_label = "Reset Look"
+    bl_description = "Exposure, white balance, saturation, glow, contrast and vignette back to neutral"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    def execute(self, context):
+        scene = context.scene
+        rq = scene.render_studio
+        view = scene.view_settings
+        view.exposure = 0.0
+        if hasattr(view, "use_white_balance"):
+            view.use_white_balance = False
+        rq.look_saturation = 1.0
+        rq.look_glow, rq.look_contrast, rq.look_vignette = PRESETS["Clean"]
+        return {'FINISHED'}
+
+
 def draw(layout, scene):
+    """Look: exposure, white balance and saturation first (the basics), then the presets with glow,
+    contrast and vignette."""
+    from .ui_common import section
     rq = scene.render_studio
-    box = layout.box()
-    box.label(text="Look (Compositor)", icon='NODE_COMPOSITING')
+    view = scene.view_settings
+    box, head, is_open = section(layout, "look", "Look", 'NODE_COMPOSITING')
+    head.operator(RS_OT_look_reset.bl_idname, text="", icon='LOOP_BACK')
+    if not is_open:
+        return
+    col = box.column(align=True)
+    col.prop(view, "exposure", text="Exposure", slider=True)
+    if hasattr(view, "use_white_balance"):
+        row = col.row(align=True)
+        sub = row.row(align=True)
+        sub.active = view.use_white_balance
+        sub.prop(view, "white_balance_temperature", text="White Balance", slider=True)
+        row.prop(view, "use_white_balance", text="", icon='CHECKBOX_HLT' if view.use_white_balance else 'CHECKBOX_DEHLT')
+        if view.use_white_balance:
+            col.prop(view, "white_balance_tint", text="Tint", slider=True)
+    col.prop(rq, "look_saturation", slider=True)
     row = box.row(align=True)
     current = (round(rq.look_glow, 2), round(rq.look_contrast, 2), round(rq.look_vignette, 2))
     for name, values in PRESETS.items():

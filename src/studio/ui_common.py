@@ -155,6 +155,19 @@ def _queue_progress_text():
 
 # ------------------------------------------------------------------ collapsible sections
 
+def tab_head(layout, menu, text, save=None, settings=None, icon='PRESET'):
+    """The first row of every Studio tab, always the same: [preset ▾ … ] [+ save] [settings].
+    Returns (row, the "+" operator's properties or None); more buttons can go between menu and "+"
+    with the returned row before `save` is given: pass save=None and add them yourself."""
+    row = layout.row(align=True)
+    row.scale_y = 1.2
+    row.menu(menu, text=text, icon=icon)
+    props = row.operator(save, text="", icon='ADD') if save else None
+    if settings:
+        row.popover(settings, text="", icon='PREFERENCES')
+    return row, props
+
+
 def section_open(key, default_open=True):
     import bpy
     wm = bpy.context.window_manager

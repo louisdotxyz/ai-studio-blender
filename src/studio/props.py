@@ -422,6 +422,9 @@ class RS_Settings(PropertyGroup):
                                  default=0.0, min=0.0, max=1.0, subtype='FACTOR', options=set(), update=_look_changed)
     look_vignette: FloatProperty(name="Vignette", description="Darker corners (compositor)",
                                  default=0.0, min=0.0, max=1.0, subtype='FACTOR', options=set(), update=_look_changed)
+    look_saturation: FloatProperty(name="Saturation", description="How strong the colors are: 0 = gray, 1 = as "
+                                   "rendered (compositor)", default=1.0, min=0.0, max=2.0, soft_max=1.5,
+                                   options=set(), update=_look_changed)
     background_mode: EnumProperty(
         name="Background",
         items=[

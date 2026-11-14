@@ -6,7 +6,7 @@ import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy.types import Menu, Operator
 
-from . import env_ui, light_items, light_paint, lights, looks
+from . import env_ui, environment, light_items, light_paint, lights, looks
 from .ui_common import _report_value_error, _select_only, subsection
 
 LIGHT_ICONS = {'POINT': 'LIGHT_POINT', 'SUN': 'LIGHT_SUN', 'SPOT': 'LIGHT_SPOT', 'AREA': 'LIGHT_AREA'}
@@ -60,8 +60,7 @@ class RS_OT_light_open(_ItemOperator, Operator):
         if item is None:
             return {'CANCELLED'}
         active = light_items.active_item(scene)
-        if active is not None and active[0] == item[0] and active[1] == item[1] and (
-                item[0] == 'PIN' or context.active_object == item[1]):
+        if active is not None and active[0] == item[0] and active[1] == item[1]:
             light_items.select(scene, None)         # close
             light_paint.restore_tool(context)
             return {'FINISHED'}
@@ -246,31 +245,120 @@ class RS_OT_look_remove(Operator):
         return {'FINISHED'}
 
 
-def draw_looks(layout, scene):
-    """Looks: [A] [B] [C] [+] [−]. Without looks: one button that starts them."""
+class RS_MT_environment(Menu):
+    """The preset menu of the Environment tab: scenes (everything), light setups, looks of this file."""
+    bl_idname = "RS_MT_environment"
+    bl_label = "Presets"
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        current = scene.render_studio.scene_preset
+        layout.label(text="Scene (lights, World, backdrop, look)")
+        for name in list(environment.BUILTIN_SCENES) + sorted(environment.saved_scenes()):
+            layout.operator(env_ui.RS_OT_scene_preset.bl_idname, text=name, translate=False,
+                            icon='CHECKMARK' if name == current else 'BLANK1').name = name
+        if current and current in environment.saved_scenes():
+            layout.operator(env_ui.RS_OT_scene_preset_delete.bl_idname, text="Delete %s" % current,
+                            icon='TRASH').name = current
+        layout.separator()
+        layout.menu("RS_MT_light_presets", text="Only the Lights", icon='LIGHT')
+        layout.separator()
+        layout.operator(RS_OT_look_add.bl_idname, icon='DUPLICATE',
+                        text="New Look" if len(scene.render_studio.light_looks) else "Compare Looks (A / B)")
+        if looks.active(scene) >= 0:
+            layout.operator(RS_OT_look_remove.bl_idname, icon='REMOVE')
+
+
+def draw_head(layout, scene, settings):
+    """[presets ▾] [A] [B] … [+ save scene] [settings]: the looks of this file sit between the two."""
     rs = scene.render_studio
     row = layout.row(align=True)
-    if not len(rs.light_looks):
-        row.operator(RS_OT_look_add.bl_idname, text="Compare Looks (A / B)", icon='DUPLICATE')
-        return
-    row.label(text="Looks", icon='RENDERLAYERS')
+    row.scale_y = 1.2
+    row.menu(RS_MT_environment.bl_idname, text=rs.scene_preset or "Preset", icon='PRESET')
     current = looks.active(scene)
     for index, look in enumerate(rs.light_looks):
-        row.operator(RS_OT_look_switch.bl_idname, text=look.name, depress=index == current).index = index
-    row.operator(RS_OT_look_add.bl_idname, text="", icon='ADD')
-    row.operator(RS_OT_look_remove.bl_idname, text="", icon='REMOVE')
+        sub = row.row(align=True)
+        sub.ui_units_x = 1.4
+        sub.operator(RS_OT_look_switch.bl_idname, text=look.name, depress=index == current).index = index
+    row.operator(env_ui.RS_OT_scene_preset_save.bl_idname, text="", icon='ADD')
+    row.popover(settings, text="", icon='PREFERENCES')
 
 
-# ------------------------------------------------------------------ the list
+# ------------------------------------------------------------------ the open light and the list
 
 def _same(a, b):
     return a is not None and b is not None and a[0] == b[0] and a[1] == b[1]
 
 
-def draw_list(box, context):
-    """All lights: eye, kind (click: open), name, brightness. The open light shows its settings below."""
+def draw_open_light(layout, context):
+    """The open light: [kind] [name] [brightness] [close], how a click on the product places it, its few
+    values, the rest under "More". Without an open light: what to do."""
     scene = context.scene
     rs = scene.render_studio
+    item = light_items.active_item(scene)
+    box = layout.box()
+    if item is None:
+        sub = box.row()
+        sub.active = False
+        sub.label(text="Open a light below, then click on the product", icon='MOUSE_LMB_DRAG')
+        return
+    row = box.row(align=True)
+    if item[0] == 'PIN':
+        pin = rs.hdri_pins[item[1]]
+        row.prop(pin, "on", text="", icon='HIDE_OFF' if pin.on else 'HIDE_ON')
+        row.prop(pin, "name", text="", icon=PIN_ICON)
+        power = row.row(align=True)
+        power.ui_units_x = 4.5
+        power.prop(pin, "strength", text="")
+    else:
+        obj = item[1]
+        row.operator("render_studio.toggle_light", text="",
+                     icon='HIDE_ON' if obj.hide_render else 'HIDE_OFF').name = obj.name
+        row.prop(obj.render_studio_light, "short_name", text="", icon=LIGHT_ICONS.get(obj.data.type, 'LIGHT'))
+        power = row.row(align=True)
+        power.ui_units_x = 4.5
+        power.prop(obj.data, "energy", text="")
+    _set_item(row.operator(RS_OT_light_open.bl_idname, text="", icon='X'), item)
+    if item[0] == 'PIN':
+        _draw_pin(box, context, item)
+    else:
+        _draw_light(box, context, item)
+
+
+def _draw_row(col, scene, item, active):
+    rs = scene.render_studio
+    is_open = _same(item, active)
+    row = col.row(align=True)
+    if item[0] == 'PIN':
+        pin = rs.hdri_pins[item[1]]
+        row.prop(pin, "on", text="", icon='HIDE_OFF' if pin.on else 'HIDE_ON', emboss=False)
+        sub = row.row(align=True)
+        sub.active = pin.on
+        op = sub.operator(RS_OT_light_open.bl_idname, text=pin.name, depress=is_open, icon=PIN_ICON, translate=False)
+        op.pin = item[1]
+        power = sub.row(align=True)
+        power.ui_units_x = 4.5
+        power.prop(pin, "strength", text="")
+        return
+    obj = item[1]
+    on = not obj.hide_render
+    row.operator("render_studio.toggle_light", text="", emboss=False,
+                 icon='HIDE_OFF' if on else 'HIDE_ON').name = obj.name
+    sub = row.row(align=True)
+    sub.active = on
+    solo = env_ui.solo_light(scene) == obj.name
+    sub.operator(RS_OT_light_open.bl_idname, text=obj.name, depress=is_open, translate=False,
+                 icon='SOLO_ON' if solo else LIGHT_ICONS.get(obj.data.type, 'LIGHT')).name = obj.name
+    power = sub.row(align=True)
+    power.ui_units_x = 4.5
+    power.prop(obj.data, "energy", text="")
+
+
+def draw_list(box, context):
+    """The lights that are on: eye, name (click: open it), brightness. The ones that are off fold into
+    one line. The open light's settings are above the list."""
+    scene = context.scene
     items = light_items.all_items(scene)
     if not items:
         sub = box.row()
@@ -278,43 +366,15 @@ def draw_list(box, context):
         sub.label(text="Pick a preset or add a light", icon='INFO')
         return
     active = light_items.active_item(scene)
+    on = [item for item in items if light_items.is_on(scene, item)]
+    off = [item for item in items if not light_items.is_on(scene, item)]
     col = box.column(align=True)
-    for item in items:
-        is_open = _same(item, active)
-        row = col.row(align=True)
-        if item[0] == 'PIN':
-            pin = rs.hdri_pins[item[1]]
-            on = pin.on
-            row.prop(pin, "on", text="", icon='HIDE_OFF' if on else 'HIDE_ON', emboss=False)
-            sub = row.row(align=True)
-            sub.active = on
-            sub.operator(RS_OT_light_open.bl_idname, text="", depress=is_open, icon=PIN_ICON).pin = item[1]
-            sub.prop(pin, "name", text="")
-            power = sub.row(align=True)
-            power.ui_units_x = 4.5
-            power.prop(pin, "strength", text="")
-        else:
-            obj = item[1]
-            on = not obj.hide_render
-            row.operator("render_studio.toggle_light", text="", emboss=False,
-                         icon='HIDE_OFF' if on else 'HIDE_ON').name = obj.name
-            sub = row.row(align=True)
-            sub.active = on
-            sub.operator(RS_OT_light_open.bl_idname, text="", depress=is_open,
-                         icon=LIGHT_ICONS.get(obj.data.type, 'LIGHT')).name = obj.name
-            sub.prop(obj.render_studio_light, "short_name", text="")
-            power = sub.row(align=True)
-            power.ui_units_x = 4.5
-            power.prop(obj.data, "energy", text="")
-            if env_ui.solo_light(scene) == obj.name:
-                row.label(text="", icon='SOLO_ON')
-        if is_open:
-            details = col.box()
-            if item[0] == 'PIN':
-                _draw_pin(details, context, item)
-            else:
-                _draw_light(details, context, item)
-            col.separator()
+    for item in on:
+        _draw_row(col, scene, item, active)
+    if off and subsection(box, "lights_off", "%d off" % len(off), default_open=not on):
+        col = box.column(align=True)
+        for item in off:
+            _draw_row(col, scene, item, active)
 
 
 def _draw_actions(box, item):
@@ -399,7 +459,7 @@ def _draw_light(box, context, item):
     _draw_actions(box, item)
 
 
-classes = (RS_OT_light_open, RS_OT_light_new, RS_MT_light_new, RS_OT_light_remove, RS_OT_light_copy,
+classes = (RS_OT_light_open, RS_OT_light_new, RS_MT_light_new, RS_MT_environment, RS_OT_light_remove, RS_OT_light_copy,
            RS_OT_light_mirror, RS_OT_look_add, RS_OT_look_switch, RS_OT_look_remove)
 
 
