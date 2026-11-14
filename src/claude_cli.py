@@ -71,6 +71,12 @@ def build_env(claude_path):
     return env
 
 
+# Added to the system prompt of a run with claude.ai connectors (all tools are deferred then).
+CONNECTOR_PROMPT = ("\nThis run also has the user's claude.ai connector(s) %s. All tools, also Blender's, wait "
+                    "behind ToolSearch: load the ones you need first in one call, e.g. ToolSearch "
+                    "\"select:mcp__blender__execute_python,mcp__blender__ask_user\" plus the connector's tools.")
+
+
 # Words in the CLI's output when the login is missing or has expired.
 _AUTH_WORDS = ("failed to authenticate", "oauth", "not logged in", "please run /login",
                "invalid api key", "authentication_error")
@@ -268,7 +274,9 @@ class ClaudeRun:
 
     def __init__(self, claude_path, events, *, cwd, mcp_config_path,
                  system_prompt, session_id=None, model="", effort="", extra_args="",
-                 env_extra=None, prepare=None, local_args=None, single=False):
+                 env_extra=None, prepare=None, local_args=None, single=False, connectors=()):
+        """connectors: claude.ai connectors of the user's account this run may use (e.g. "Krea", billed to
+        the user's own plan with them). Without any, only the Blender server is there (--strict-mcp-config)."""
         self.events = events  # queue.Queue of ("event", dict) / ("done", rc, stderr)
         self.cmd = [
             claude_path, "-p",
@@ -278,19 +286,31 @@ class ClaudeRun:
             "--include-partial-messages",
             "--replay-user-messages",
             "--mcp-config", mcp_config_path,
-            "--strict-mcp-config",
         ]
+        connectors = [] if local_args else list(connectors)
+        if not connectors:
+            self.cmd.append("--strict-mcp-config")
         if local_args:  # local model: own prompt, no built-in tools (see lmstudio.cli_args)
             self.cmd += ["--allowedTools", "mcp__blender"] + local_args
         else:
+            allowed = ["mcp__blender", "WebSearch", "WebFetch", "Read"] + ["mcp__claude_ai_" + c for c in connectors]
+            blocked = ["Bash", "Edit", "Write", "NotebookEdit", "AskUserQuestion"]
+            tools = ["Read", "WebSearch", "WebFetch"]
+            if connectors:
+                # All of the account's connectors load then: their tools wait behind ToolSearch (else their
+                # descriptions alone would fill the context). Not the Live Connection: that is this Blender.
+                blocked.append("mcp__ai-studio")
+                tools.append("ToolSearch")
+                allowed.append("ToolSearch")
+                system_prompt += CONNECTOR_PROMPT % ", ".join(connectors)
             self.cmd += [
                 # Only built-in tools that help in Blender; the rest is token overhead.
-                "--tools", "Read,WebSearch,WebFetch",
+                "--tools", ",".join(tools),
                 # Pre-approve web access and reading (renders, datasheets, photos anywhere):
                 # in -p mode there is nobody to grant it. Writing stays off.
-                "--allowedTools", "mcp__blender,WebSearch,WebFetch,Read",
+                "--allowedTools", ",".join(allowed),
                 # Claude asks questions through the Blender tool ask_user instead.
-                "--disallowedTools", "Bash,Edit,Write,NotebookEdit,AskUserQuestion",
+                "--disallowedTools", ",".join(blocked),
                 "--append-system-prompt", system_prompt,
             ]
         if session_id:
@@ -303,6 +323,8 @@ class ClaudeRun:
             self.cmd += shlex.split(extra_args)
         self.cwd = cwd
         self.env = build_env(claude_path)
+        if connectors:
+            self.env["ENABLE_TOOL_SEARCH"] = "true"
         if env_extra:  # local model: the CLI talks to LM Studio instead of Anthropic
             self.env.pop("ANTHROPIC_API_KEY", None)
             self.env.update(env_extra)

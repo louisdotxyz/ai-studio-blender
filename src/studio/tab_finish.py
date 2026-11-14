@@ -9,7 +9,7 @@ import bpy
 from bpy.props import BoolProperty, EnumProperty, StringProperty
 from bpy.types import Menu, Operator, Panel
 
-from . import krea, look, runner, tab_queue
+from . import krea, krea_scene, look, runner, tab_queue
 from .ui_common import _SidebarPanel, _unpin, section, tab_head
 
 FINISH_TAB_ORDER = 5
@@ -154,22 +154,77 @@ class RS_OT_krea_idea(Operator):
     bl_options = {'INTERNAL'}
 
     text: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    protect: BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
 
     def execute(self, context):
         context.window_manager.render_studio_krea_prompt = self.text
+        context.window_manager.render_studio_krea_protect = self.protect
         return {'FINISHED'}
 
 
-def refine(scene, prompt, model=None, environment=None, zoom=None, view=None):
-    """Refines the render shown in the Finish tab; the choices of the tab where an argument is None.
-    Returns (result path, model used, width, height)."""
+def _choices(prompt, model, environment, zoom, view, protect):
+    """The tab's choices where an argument is None, the model Auto picks, the render and its size."""
     wm = bpy.context.window_manager
-    source = current_image(scene)
-    width, height = krea.image_size(source) if source and os.path.isfile(source) else (0, 0)
-    target, used = krea.start(model or wm.render_studio_krea_model, prompt, source, width, height,
-                              wm.render_studio_krea_env if environment is None else environment,
-                              zoom or wm.render_studio_krea_zoom, view or wm.render_studio_krea_view)
+    environment = wm.render_studio_krea_env if environment is None else environment
+    environment = bpy.path.abspath(environment) if environment else ""
+    zoom = (zoom or wm.render_studio_krea_zoom).upper()
+    view = (view or wm.render_studio_krea_view).upper()
+    protect = wm.render_studio_krea_protect if protect is None else bool(protect)
+    used = krea.pick_model((model or wm.render_studio_krea_model).upper(), environment, zoom, view)
+    source = current_image(bpy.context.scene)
+    if not source or not os.path.isfile(source):
+        raise ValueError("Render an image first")
+    if environment and not os.path.isfile(environment):
+        raise ValueError("The environment picture is missing: %s" % environment)
+    width, height = krea.image_size(source)
+    return prompt, used, environment, zoom, view, protect, source, width, height
+
+
+def _scale_and_mask(scene, source, width, height, used, zoom, view, protect):
+    """The sentence about the product's true size and, for Precise with "keep the product", the mask."""
+    info = krea_scene.product_scale(scene, krea_scene.render_camera(scene, source), width, height)
+    scale = krea_scene.scale_text(info, width, height, framing_kept=zoom == 'KEEP' and view == 'KEEP')
+    mask = ""
+    if used == 'PRECISE' and protect and info:
+        mask = krea_scene.render_mask(scene, source)
+    return scale, mask
+
+
+def refine(scene, prompt, model=None, environment=None, zoom=None, view=None, protect=None):
+    """Refines the render shown in the Finish tab with the API token; the choices of the tab where an
+    argument is None. Returns (result path, model used, width, height)."""
+    prompt, used, environment, zoom, view, protect, source, width, height = _choices(
+        prompt, model, environment, zoom, view, protect)
+    if not krea.token():
+        raise ValueError("Add your Krea API token in Preferences › Studio (or refine with Claude: Krea plan)")
+    if krea.busy():
+        raise ValueError("Krea is still working on the last image")
+    scale, mask = _scale_and_mask(scene, source, width, height, used, zoom, view, protect)
+    target, used = krea.start(used, prompt, source, width, height, environment, zoom, view, scale, mask)
     return target, used, width, height
+
+
+_plan = {}     # the run being prepared with Claude: source, model, size
+
+
+def prepare(scene, prompt, upload_url, model=None, environment=None, zoom=None, view=None, protect=None):
+    """For Claude with the Krea connector: the full prompt (with the product's true scale), the render, the
+    mask and the environment picture uploaded to `upload_url` (from the connector's get_upload_url).
+    Returns {"model": Krea model id, "input": for generate_image, "credits_about", "scale", "size"}."""
+    prompt, used, environment, zoom, view, protect, source, width, height = _choices(
+        prompt, model, environment, zoom, view, protect)
+    if not prompt.strip() and not environment and zoom == 'KEEP' and view == 'KEEP':
+        raise ValueError("Write what Krea should change")
+    scale, mask = _scale_and_mask(scene, source, width, height, used, zoom, view, protect)
+    image_url = krea.upload_to(upload_url, source)
+    environment_url = krea.upload_to(upload_url, environment) if environment else ""
+    mask_url = krea.upload_to(upload_url, mask) if mask else ""
+    body = krea.request_body(used, prompt, image_url, width, height, environment_url, zoom, view, scale, mask_url)
+    _plan.clear()
+    _plan.update(source=source, model=used, size=[width, height])
+    krea.job.update(state="", text="", quote=None)
+    return {"model": krea.model_path(used), "key": used, "input": body, "credits_about": krea.UNITS.get(used),
+            "scale": scale, "size": [width, height], "keeps_product": bool(mask)}
 
 
 class RS_OT_krea_refine(Operator):
@@ -185,7 +240,7 @@ class RS_OT_krea_refine(Operator):
     def execute(self, context):
         try:
             target, used, width, height = refine(context.scene, context.window_manager.render_studio_krea_prompt)
-        except (ValueError, OSError) as exc:
+        except (ValueError, OSError, RuntimeError) as exc:
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
         self.report({'INFO'}, "Krea (%s): %s, %d × %d" % (dict((k, n) for k, _p, n, _d in krea.MODELS)[used],
@@ -197,7 +252,8 @@ class RS_OT_krea_claude(Operator):
     bl_idname = "render_studio.krea_claude"
     bl_label = "Refine with Claude"
     bl_description = ("Claude looks at the render (and the environment picture), writes the prompt for Krea from "
-                      "your sentence, picks the model and starts it. You see it in the chat")
+                      "your sentence with the product's true size, picks the model, shows the price and makes it "
+                      "with your Krea plan (the Krea connector of your Claude account). You see it in the chat")
 
     @classmethod
     def poll(cls, context):
@@ -209,26 +265,45 @@ class RS_OT_krea_claude(Operator):
         if not source:
             self.report({'ERROR'}, "Render an image first")
             return {'CANCELLED'}
-        if not krea.token():
-            self.report({'ERROR'}, "Add your Krea API token in Preferences › Studio")
+        from .. import core
+        if core.is_local():
+            self.report({'ERROR'}, "Krea through Claude needs Claude (not a local model)")
             return {'CANCELLED'}
         lines = ["Refine this render with Krea: %s" % (wm.render_studio_krea_prompt.strip() or "(no wish, see below)"),
                  "Render: %s" % source]
+        try:
+            width, height = krea.image_size(source)
+            info = krea_scene.product_scale(context.scene, krea_scene.render_camera(context.scene, source),
+                                            width, height)
+            if info:
+                lines.append("Product: %s cm (true size), %d × %d px render" % (
+                    " × ".join("%g" % v for v in info["size_cm"]), width, height))
+        except (OSError, ValueError):
+            pass
+        lines.append("Keep the product untouched (mask): %s" % ("yes" if wm.render_studio_krea_protect else "no"))
         if wm.render_studio_krea_env:
             lines.append("Environment picture: %s" % bpy.path.abspath(wm.render_studio_krea_env))
         if wm.render_studio_krea_zoom != 'KEEP' or wm.render_studio_krea_view != 'KEEP':
             lines.append("Framing: zoom %s, perspective %s" % (wm.render_studio_krea_zoom, wm.render_studio_krea_view))
         if wm.render_studio_krea_model != 'AUTO':
             lines.append("Model: %s" % wm.render_studio_krea_model)
-        from .. import core
-        if not core.studio_prompt('FINISH', "\n".join(lines)):
-            return {'CANCELLED'}
         try:
             core.add_attachment(source)
             if wm.render_studio_krea_env:
                 core.add_attachment(bpy.path.abspath(wm.render_studio_krea_env))
         except Exception as exc:
             print("ID Toolkit: Krea attachment:", exc)
+        text = "\n".join(lines)
+        if core.is_busy():
+            # a run that is going cannot get the connector any more: a new chat after it
+            names = [s["name"] for s in core.skills.list_skills(core.workdir()) if s.get("studio_tab") == 'FINISH']
+            core.queue_chat(text, names, connectors=("Krea",))
+            self.report({'INFO'}, "Claude is busy: Krea comes as the next chat")
+            return {'FINISHED'}
+        core.request_connector("Krea")
+        if not core.studio_prompt('FINISH', text):
+            core.connectors_next.discard("Krea")
+            return {'CANCELLED'}
         return {'FINISHED'}
 
 
@@ -324,26 +399,66 @@ def _draw_image(layout, context):
     return path
 
 
+def _scale_line(layout, context, path):
+    """Product 12 × 4 × 3 cm · fills 34 % of the width: what Krea is told about the true size."""
+    if not path:
+        return
+    try:
+        width, height = krea.image_size(path)
+        info = krea_scene.product_scale(context.scene, krea_scene.render_camera(context.scene, path), width, height)
+    except (OSError, ValueError):
+        return
+    if not info:
+        return
+    text = "Product %s cm" % " × ".join("%g" % round(v) if v >= 10 else "%g" % v for v in info["size_cm"])
+    if info.get("frame"):
+        text += " · %d %% of the width" % (info["frame"][0] * 100)
+    sub = layout.row()
+    sub.active = False
+    sub.label(text=text, icon='EMPTY_ARROWS', translate=False)
+
+
+def _cost_lines(layout, used, names):
+    """Before: the model and about what it costs; while Claude makes it: Krea's quote; after: the month."""
+    quote = krea.job.get("quote")
+    line = layout.row(align=True)
+    sub = line.row(align=True)
+    sub.active = False
+    if quote and krea.busy():
+        credits, balance = quote
+        text = "Krea: %s credits" % ("%g" % round(float(credits), 1) if credits is not None else "?")
+        if balance is not None:
+            text += " · %g left" % round(float(balance))
+        sub.label(text=text, icon='FUND', translate=False)
+    else:
+        text = "%s · %s (Krea plan)" % (names[used], krea.price_text(used))
+        sub.label(text=text, icon='FUND', translate=False)
+    count, known, unknown, credits = krea.month_summary()
+    if count:
+        sub = layout.row()
+        sub.active = False
+        month = "This month: %d pictures" % count
+        if credits:
+            month += ", %g credits" % round(credits)
+        if known:
+            month += ", about $%.2f API" % known
+        balance = krea.last_balance()
+        if balance is not None:
+            month += " · %g left" % round(balance)
+        sub.label(text=month, translate=False)
+
+
 def _draw_krea(layout, context, path):
     """[Hand] [In Use] [Setting] [Props]; the sentence; environment picture with zoom and perspective;
-    model; [Refine with Claude] [as written]; what it costs."""
+    model and "keep the product"; [Refine with Claude] [▶ with an API token]; the product's size; the cost."""
     wm = context.window_manager
     box, head, is_open = section(layout, "krea", "Refine with Krea", 'BRUSHES_ALL')
     if not is_open:
         return
-    if not krea.token():
-        col = box.column(align=True)
-        sub = col.row()
-        sub.active = False
-        sub.label(text="Needs a Krea API token (Preferences › Studio)", icon='INFO')
-        col.operator(RS_OT_krea_token.bl_idname, icon='URL')
-        p = runner.prefs(context)
-        if p is not None:
-            col.prop(p, "krea_token", text="", placeholder="Paste the token here")
-        return
     grid = box.grid_flow(row_major=True, columns=4, even_columns=True, align=True)
-    for label, text in krea.IDEAS:
-        grid.operator(RS_OT_krea_idea.bl_idname, text=label).text = text
+    for label, text, protect in krea.IDEAS:
+        op = grid.operator(RS_OT_krea_idea.bl_idname, text=label)
+        op.text, op.protect = text, protect
     box.prop(wm, "render_studio_krea_prompt", text="", placeholder="What should change? e.g. a hand holds it")
     # environment picture: the product goes into it; zoom out and another perspective need the Free model
     col = box.column(align=True)
@@ -362,25 +477,16 @@ def _draw_krea(layout, context, path):
     used = krea.pick_model(wm.render_studio_krea_model, env, wm.render_studio_krea_zoom, wm.render_studio_krea_view)
     names = dict((k, n) for k, _p, n, _d in krea.MODELS)
     row = box.row(align=True)
+    row.active = used == 'PRECISE'
+    row.prop(wm, "render_studio_krea_protect", icon='LOCKED' if wm.render_studio_krea_protect else 'UNLOCKED')
+    row = box.row(align=True)
     row.scale_y = 1.3
     row.enabled = bool(path)
     row.operator(RS_OT_krea_claude.bl_idname, icon='OUTLINER_DATA_GP_LAYER')
-    row.operator(RS_OT_krea_refine.bl_idname, text="", icon='PLAY')
-    # cost: the model and its price, what this month cost (Krea has no balance API: the button opens it)
-    count, known, unknown = krea.month_summary()
-    line = box.row(align=True)
-    sub = line.row(align=True)
-    sub.active = False
-    text = "%s · %s" % (names[used], krea.price_text(used))
-    sub.label(text=text, icon='FUND', translate=False)
-    line.operator(RS_OT_krea_usage.bl_idname, text="", icon='URL', emboss=False)
-    if count:
-        sub = box.row()
-        sub.active = False
-        month = "This month: %d pictures" % count + (", about $%.2f" % known if known else "")
-        if unknown:
-            month += " + %d without a published price" % unknown
-        sub.label(text=month, translate=False)
+    if krea.token():
+        row.operator(RS_OT_krea_refine.bl_idname, text="", icon='PLAY')
+    _scale_line(box, context, path)
+    _cost_lines(box, used, names)
     state = krea.job["state"]
     if state:
         line = box.row()
@@ -413,14 +519,17 @@ class RS_PT_finish_settings(Panel):
         p = runner.prefs(context)
         box = layout.box()
         box.label(text="Krea", icon='BRUSHES_ALL')
+        col = box.column(align=True)
+        col.active = False
+        col.label(text="Refine with Claude: your Krea plan's credits")
+        col.label(text="(connect Krea in Claude › Settings › Connectors)")
+        box.separator()
+        box.label(text="Without Claude: an API token (own balance, from $5)")
         if p is not None:
             box.prop(p, "krea_token", text="API Token")
         row = box.row(align=True)
         row.operator(RS_OT_krea_token.bl_idname, icon='URL')
         row.operator(RS_OT_krea_usage.bl_idname, icon='FUND')
-        sub = box.row()
-        sub.active = False
-        sub.label(text="The API has its own balance (not the plan's credits)")
 
 
 class RS_PT_finish(_SidebarPanel, Panel):
@@ -460,6 +569,10 @@ def register():
     wm.render_studio_krea_zoom = EnumProperty(name="Zoom", items=krea.ZOOMS, default='KEEP', options={'SKIP_SAVE'})
     wm.render_studio_krea_view = EnumProperty(name="Perspective", items=krea.VIEWS, default='KEEP',
                                               options={'SKIP_SAVE'})
+    wm.render_studio_krea_protect = BoolProperty(
+        name="Keep Product Untouched", default=True, options={'SKIP_SAVE'},
+        description=("Precise only: a mask from Blender keeps the product exactly as rendered; Krea changes only "
+                     "the rest. Off for a hand whose fingers go over the product"))
     for cls in classes:
         bpy.utils.register_class(cls)
 
@@ -474,3 +587,4 @@ def unregister():
     del bpy.types.WindowManager.render_studio_krea_env
     del bpy.types.WindowManager.render_studio_krea_zoom
     del bpy.types.WindowManager.render_studio_krea_view
+    del bpy.types.WindowManager.render_studio_krea_protect

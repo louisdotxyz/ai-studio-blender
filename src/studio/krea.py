@@ -2,8 +2,13 @@
 """Refine a finished render with Krea (Finish tab): a sentence ("a hand holds the product"), the render
 goes to Krea's image editing, the result is saved next to the render, at exactly the render's size.
 
-Krea's public REST API, with a personal API token (krea.ai/app/api/tokens; billed from the workspace's
-API balance, not the plan's compute units):
+Two ways:
+- With Claude (default): the chat gets the user's claude.ai Krea connector for that run and works with the
+  Krea plan's compute units. It calls api.krea_prepare (prompt with the product's true scale, the render,
+  a mask that keeps the product untouched, uploads), asks Krea for the price (preflight), shows it here,
+  generates and hands the result to api.krea_save.
+- ▶ without Claude: Krea's public REST API with a personal API token (krea.ai/app/api/tokens; billed from
+  the workspace's API balance, not the plan's compute units):
     POST /assets                         multipart "file" → the uploaded image's URL
     POST /generate/image/<model path>    JSON → {"job_id", "status"}
     GET  /jobs/<id>                      → {"status", "result": {"urls": [...]}, "error"}
@@ -48,17 +53,20 @@ ENV_TEXT = (" Place the product into the environment of the reference image: its
             "with matching shadows and reflections.")
 # What Krea charges for one picture (its own price list, krea.ai/app/api/pricing); None = not published
 PRICES = {'PRECISE': None, 'NANO': 0.15}
+# Compute units of the plan for one picture (Krea's quotes, Nov 2026); the real price comes from the preflight
+UNITS = {'PRECISE': 163, 'NANO': 111}
+# (label, text, keep the product untouched: a hand's fingers go over it, props stay around it)
 IDEAS = (
-    ("Hand", "Add a realistic adult hand that holds the product naturally, matching the existing light."),
-    ("In Use", "Show the product in use by a person, cropped so the product stays the hero of the image."),
-    ("Setting", "Place the product in a fitting real-world setting with matching light and soft shadows."),
-    ("Props", "Add a few tasteful props around the product, out of focus, matching the existing light."),
+    ("Hand", "Add a realistic adult hand that holds the product naturally, matching the existing light.", False),
+    ("In Use", "Show the product in use by a person, cropped so the product stays the hero of the image.", False),
+    ("Setting", "Place the product in a fitting real-world setting with matching light and soft shadows.", True),
+    ("Props", "Add a few tasteful props around the product, out of focus, matching the existing light.", True),
 )
 KEEP = " Keep the product exactly as it is: same shape, proportions, materials, colors, details and text."
 KEEP_FRAME = " Keep the camera angle and the framing."
 POLL = 2.0
 LIMIT = 300.0
-job = {"state": "", "text": "", "source": "", "result": "", "started": 0.0, "thread": None}
+job = {"state": "", "text": "", "source": "", "result": "", "started": 0.0, "thread": None, "quote": None}
 
 
 def token():
@@ -79,11 +87,14 @@ def pick_model(key, environment="", zoom='KEEP', view='KEEP'):
     return 'NANO' if environment or zoom != 'KEEP' or view != 'KEEP' else 'PRECISE'
 
 
-def full_prompt(prompt, environment="", zoom='KEEP', view='KEEP'):
+def full_prompt(prompt, environment="", zoom='KEEP', view='KEEP', scale=""):
+    """The user's sentence plus what the tab's choices mean, the product's true scale and "keep it"."""
     text = prompt.strip().rstrip(".") + "." if prompt.strip() else ""
     if environment:
         text += ENV_TEXT
     text += ZOOM_TEXT.get(zoom, "") + VIEW_TEXT.get(view, "")
+    if scale:
+        text += " " + scale.strip()
     text += KEEP + (KEEP_FRAME if zoom == 'KEEP' and view == 'KEEP' else "")
     return text.strip()
 
@@ -104,9 +115,15 @@ def log():
         return []
 
 
-def _add_log(model, width, height):
+def _add_log(model, width, height, credits=None, balance=None, via="api"):
+    """via: "plan" (Claude with the Krea connector: compute units) or "api" (API token: dollars)."""
     entries = log()[-500:]
-    entries.append({"time": time.strftime("%Y-%m-%d %H:%M"), "model": model, "size": [width, height]})
+    entry = {"time": time.strftime("%Y-%m-%d %H:%M"), "model": model, "size": [width, height], "via": via}
+    if credits is not None:
+        entry["credits"] = round(float(credits), 1)
+    if balance is not None:
+        entry["balance"] = round(float(balance), 1)
+    entries.append(entry)
     try:
         with open(_log_file(), "w", encoding="utf-8") as f:
             json.dump(entries, f)
@@ -115,15 +132,27 @@ def _add_log(model, width, height):
 
 
 def month_summary():
-    """(pictures this month, known cost in $, pictures without a published price)."""
+    """(pictures this month, known API cost in $, API pictures without a published price, plan credits)."""
     month = time.strftime("%Y-%m")
     entries = [e for e in log() if str(e.get("time", "")).startswith(month)]
-    known = sum(PRICES.get(e.get("model")) or 0.0 for e in entries)
-    unknown = sum(1 for e in entries if PRICES.get(e.get("model")) is None)
-    return len(entries), known, unknown
+    api = [e for e in entries if e.get("via", "api") == "api"]
+    known = sum(PRICES.get(e.get("model")) or 0.0 for e in api)
+    unknown = sum(1 for e in api if PRICES.get(e.get("model")) is None)
+    credits = sum(e.get("credits") or 0.0 for e in entries if e.get("via") == "plan")
+    return len(entries), known, unknown, credits
 
 
-def price_text(model):
+def last_balance():
+    """The plan's compute units left after the last run with Claude (from Krea's quote), or None."""
+    for entry in reversed(log()):
+        if entry.get("balance") is not None:
+            return entry["balance"]
+    return None
+
+
+def price_text(model, plan=True):
+    if plan:
+        return "about %d credits per picture" % UNITS.get(model, 150)
     price = PRICES.get(model)
     return ("about $%.2f per picture" % price) if price else "price per picture: see krea.ai/app/api/pricing"
 
@@ -150,15 +179,19 @@ def nearest_ratio(width, height):
     return min(ratios, key=lambda r: abs(int(r.split(":")[0]) / int(r.split(":")[1]) - want))
 
 
-def request_body(key, prompt, image_url, width, height, environment_url="", zoom='KEEP', view='KEEP'):
+def request_body(key, prompt, image_url, width, height, environment_url="", zoom='KEEP', view='KEEP',
+                 scale="", mask_url=""):
     """The JSON for one model; the render's size goes with it where the model takes one, an environment
-    picture as the second image (Free) or as a reference (Precise)."""
-    text = full_prompt(prompt, bool(environment_url), zoom, view)
+    picture as the second image (Free) or as a reference (Precise); the mask (white = Krea may change it,
+    the product black) only for Precise, which edits in place."""
+    text = full_prompt(prompt, bool(environment_url), zoom, view, scale)
     if key == 'NANO':
         return {"prompt": text, "image_urls": [image_url] + ([environment_url] if environment_url else []),
                 "width": width, "height": height, "aspect_ratio": nearest_ratio(width, height),
                 "resolution": "2K" if max(width, height) > 1100 else "1K"}
     body = {"prompt": text, "image_url": image_url, "quality": "high"}
+    if mask_url:
+        body["mask_url"] = mask_url
     if environment_url:
         body["reference_images"] = [environment_url]
     return body
@@ -205,26 +238,58 @@ def _first_url(data):
     return ""
 
 
-def upload(key, path):
+_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+
+
+def multipart(path, fields=None):
+    """(body, content type) of a multipart/form-data POST with the file as "file" (and extra form fields)."""
     boundary = uuid.uuid4().hex
     with open(path, "rb") as f:
         data = f.read()
-    body = (("--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\nContent-Type: image/png\r\n\r\n"
-             % (boundary, os.path.basename(path))).encode() + data + ("\r\n--%s--\r\n" % boundary).encode())
-    url = _first_url(_call("POST", "/assets", key, body, {"Content-Type": "multipart/form-data; boundary=" + boundary},
-                           timeout=120))
+    parts = b"".join(("--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n"
+                      % (boundary, k, v)).encode() for k, v in (fields or {}).items())
+    kind = _TYPES.get(os.path.splitext(path)[1].lower(), "application/octet-stream")
+    head = ("--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\nContent-Type: %s\r\n\r\n"
+            % (boundary, os.path.basename(path), kind)).encode()
+    return parts + head + data + ("\r\n--%s--\r\n" % boundary).encode(), "multipart/form-data; boundary=" + boundary
+
+
+def upload(key, path):
+    body, kind = multipart(path)
+    url = _first_url(_call("POST", "/assets", key, body, {"Content-Type": kind}, timeout=120))
     if not url:
         raise RuntimeError("Krea did not return the uploaded image")
     return url
 
 
-def _work(key, model, prompt, source, width, height, target, environment, zoom, view):
+def upload_to(upload_url, path, fields=None):
+    """Uploads a file to a presigned Krea upload URL (from the connector's get_upload_url): no token needed.
+    Returns the asset URL Krea answers with."""
+    body, kind = multipart(path, fields)
+    req = urllib.request.Request(upload_url, data=body, method="POST",
+                                 headers={"Content-Type": kind, "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            answer = r.read().decode("utf-8", "replace").strip()
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError("Krea upload %s: %s" % (exc.code, exc.read().decode("utf-8", "replace")[:200])) from None
+    try:
+        url = _first_url(json.loads(answer))
+    except ValueError:
+        url = _first_url(answer)
+    if not url:
+        raise RuntimeError("Krea did not return the uploaded file: %s" % answer[:200])
+    return url
+
+
+def _work(key, model, prompt, source, width, height, target, environment, zoom, view, scale="", mask=""):
     try:
         job["state"] = "upload"
         image_url = upload(key, source)
         environment_url = upload(key, environment) if environment else ""
+        mask_url = upload(key, mask) if mask and model == 'PRECISE' else ""
         job["state"] = "working"
-        body = request_body(model, prompt, image_url, width, height, environment_url, zoom, view)
+        body = request_body(model, prompt, image_url, width, height, environment_url, zoom, view, scale, mask_url)
         started = _call("POST", "/generate/" + "image/" + model_path(model), key, json.dumps(body).encode(),
                         {"Content-Type": "application/json"})
         job_id = started.get("job_id") if isinstance(started, dict) else ""
@@ -253,8 +318,9 @@ def _work(key, model, prompt, source, width, height, target, environment, zoom, 
         job.update(state="error", text=str(exc))
 
 
-def start(model, prompt, source, width, height, environment="", zoom='KEEP', view='KEEP'):
-    """Starts refining `source` (a render file) in the background. Returns (result path, model used)."""
+def start(model, prompt, source, width, height, environment="", zoom='KEEP', view='KEEP', scale="", mask=""):
+    """Starts refining `source` (a render file) in the background with the API token. scale: the sentence
+    about the product's true size; mask: a mask file (Precise only). Returns (result path, model used)."""
     key = token()
     if not key:
         raise ValueError("Add your Krea API token in Preferences › Studio")
@@ -269,14 +335,55 @@ def start(model, prompt, source, width, height, environment="", zoom='KEEP', vie
         raise ValueError("Write what Krea should change")
     model = pick_model(model, environment, zoom, view)
     target = result_path(source)
-    job.update(state="upload", text="", source=source, result="", started=time.monotonic(), model=model)
+    job.update(state="upload", text="", source=source, result="", started=time.monotonic(), model=model, quote=None)
     thread = threading.Thread(target=_work, args=(key, model, prompt, source, width, height, target, environment,
-                                                  zoom, view), daemon=True)
+                                                  zoom, view, scale, mask), daemon=True)
     job["thread"] = thread
     thread.start()
     if not bpy.app.timers.is_registered(_finish):
         bpy.app.timers.register(_finish, first_interval=1.0)
     return target, model
+
+
+def _download(url, target, model, width, height, credits, balance):
+    try:
+        urllib.request.urlretrieve(url, target + ".download")
+        _add_log(model, width, height, credits, balance, via="plan")
+        job.update(state="loaded", result=target)
+    except Exception as exc:
+        job.update(state="error", text="Could not download the Krea image: %s" % exc)
+
+
+def save_from(url, source, model, credits=None, balance=None):
+    """A Krea result (made through the connector): downloads it next to `source` as …_krea_01.png at exactly
+    the render's size, logs what it cost and shows it in the Finish and Render tabs. Returns the path."""
+    if not str(url).startswith("http"):
+        raise ValueError("Not an image URL: %r" % url)
+    if not source or not os.path.isfile(source):
+        raise ValueError("The render is missing: %s" % source)
+    width, height = image_size(source)
+    target = result_path(source)
+    job.update(state="download", text="", source=source, result="", started=time.monotonic(), model=model)
+    thread = threading.Thread(target=_download, args=(url, target, model, width, height, credits, balance),
+                              daemon=True)
+    job["thread"] = thread
+    thread.start()
+    if not bpy.app.timers.is_registered(_finish):
+        bpy.app.timers.register(_finish, first_interval=0.5)
+    return target
+
+
+def set_quote(model, credits, balance=None):
+    """What Krea said the next picture costs (preflight), shown in the Finish tab while it is made."""
+    job.update(state="working", text="", started=time.monotonic(), model=model, thread=None,
+               quote=[credits, balance])
+    if not bpy.app.timers.is_registered(_finish):
+        bpy.app.timers.register(_finish, first_interval=1.0)
+
+
+def fail(text):
+    """Claude could not finish a run: the Finish tab shows why (and is free for the next one)."""
+    job.update(state="error", text=str(text)[:200], thread=None)
 
 
 def fit_size(path, width, height):
@@ -312,6 +419,8 @@ def image_size(path):
 
 def _finish():
     """Timer: when the thread is done, fit the image to the render's size and show it."""
+    if busy() and job.get("thread") is None and time.monotonic() - job["started"] > LIMIT + 60:
+        job.update(state="error", text="Krea did not answer (no result came back)")
     if busy():
         for window in bpy.context.window_manager.windows:
             for area in window.screen.areas:

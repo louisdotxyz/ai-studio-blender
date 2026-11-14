@@ -97,6 +97,7 @@ history_rev = 0      # bumped when old messages change (undo, step links)
 questions = []       # mcp_server.Task objects from ask_user waiting for an answer
 queued = []          # user messages sent while Claude works, answered after the current turn
 chat_queue = []      # whole new chats waiting for the current one: {"text", "skills", "attachments", "id"}
+connectors_next = set()   # claude.ai connectors (e.g. "Krea") the next run may use, see request_connector
 chat_queue_paused = [False]   # stopped by hand: the queue waits until the user goes on
 attachments = []     # attachments for the next message (dicts from attachments.make)
 session_id = None
@@ -240,9 +241,10 @@ def load_chat_queue():
     chat_queue_paused[0] = bool(data.get("paused")) if isinstance(data, dict) else False
 
 
-def queue_chat(text, skill_names=None):
+def queue_chat(text, skill_names=None, connectors=()):
     """Queues `text` as a new chat for after the current one, with the skills checked now (and one named
-    with /skill at the start) and the attachments of the message box. Returns False for an empty message."""
+    with /skill at the start) and the attachments of the message box. connectors: claude.ai connectors
+    that chat may use (see request_connector). Returns False for an empty message."""
     text = (text or "").strip()
     if not text and not attachments:
         return False
@@ -252,7 +254,7 @@ def queue_chat(text, skill_names=None):
         text = rest
         names.append(skills.find(workdir(), name)["name"])
     chat_queue.append({"id": str(uuid.uuid4()), "text": text, "skills": list(dict.fromkeys(names)),
-                       "attachments": [dict(a) for a in attachments]})
+                       "attachments": [dict(a) for a in attachments], "connectors": list(connectors)})
     attachments.clear()
     _queue_ready[0] = 0.0
     _save_chat_queue()
@@ -292,11 +294,19 @@ def _next_queued_chat():
     attachments[:] = [a for a in entry.get("attachments") or [] if os.path.exists(a.get("path", ""))]
     keep = list(active_skills)
     active_skills[:] = []          # only the skills the message had when it was queued
+    for name in entry.get("connectors") or ():
+        request_connector(name)
     try:
         _send(entry.get("text", ""), entry.get("skills") or ())
     finally:
         active_skills[:] = keep
     mark_dirty()
+
+
+def request_connector(name):
+    """The next run of the chat may use this claude.ai connector of the user's account (e.g. "Krea": billed to
+    the user's own Krea plan). A run that is already going gets it with the next message after it ends."""
+    connectors_next.add(name)
 
 
 # Wishes sent from a Studio tab: tab -> index in `messages` where its answer starts.
@@ -661,8 +671,10 @@ def _start_run(outgoing, prefs, single=False):
         session_id=session_id,
         extra_args=prefs.extra_args if prefs else "",
         single=single,
+        connectors=sorted(connectors_next),
         **kwargs,
     )
+    connectors_next.clear()
     for content, uid in outgoing:
         current_run.send(content, uid)
     set_activity("loading" if local else "prompt")

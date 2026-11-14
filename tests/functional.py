@@ -861,7 +861,7 @@ def chat_queue_finish_wear():
     body = krea.request_body('PRECISE', "add a vase", "https://x/r.png", 1500, 2000, "https://x/room.png")
     check("krea: precise takes the environment as a reference", body["reference_images"] == ["https://x/room.png"])
     krea._add_log('NANO', 1500, 2000)
-    count, known, _unknown = krea.month_summary()
+    count, known, _unknown, _credits = krea.month_summary()
     check("krea: what this month cost", count >= 1 and known >= 0.15)
     render = os.path.join(TMP, "Pod_01.png")
     img = bpy.data.images.new("pod", 60, 80)
@@ -920,6 +920,141 @@ def chat_queue_finish_wear():
     finish.apply_look(bpy.context.scene, data)
     check("finish: a look comes back", abs(rs.look_saturation - 0.7) < 1e-6 and abs(rs.look_glow - 0.2) < 1e-6)
     bpy.ops.render_studio.look_reset()
+
+
+@section
+def krea_plan_scale_mask():
+    import json as _json
+    import numpy as np
+    from mathutils import Vector
+    krea, kscene, finish = mod("studio.krea"), mod("studio.krea_scene"), mod("studio.tab_finish")
+    core, cli = mod("core"), mod("claude_cli")
+    scene = bpy.context.scene
+    # the run with the user's Krea connector: no strict config, Krea and ToolSearch allowed, tools deferred
+    run = cli.ClaudeRun("/bin/claude", None, cwd=TMP, mcp_config_path="/x/mcp.json", system_prompt="S",
+                        connectors=["Krea"])
+    allowed = run.cmd[run.cmd.index("--allowedTools") + 1]
+    check("krea plan: the run gets the Krea connector", "--strict-mcp-config" not in run.cmd
+          and "mcp__claude_ai_Krea" in allowed and "ToolSearch" in run.cmd[run.cmd.index("--tools") + 1]
+          and "mcp__ai-studio" in run.cmd[run.cmd.index("--disallowedTools") + 1]
+          and run.env.get("ENABLE_TOOL_SEARCH") == "true"
+          and "ToolSearch" in run.cmd[run.cmd.index("--append-system-prompt") + 1], run.cmd)
+    plain = cli.ClaudeRun("/bin/claude", None, cwd=TMP, mcp_config_path="/x/mcp.json", system_prompt="S")
+    check("krea plan: other runs stay strict", "--strict-mcp-config" in plain.cmd
+          and "claude_ai" not in plain.cmd[plain.cmd.index("--allowedTools") + 1]
+          and plain.env.get("ENABLE_TOOL_SEARCH") == "false")
+    keep_queue = list(core.chat_queue)
+    core.queue_chat("Refine this render with Krea: a hand", ["finish"], connectors=("Krea",))
+    check("krea plan: a queued chat keeps the connector", core.chat_queue[-1].get("connectors") == ["Krea"])
+    core.chat_queue[:] = keep_queue
+    core._save_chat_queue()
+    # a 10 cm product in front of a camera; the render's file name has the camera's name
+    render_state = {o.name: o.hide_render for o in scene.objects}
+    for obj in list(scene.objects):
+        obj.hide_render = True
+    hidden_before = set(render_state)
+    bpy.ops.mesh.primitive_cube_add(size=0.1, location=(0, 0, 0.05))
+    cube = bpy.context.active_object
+    cube.name = "Krea Test Pod"
+    cam_data = bpy.data.cameras.new("Krea Test Cam")
+    cam = bpy.data.objects.new("Krea Test Cam", cam_data)
+    scene.collection.objects.link(cam)
+    cam.location = (0, -0.6, 0.05)
+    cam.rotation_euler = (1.5708, 0, 0)
+    cam_data.lens = 50
+    keep_camera = scene.camera
+    other = bpy.data.objects.new("Krea Other Cam", bpy.data.cameras.new("Krea Other Cam"))
+    scene.collection.objects.link(other)
+    scene.camera = other
+    scene.render.resolution_x, scene.render.resolution_y = 400, 300
+    render = os.path.join(TMP, "Pod_Krea_Test_Cam_01.png")
+    img = bpy.data.images.new("krea render", 400, 300)
+    img.filepath_raw, img.file_format = render, 'PNG'
+    img.save()
+    bpy.data.images.remove(img)
+    check("krea scale: camera from the file name", kscene.render_camera(scene, render) == cam)
+    info = kscene.product_scale(scene, cam, 400, 300)
+    check("krea scale: true size in cm", info and all(abs(v - 10.0) < 0.2 for v in info["size_cm"]), info)
+    check("krea scale: share of the picture", info and 0.05 < info["frame"][0] < 0.6 and 0.05 < info["frame"][1] < 0.8
+          and info.get("px_per_cm", 0) > 1, info)
+    text = kscene.scale_text(info, 400, 300)
+    check("krea scale: the sentence for the prompt", "10 × 10 × 10 cm" in text and "19 cm" in text
+          and "1.9 times" in text and "% of the image width" in text, text)
+    wide = kscene.scale_text(info, 400, 300, framing_kept=False)
+    check("krea scale: zooming out drops the picture shares", "of the width" not in wide and "10 × 10 × 10 cm" in wide)
+    body = krea.request_body('PRECISE', "a hand holds it", "https://x/r.png", 400, 300, scale=text,
+                             mask_url="https://x/m.png")
+    check("krea: precise gets the mask and the scale", body["mask_url"] == "https://x/m.png" and text in body["prompt"]
+          and body["prompt"].endswith(krea.KEEP.strip() + krea.KEEP_FRAME))
+    nano = krea.request_body('NANO', "a hand", "https://x/r.png", 400, 300, scale=text, mask_url="https://x/m.png")
+    check("krea: the free model has no mask", "mask_url" not in nano and text in nano["prompt"])
+    # the mask: product black, the rest white, at the render's size, nothing else changed
+    engine, res = scene.render.engine, (scene.render.resolution_x, scene.render.resolution_y)
+    mask_ok = False
+    try:
+        mask = kscene.render_mask(scene, render, os.path.join(TMP, "mask.png"))
+        image = bpy.data.images.load(mask)
+        px = np.empty(400 * 300 * 4, dtype=np.float32)
+        image.pixels.foreach_get(px)
+        size = tuple(image.size)
+        bpy.data.images.remove(image)
+        center = px[((150 * 400) + 200) * 4]
+        corner = px[0]
+        mask_ok = size == (400, 300) and center < 0.1 and corner > 0.9
+        detail = (size, center, corner)
+    except Exception as exc:          # e.g. no GPU for Workbench in this Blender
+        detail = repr(exc)
+    check("krea mask: product black, rest white, render size", mask_ok, detail)
+    check("krea mask: the scene is as it was", scene.render.engine == engine and scene.camera == other
+          and (scene.render.resolution_x, scene.render.resolution_y) == res
+          and all(o.hide_render for o in scene.objects if o.name in hidden_before))
+    # prepare for Claude: uploads go to the connector's upload URL, the input is ready for generate_image
+    uploads = []
+    keep_upload, keep_current = krea.upload_to, finish.current_image
+    krea.upload_to = lambda url, path, fields=None: uploads.append(path) or "https://assets/%d.png" % len(uploads)
+    finish.current_image = lambda _scene: render
+    wm = bpy.context.window_manager
+    wm.render_studio_krea_model, wm.render_studio_krea_env = 'AUTO', ""
+    wm.render_studio_krea_zoom = wm.render_studio_krea_view = 'KEEP'
+    try:
+        p = finish.prepare(scene, "A hand holds the pod", "https://upload/presigned", protect=True)
+        check("krea plan: prepare uploads render and mask", p["model"] == "ideogram/ideogram-4.5-precise"
+              and p["input"]["image_url"] == "https://assets/1.png" and p["input"].get("mask_url") == "https://assets/2.png"
+              and "10 × 10 × 10 cm" in p["input"]["prompt"] and uploads[0] == render, p)
+        uploads.clear()
+        p = finish.prepare(scene, "A hand holds the pod", "https://upload/presigned", protect=False)
+        check("krea plan: a hand on the product goes without a mask", "mask_url" not in p["input"] and len(uploads) == 1)
+        api = mod("studio.api")
+        api.krea_quote(163, 2946.9)
+        check("krea plan: the price shows before it is made", krea.busy() and krea.job["quote"] == [163, 2946.9])
+        check("krea plan: save needs a real image URL", _raises(lambda: api.krea_save("not a url")))
+        api.krea_failed("content_policy")
+        check("krea plan: a failure frees the tab", not krea.busy() and krea.job["text"] == "content_policy")
+    finally:
+        krea.upload_to, finish.current_image = keep_upload, keep_current
+    krea._add_log('PRECISE', 400, 300, 163, 2783.9, via="plan")
+    count, _known, _unknown, credits = krea.month_summary()
+    check("krea plan: credits this month and what is left", credits >= 163 and krea.last_balance() == 2783.9)
+    with open(krea._log_file(), encoding="utf-8") as f:
+        entries = _json.load(f)
+    check("krea plan: logged as plan", entries[-1]["via"] == "plan" and entries[-1]["credits"] == 163)
+    finish_skill = open(os.path.join(os.path.dirname(core.__file__), "skills_default", "finish.md"), encoding="utf-8").read()
+    check("krea plan: the skill uses the connector, price first", "krea_prepare" in finish_skill
+          and "preflight=true" in finish_skill and "krea_quote" in finish_skill and "krea_save" in finish_skill)
+    scene.camera = keep_camera
+    for obj in (cube, cam, other):
+        bpy.data.objects.remove(obj)
+    for name, value in render_state.items():
+        if scene.objects.get(name) is not None:
+            scene.objects[name].hide_render = value
+
+
+def _raises(func):
+    try:
+        func()
+    except (ValueError, RuntimeError):
+        return True
+    return False
 
 
 @section

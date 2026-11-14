@@ -1158,6 +1158,13 @@ DE = {
     'Open your Krea API balance and usage (Krea shows it only on its website)': 'Dein Krea-API-Guthaben und den Verbrauch öffnen (Krea zeigt es nur auf der Website)',
     'A photo of a place or mood the product goes into': 'Ein Foto eines Ortes oder einer Stimmung, in das das Produkt kommt',
     'Zoom': 'Zoom',
+    # -- 2.10: Krea with the plan through Claude, true scale, mask
+    'Claude looks at the render (and the environment picture), writes the prompt for Krea from your sentence with the product\'s true size, picks the model, shows the price and makes it with your Krea plan (the Krea connector of your Claude account). You see it in the chat': 'Claude schaut das Render (und das Umgebungsbild) an, schreibt aus deinem Satz den Prompt für Krea mit der echten Grösse des Produkts, wählt das Modell, zeigt den Preis und macht es mit deinem Krea-Abo (der Krea-Connector deines Claude-Kontos). Du siehst es im Chat',
+    'Keep Product Untouched': 'Produkt unverändert lassen',
+    'Precise only: a mask from Blender keeps the product exactly as rendered; Krea changes only the rest. Off for a hand whose fingers go over the product': 'Nur Präzise: Eine Maske aus Blender lässt das Produkt genau wie gerendert; Krea ändert nur den Rest. Aus für eine Hand, deren Finger über dem Produkt liegen',
+    "Refine with Claude: your Krea plan's credits": 'Mit Claude verfeinern: Credits deines Krea-Abos',
+    '(connect Krea in Claude › Settings › Connectors)': '(Krea in Claude › Einstellungen › Connectors verbinden)',
+    'Without Claude: an API token (own balance, from $5)': 'Ohne Claude: ein API-Token (eigenes Guthaben, ab $5)',
 }
 
 # Blender looks up operator names in the "Operator" context and everything else

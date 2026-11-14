@@ -243,15 +243,58 @@ def camera_view(view):
     return camera
 
 
-def krea_refine(prompt, model="AUTO", environment="", zoom="KEEP", view="KEEP"):
-    """Refines the render shown in the Finish tab with Krea (in the background; the Finish tab shows the
-    progress and the result, saved next to the render at exactly its size). prompt: English, what to change.
-    model: PRECISE (edits in place: product, framing and size exact; hand, props, a person), NANO (paints anew:
-    new environment, zoom out, other perspective) or AUTO. environment: path of a picture the product goes
-    into. zoom: KEEP, SOME, FAR. view: KEEP, EYE, ABOVE, LOW. Returns the result path and the model."""
+def krea_context():
+    """The render shown in the Finish tab and what Krea must know about it: file, pixel size, camera, the
+    product's true size in cm, how much of the picture it fills and the scale sentence for the prompt."""
+    from . import krea_scene, tab_finish
+    scene = bpy.context.scene
+    source = tab_finish.current_image(scene)
+    if not source:
+        raise ValueError("Render an image first")
+    return krea_scene.describe(scene, source)
+
+
+def krea_prepare(prompt, upload_url, model=None, environment=None, zoom=None, view=None, protect=None):
+    """Krea with the user's plan (Krea connector): builds the full prompt (your English prompt + the product's
+    true scale + keep the product), renders the mask that keeps the product untouched (Precise, protect) and
+    uploads render, mask and environment picture to upload_url (from Krea's get_upload_url). None = the Finish
+    tab's choice. model: PRECISE, NANO or AUTO; zoom KEEP/SOME/FAR; view KEEP/EYE/ABOVE/LOW.
+    Returns {"model": Krea model id, "input": pass as generate_image's input unchanged, "credits_about", ...}."""
+    from . import tab_finish
+    return tab_finish.prepare(bpy.context.scene, prompt, upload_url, model, environment, zoom, view, protect)
+
+
+def krea_quote(credits, balance=None):
+    """Show Krea's price for the next picture (the preflight's compute units, and the plan's balance) in the
+    Finish tab before generating."""
+    from . import krea, tab_finish
+    krea.set_quote(tab_finish._plan.get("model", ""), credits, balance)
+    return "Krea: %s credits%s" % (credits, " (%s left)" % balance if balance is not None else "")
+
+
+def krea_save(url, credits=None, balance=None):
+    """Krea's result image URL → saved next to the render (…_krea_01.png) at exactly its size, logged with
+    what it cost, shown in the Finish and Render tabs. Returns the path (it downloads in the background)."""
+    from . import krea, tab_finish
+    plan = tab_finish._plan
+    if not plan:
+        raise ValueError("Call api.krea_prepare first")
+    return krea.save_from(url, plan["source"], plan["model"], credits, balance)
+
+
+def krea_failed(reason):
+    """Krea could not make the picture: show why in the Finish tab."""
+    from . import krea
+    krea.fail(reason)
+    return reason
+
+
+def krea_refine(prompt, model="AUTO", environment="", zoom="KEEP", view="KEEP", protect=None):
+    """Without Claude's Krea connector: refines the render shown in the Finish tab with the user's Krea API
+    token (its own balance; in the background, the Finish tab shows it). Same arguments as krea_prepare."""
     from . import tab_finish
     target, used, width, height = tab_finish.refine(bpy.context.scene, prompt, str(model).upper(), environment,
-                                                    str(zoom).upper(), str(view).upper())
+                                                    str(zoom).upper(), str(view).upper(), protect)
     return {"result": target, "model": used, "size": [width, height]}
 
 
