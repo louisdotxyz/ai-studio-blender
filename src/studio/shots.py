@@ -11,7 +11,6 @@ light at all, problems with the World).
 """
 
 import os
-import subprocess
 
 import bpy
 from bpy.props import IntProperty, StringProperty
@@ -246,54 +245,19 @@ def draw_shots(layout, scene):
         row.operator(RS_OT_render_shots.bl_idname, icon='RENDER_ANIMATION')
 
 
-# ------------------------------------------------------------------ results: contact sheet, compare
-
-def recent_images(scene, count):
-    return [path for path in runner.queue_images(scene, limit=count) if path and os.path.isfile(path)
-            and not os.path.basename(path).startswith("Contact Sheet")][:count]
-
-
-def _open(paths):
-    if not paths:
-        return
-    try:
-        subprocess.Popen(["open"] + list(paths))
-    except OSError:
-        bpy.ops.wm.path_open(filepath=paths[0])
-
-
-class RS_OT_contact_sheet(Operator):
-    bl_idname = "render_studio.contact_sheet"
-    bl_label = "Contact Sheet"
-    bl_description = "The last renders on one sheet (PNG next to them), opened right away"
-    bl_options = {'INTERNAL'}
-
-    count: IntProperty(default=12, min=2, max=60)
-
-    def execute(self, context):
-        paths = recent_images(context.scene, self.count)
-        if len(paths) < 2:
-            self.report({'WARNING'}, "Render at least two images first")
-            return {'CANCELLED'}
-        from .variants import V
-        sheet = V.sheet(list(reversed(paths)), name="contact_sheet.png", cols=4, width=480)
-        # next to the preview / HQ folders, so it never counts as a render itself
-        target = os.path.join(os.path.dirname(os.path.dirname(paths[0])), "Contact Sheet.png")
-        try:
-            import shutil
-            shutil.copy2(sheet, target)
-        except OSError:
-            target = sheet
-        _open([target])
-        return {'FINISHED'}
-
+# ------------------------------------------------------------------ results: compare
 
 def compare_pair(scene):
-    """The render shown in the preview and the one before it (else the newest two)."""
+    """A and B as picked in the Render tab; the one missing is the shown render, else the one before it."""
     from . import tab_queue
-    images = [p for p in runner.queue_images(scene) if p and os.path.isfile(p)
-              and not os.path.basename(p).startswith("Contact Sheet")]
+    images = [p for p in runner.queue_images(scene) if p and os.path.isfile(p)]
     shown = tab_queue._selected_image(images) or (images[0] if images else "")
+    picked = [tab_queue._ab[k] for k in ("A", "B") if tab_queue._ab[k] and os.path.isfile(tab_queue._ab[k])]
+    if len(picked) == 2:
+        return picked
+    if len(picked) == 1:
+        other = shown if shown != picked[0] else next((p for p in images if p != picked[0]), "")
+        return [picked[0], other] if other else picked
     if shown in images and images.index(shown) + 1 < len(images):
         return [shown, images[images.index(shown) + 1]]
     return images[:2]
@@ -338,8 +302,8 @@ def _split_compare(names, tries=[0]):
 class RS_OT_compare_renders(Operator):
     bl_idname = "render_studio.compare_renders"
     bl_label = "Compare"
-    bl_description = ("This render and the one before it side by side in a Blender window (zoom and move each "
-                      "side on its own)")
+    bl_description = ("A and B (else this render and the one before it) side by side in a Blender window; zoom and "
+                      "move each side on its own")
     bl_options = {'INTERNAL'}
 
     def execute(self, context):
@@ -366,13 +330,18 @@ class RS_OT_compare_renders(Operator):
         return {'FINISHED'}
 
 
-def draw_results(row):
-    row.operator(RS_OT_compare_renders.bl_idname, text="", icon='IMAGE_REFERENCE')
-    row.operator(RS_OT_contact_sheet.bl_idname, text="", icon='IMGDISPLAY')
+def draw_results(layout):
+    """[Compare A · B]: what is picked as A and B (else this render and the one before) side by side."""
+    from . import tab_queue
+    a, b = tab_queue._ab["A"], tab_queue._ab["B"]
+    text = "Compare A · B" if a and b else "Compare with A" if a or b else "Compare with the One Before"
+    row = layout.row(align=True)
+    row.scale_y = 1.2
+    row.operator(RS_OT_compare_renders.bl_idname, text=text, icon='IMAGE_REFERENCE')
 
 
 classes = (RS_OT_shot_add, RS_OT_shot_remove, RS_OT_shot_preset, RS_MT_shot_presets, RS_OT_shot_menu,
-           RS_OT_render_shots, RS_OT_shots_stop, RS_OT_contact_sheet, RS_OT_compare_renders)
+           RS_OT_render_shots, RS_OT_shots_stop, RS_OT_compare_renders)
 
 
 def register():

@@ -149,6 +149,28 @@ def job_path(root, camera_name, quality, name="", blend_filepath=None, ext=EXT):
                      also=others)
 
 
+BATCH = "Batch"
+
+
+def next_batch(root, name="", blend_filepath=None):
+    """The next free batch folder name ("Batch_01", "Batch_02" …), counted over low and high."""
+    project = project_name(blend_filepath, name)
+    folders = [quality_dir(root, project, q) for q in QUALITIES]
+    highest = max(_highest_number(f, BATCH) for f in folders)
+    return "%s_%02d" % (BATCH, highest + 1)
+
+
+def batch_path(root, camera_name, quality, batch, name="", blend_filepath=None, ext=EXT):
+    """`<name>_renders/<low|high>/Batch_03/01_<name>_<camera>.png`: numbered in the order they render."""
+    project = project_name(blend_filepath, name)
+    folder = os.path.join(quality_dir(root, project, quality), safe_name(batch))
+    number = 1
+    if os.path.isdir(folder):
+        numbers = [int(n[:2]) for n in os.listdir(folder) if n[:2].isdigit() and n[2:3] == "_"]
+        number = max(numbers, default=0) + 1
+    return os.path.join(folder, "%02d_%s%s" % (number, _stem(camera_name, name, blend_filepath, quality), ext))
+
+
 def anim_dir(root, camera_name, quality, name="", blend_filepath=None):
     """Folder for an animation: `<name>_renders/animation/<name>_<camera>_<low|high>_01/`."""
     project = project_name(blend_filepath, name)

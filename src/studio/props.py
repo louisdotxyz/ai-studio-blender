@@ -230,6 +230,7 @@ class RS_Item(PropertyGroup):
     uid: IntProperty(options={'HIDDEN'})
     # What was set when the entry was added ("" in files from before 0.6).
     quality: StringProperty(options={'HIDDEN'})          # 'LOW' / 'HIGH'
+    batch: StringProperty(options={'HIDDEN'})            # "Batch_03": several cameras at once go into one folder
     mode: StringProperty(options={'HIDDEN'})             # 'STILL' / 'ANIM'
     number: IntProperty(options={'HIDDEN'})              # "45 grad 3"
     # The camera as it was when added, so the same camera can be added several times.

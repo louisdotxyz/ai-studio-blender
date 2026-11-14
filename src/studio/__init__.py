@@ -48,6 +48,7 @@ from .tab_material import (RS_MT_material_more, RS_MT_material_new, RS_MT_materi
                            RS_PT_material, RS_PT_material_settings)
 from .tab_queue import (RS_MT_render_presets, RS_OT_add, RS_OT_cancel, RS_OT_clear, RS_OT_low_scale, RS_OT_move,
                         RS_OT_preview_step, RS_OT_remove, RS_OT_render_queue, RS_OT_show_render,
+                        RS_OT_render_overview, RS_OT_render_pick, RS_OT_render_reveal,
                         RS_OT_view_camera, RS_PT_output, RS_PT_render_queue, draw_statusbar)
 from .runner import RUN
 from . import cad_link, render_setup
@@ -189,6 +190,9 @@ classes = render_setup.classes + (
     RS_OT_material_clean_unused,
     RS_OT_open_chat,
     RS_OT_preview_step,
+    RS_OT_render_pick,
+    RS_OT_render_reveal,
+    RS_OT_render_overview,
     RS_OT_material_new,
     RS_OT_material_to_base,
     RS_OT_pick_from_object,

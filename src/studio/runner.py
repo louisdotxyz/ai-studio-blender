@@ -636,6 +636,9 @@ class Runner:
         if self.animation:
             path = core.anim_dir(root, camera.name, self.quality, name)
             frames = len(range(scene.frame_start, scene.frame_end + 1, scene.frame_step))
+        elif item.batch:
+            path = core.batch_path(root, camera.name, self.quality, item.batch, name, ext=core.still_ext(rq))
+            frames = 1
         else:
             path = core.job_path(root, camera.name, self.quality, name, ext=core.still_ext(rq))
             frames = 1
@@ -900,10 +903,19 @@ def queue_images(scene, limit=60):
         except OSError:
             continue
         for n in names:
-            if n.lower().endswith(_IMAGE_EXTS):
-                path = os.path.join(folder, n)
+            path = os.path.join(folder, n)
+            if n.startswith(core.BATCH + "_") and os.path.isdir(path):   # a batch: its images too
                 try:
-                    found.append((os.path.getmtime(path), path))
+                    inner = [os.path.join(path, m) for m in os.listdir(path) if m.lower().endswith(_IMAGE_EXTS)]
+                except OSError:
+                    inner = []
+            elif n.lower().endswith(_IMAGE_EXTS):
+                inner = [path]
+            else:
+                continue
+            for image in inner:
+                try:
+                    found.append((os.path.getmtime(image), image))
                 except OSError:
                     pass
     paths = [p for _t, p in sorted(found, reverse=True)][:limit]

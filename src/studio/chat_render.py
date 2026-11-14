@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Render controls right in the chat, above the skills (draw_inline, no popover): start renders without
-Claude. One row: [High|Low] [still|film] [All] [cameras ▾] … [Render (n)]; the size and format come
-from the Render tab. While rendering: progress with cancel; also how many wait in the queue."""
+"""Render controls right in the chat, above the skills (draw_inline): start renders without Claude.
+One row: [cameras ▾][All] [high|low] [still|film] [Render (n)]; size and format come from the Render tab,
+progress and comparing are there. Several cameras at once go into one numbered folder (Batch_01 …)."""
+
+import os
 
 import bpy
 from bpy.props import StringProperty
@@ -47,18 +49,32 @@ class RS_OT_chat_camera(Operator):
 class RS_OT_chat_render(Operator):
     bl_idname = "render_studio.chat_render"
     bl_label = "Render"
-    bl_description = "Render the checked cameras with the quality, still/film and size chosen here (in the background)"
+    bl_description = ("Render the checked cameras with the quality and still/film chosen here; size and format "
+                      "from the Render tab. Several cameras go into one numbered folder (Batch_01 …)")
 
     def execute(self, context):
         names = chosen(context)
         if not names:
             self.report({'WARNING'}, "Check at least one camera")
             return {'CANCELLED'}
+        batch = ""
+        if len(names) > 1 and context.scene.render_studio.mode == 'STILL':
+            from . import core, runner
+            root = runner.settings_from_prefs()[0]
+            name = context.scene.render_studio.output_name
+            batch = core.next_batch(root, name)
+            quality = context.scene.render_studio.quality
+            project = core.project_name(name=name)
+            try:   # made now, so a second click right after gets the next number
+                os.makedirs(os.path.join(core.quality_dir(root, project, quality), batch), exist_ok=True)
+            except OSError:
+                pass
         for name in names:
-            bpy.ops.render_studio.add(camera=name)
+            bpy.ops.render_studio.add(camera=name, batch=batch)
         if not RUN.busy and any(i.camera for i in context.scene.render_studio.items):
             bpy.ops.render_studio.render_queue()
-        self.report({'INFO'}, "Rendering %d camera%s" % (len(names), "" if len(names) == 1 else "s"))
+        self.report({'INFO'}, ("Rendering %d cameras into %s" % (len(names), batch)) if batch else
+                    "Rendering %s" % names[0] if len(names) == 1 else "Rendering %d cameras" % len(names))
         return {'FINISHED'}
 
 
@@ -90,8 +106,8 @@ def _camera_text(names, cams):
 
 
 def draw_inline(layout, context):
-    """One row in the chat: [High|Low] [still|film] [All] [cameras ▾]   [Render (n)] on the right.
-    Size, format and the rest come from the Render tab."""
+    """One row in the chat: [cameras ▾][All] [high|low] [still|film] [Render (n)].
+    Size and format come from the Render tab; progress and comparing are there too."""
     scene = context.scene
     rq = scene.render_studio
     cams = cameras.scene_cameras(scene)
@@ -99,28 +115,27 @@ def draw_inline(layout, context):
     row = layout.row(align=False)
     row.scale_y = 1.2
     left = row.row(align=True)
-    left.prop_enum(rq, "quality", 'HIGH', text="High")
-    left.prop_enum(rq, "quality", 'LOW', text="Low")
-    left.separator(factor=0.5)
-    left.prop_enum(rq, "mode", 'STILL', text="", icon='IMAGE_DATA')
-    left.prop_enum(rq, "mode", 'ANIM', text="", icon='RENDER_ANIMATION')
-    left.separator(factor=0.5)
-    if len(cams) > 1:
-        left.operator(RS_OT_chat_camera.bl_idname, text="All",
-                      depress=set(names) >= {o.name for o in cams}).name = "*"
     left.popover(RS_PT_chat_render.__name__, text=_camera_text(names, cams), icon='CAMERA_DATA')
+    if len(cams) > 1:
+        every = left.row(align=True)
+        every.ui_units_x = 1.6
+        every.operator(RS_OT_chat_camera.bl_idname, text="All",
+                       depress=set(names) >= {o.name for o in cams}).name = "*"
+    mid = row.row(align=True)
+    mid.prop_enum(rq, "quality", 'HIGH', text="", icon='SHADING_RENDERED')
+    mid.prop_enum(rq, "quality", 'LOW', text="", icon='SORTTIME')
+    mid = row.row(align=True)
+    mid.prop_enum(rq, "mode", 'STILL', text="", icon='IMAGE_DATA')
+    mid.prop_enum(rq, "mode", 'ANIM', text="", icon='RENDER_ANIMATION')
     right = row.row(align=True)
-    right.alignment = 'RIGHT'
+    right.ui_units_x = 5.5
     if RUN.busy:
         right.progress(factor=RUN.render_progress, type='BAR', text=_item_progress_text())
         right.operator("render_studio.cancel", text="", icon='X')
     else:
-        sub = right.row(align=True)
-        sub.enabled = bool(names)
-        sub.operator(RS_OT_chat_render.bl_idname, text="Render (%d)" % len(names), icon='RENDER_STILL')
-        waiting = sum(1 for i in rq.items if i.camera)
-        if waiting:
-            right.operator("render_studio.render_queue", text=str(waiting), icon='SEQ_STRIP_DUPLICATE')
+        right.enabled = bool(names)
+        right.operator(RS_OT_chat_render.bl_idname, text="Render (%d)" % len(names) if len(names) > 1 else "Render",
+                       icon='RENDER_STILL' if rq.mode == 'STILL' else 'RENDER_ANIMATION')
 
 
 classes = (RS_OT_chat_camera, RS_OT_chat_render, RS_PT_chat_render)

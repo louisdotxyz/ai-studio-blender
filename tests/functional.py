@@ -2292,5 +2292,29 @@ def setup_in_one_click():
         del core.messages[count:]
 
 
+@section
+def render_batches():
+    """Several cameras from the chat: one numbered batch folder; A / B picks for compare."""
+    core, shots, tab_queue = mod("studio.core"), mod("studio.shots"), mod("studio.tab_queue")
+    out = os.path.join(TMP, "renders_batch")
+    first = core.next_batch(out, "Batch")
+    folder = os.path.join(core.quality_dir(out, "Batch", 'HIGH'), first)
+    os.makedirs(folder)
+    one = core.batch_path(out, "Front", 'HIGH', first, "Batch")
+    open(one, "w").close()
+    two = core.batch_path(out, "Side", 'HIGH', first, "Batch")
+    check("batch folders numbered, images in it numbered", first == "Batch_01"
+          and core.next_batch(out, "Batch") == "Batch_02" and os.path.basename(one).startswith("01_")
+          and os.path.basename(two).startswith("02_") and os.path.dirname(two) == folder, (first, one, two))
+    a, b = os.path.join(TMP, "cmp_a.png"), os.path.join(TMP, "cmp_b.png")
+    for path in (a, b):
+        open(path, "w").close()
+    tab_queue._ab.update(A=a, B=b)
+    try:
+        check("compare takes A and B", shots.compare_pair(bpy.context.scene) == [a, b])
+    finally:
+        tab_queue._ab.update(A="", B="")
+
+
 ok = all(results)
 print("FUNCTIONAL_OK" if ok else "FUNCTIONAL_FAIL", "%d/%d" % (sum(results), len(results)))

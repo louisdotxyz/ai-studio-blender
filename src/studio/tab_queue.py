@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The Queue tab: adding cameras, the list, the preview of the renders, output settings."""
+"""The Render tab: output settings, the progress of what renders (started in the chat), the preview,
+all renders (batches grouped) and comparing two of them (A / B)."""
 
 import os
 import time
@@ -11,7 +12,7 @@ from bpy.types import Menu, Operator, Panel
 from . import core, runner, shots
 from .ui_common import (QUEUE_TAB_ORDER, SCALE_PRESETS, _SidebarPanel, _item_progress_text, _look_through,
                         _queue_progress_text, _unpin, _user_resolution, active_camera, ensure_uids,
-                        format_label, studio_tab)
+                        studio_tab)
 from .runner import RUN
 
 
@@ -63,6 +64,7 @@ class RS_OT_add(Operator):
                ('LOW', "Low Quality", "")),
         default='DEFAULT', options={'SKIP_SAVE'})
     camera: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})    # this camera instead of the active one
+    batch: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})     # "Batch_03": into that folder, numbered
 
     def execute(self, context):
         rq = context.scene.render_studio
@@ -81,6 +83,7 @@ class RS_OT_add(Operator):
         rq.next_uid += 1
         item.quality = rq.quality if self.quality == 'DEFAULT' else self.quality
         item.mode = rq.mode
+        item.batch = self.batch
         cam.render_studio_camera.queue_count += 1
         item.number = cam.render_studio_camera.queue_count
         item.has_snapshot = True
@@ -290,6 +293,117 @@ class RS_OT_show_render(Operator):
         return {'FINISHED'}
 
 
+_ab = {"A": "", "B": ""}       # the two renders to compare (paths); "" = the shown one and the one before it
+_overview = {"all": False}
+
+
+def _quality_of(path):
+    names = core.folder_names()
+    parts = os.path.normpath(path).split(os.sep)
+    return "Low" if names['LOW'] in parts else "High" if names['HIGH'] in parts else ""
+
+
+def _batch_of(path):
+    folder = os.path.basename(os.path.dirname(path))
+    return folder if folder.startswith(core.BATCH + "_") else ""
+
+
+def _title(path):
+    return runner.variant_of(path) or os.path.splitext(os.path.basename(path))[0]
+
+
+class RS_OT_render_pick(Operator):
+    bl_idname = "render_studio.render_pick"
+    bl_label = "Render"
+    bl_options = {'INTERNAL'}
+
+    path: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    slot: StringProperty(default="VIEW", options={'HIDDEN', 'SKIP_SAVE'})   # VIEW / A / B
+
+    @classmethod
+    def description(cls, _context, props):
+        if props.slot == "VIEW":
+            return "Show this render in the preview"
+        return "Compare: this render as %s (click again: not)" % props.slot
+
+    def execute(self, context):
+        if self.slot == "VIEW":
+            _view["path"] = self.path
+        else:
+            _ab[self.slot] = "" if _ab[self.slot] == self.path else self.path
+        return {'FINISHED'}
+
+
+class RS_OT_render_reveal(Operator):
+    bl_idname = "render_studio.render_reveal"
+    bl_label = "Show in Finder"
+    bl_description = "Show this render (or batch folder) in the Finder"
+    bl_options = {'INTERNAL'}
+
+    path: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    def execute(self, context):
+        if not os.path.exists(self.path):
+            self.report({'WARNING'}, "Not there any more")
+            return {'CANCELLED'}
+        import subprocess
+        try:
+            subprocess.Popen(["open", "-R", self.path] if os.path.isfile(self.path) else ["open", self.path])
+        except OSError:
+            bpy.ops.wm.path_open(filepath=self.path if os.path.isdir(self.path) else os.path.dirname(self.path))
+        return {'FINISHED'}
+
+
+class RS_OT_render_overview(Operator):
+    bl_idname = "render_studio.render_overview"
+    bl_label = "All Renders"
+    bl_description = "Show all renders or only the newest"
+    bl_options = {'INTERNAL'}
+
+    def execute(self, context):
+        _overview["all"] = not _overview["all"]
+        return {'FINISHED'}
+
+
+def _ab_button(row, path, slot):
+    sub = row.row(align=True)
+    sub.ui_units_x = 1.1
+    op = sub.operator(RS_OT_render_pick.bl_idname, text=slot, depress=_ab[slot] == path)
+    op.path, op.slot = path, slot
+
+
+def _draw_overview(layout, images, shown):
+    """All renders, newest first, a batch as one group: click = preview, [A] [B] = compare."""
+    box = layout.box()
+    head = box.row(align=True)
+    head.label(text="All Renders (%d)" % len(images), icon='RENDERLAYERS')
+    if len(images) > 8:
+        head.operator(RS_OT_render_overview.bl_idname, text="Less" if _overview["all"] else "All",
+                      emboss=False)
+    col = box.column(align=True)
+    batch_now = None
+    for path in images if _overview["all"] else images[:8]:
+        batch = _batch_of(path)
+        if batch and batch != batch_now:
+            row = col.row(align=True)
+            row.label(text=batch, icon='FILE_FOLDER', translate=False)
+            row.operator(RS_OT_render_reveal.bl_idname, text="", icon='VIEWZOOM',
+                         emboss=False).path = os.path.dirname(path)
+        batch_now = batch
+        row = col.row(align=True)
+        if batch:
+            row.separator(factor=1.5)
+        _ab_button(row, path, "A")
+        _ab_button(row, path, "B")
+        op = row.operator(RS_OT_render_pick.bl_idname, text=_title(path), emboss=path == shown,
+                          icon='RESTRICT_VIEW_OFF' if path == shown else 'NONE', translate=False)
+        op.path, op.slot = path, "VIEW"
+        tag = row.row(align=True)
+        tag.ui_units_x = 2.2
+        tag.active = False
+        tag.label(text=_quality_of(path))
+
+
 def draw_statusbar(self, context):
     """The queue in Blender's status bar (at the bottom), like Blender's own renders."""
     if not RUN.busy:
@@ -476,8 +590,36 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
             row.label(text="", icon='FILE_FOLDER')
             row.prop(p, "output_root", text="", placeholder="Next to the .blend file")
         render_size.draw(col, scene)              # 1K / 2K / 4K on the long side, the ratio comes from the camera
-        # The entry that renders now (its quick draft, then the image), or the newest render,
-        # ◀ ▶ through the queue's images, the magnifier opens it big in the render window.
+
+        # What renders now and what waits: progress only (renders are started in the chat).
+        current = RUN.current["uid"] if RUN.current else None
+        waiting = [(i, item) for i, item in enumerate(rq.items) if item.camera is not None]
+        if RUN.busy or waiting:
+            box = layout.box()
+            col_run = box.column(align=True)
+            if RUN.busy:
+                row = col_run.row(align=True)
+                row.progress(factor=RUN.list_progress, type='BAR', text=_queue_progress_text())
+                row.operator(RS_OT_cancel.bl_idname, text="", icon='X')
+            for i, item in waiting:
+                row = col_run.row(align=True)
+                rendering = item.uid == current
+                label = runner.item_label(scene, item)
+                if item.batch:
+                    label = "%s · %s" % (item.batch, label)
+                row.label(text=label, icon='RENDER_STILL' if rendering else 'TIME', translate=False)
+                if rendering:
+                    row.progress(factor=RUN.render_progress, type='BAR', text=_item_progress_text())
+                else:
+                    row.operator(RS_OT_remove.bl_idname, text="", icon='X', emboss=False).index = i
+            if not RUN.busy:   # left over after a cancel
+                col_run.operator(RS_OT_render_queue.bl_idname, text="Render the Rest (%d)" % len(waiting),
+                                 icon='PLAY')
+            if RUN.message and not RUN.busy:
+                col_run.label(text=RUN.message, icon='INFO')
+
+        # The preview: the entry that renders now (its quick draft, then the image) or the render you
+        # picked; ◀ ▶ through all renders, the magnifier opens it big, [A] [B] and Compare next to it.
         images = runner.queue_images(scene)
         path = _selected_image(images)
         live = _live() if not _view["path"] else None
@@ -487,97 +629,43 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
             _schedule_preview(path)   # data can't change inside draw
             image = None              # still the older image until it is loaded
         entries = ([""] if _live() else []) + images
-        if entries:
-            index = 0 if live is not None or path not in entries else entries.index(path)
-            pic = col.box()
-            head = pic.row(align=True)
-            older = head.row(align=True)
-            older.enabled = index < len(entries) - 1
-            older.operator(RS_OT_preview_step.bl_idname, text="", icon='TRIA_LEFT').direction = 1
-            count = head.row(align=True)
-            count.alignment = 'CENTER'
-            count.label(text="Rendering" if live is not None else
-                        "%d / %d" % (index + 1, len(entries)) if index else "Newest")
-            newer = head.row(align=True)
-            newer.enabled = index > 0
-            newer.operator(RS_OT_preview_step.bl_idname, text="", icon='TRIA_RIGHT').direction = -1
-            head.operator(RS_OT_show_render.bl_idname, text="", icon='ZOOM_IN')
-            shots.draw_results(head)
-            # As wide as the panel (the picture is square, the image fits inside it).
-            scale = max(6.0, min(24.0, context.region.width / (20 * (context.preferences.system.ui_scale or 1.0)) - 2.5))
-            if image is not None and path:
-                pic.template_icon(icon_value=layout.icon(image), scale=scale)
-            else:   # the same height until the draft is there
-                wait = pic.row()
-                wait.alignment = 'CENTER'
-                wait.scale_y = scale
-                wait.active = False
-                wait.label(text="", icon='TIME' if live is not None else 'NONE')
-            if RUN.current:   # whatever renders: also while you browse, animations, previews for Claude
-                pic.progress(factor=RUN.render_progress, type='BAR', text=_item_progress_text())
-            if live is not None:
-                pic.label(text=live["camera"], icon='RENDER_STILL', translate=False)
-            else:
-                variant = runner.variant_of(path)
-                pic.label(text=variant or os.path.basename(path), icon='RENDER_RESULT', translate=False)
-                if variant:
-                    sub = pic.row()
-                    sub.active = False
-                    sub.label(text=os.path.basename(path), translate=False)
-        # [▶ Render <camera>] [clear the queue]; quality, still/film and size are in the head
-        if rq.mode == 'ANIM':
-            row = col.row(align=True)
-            row.prop(scene, "frame_start", text="Start")
-            row.prop(scene, "frame_end", text="End")
-        cam = active_camera(scene)
-        row = col.row(align=True)
-        row.scale_y = 1.3
-        row.operator(RS_OT_add.bl_idname, icon='RENDER_STILL' if rq.mode == 'STILL' else 'RENDER_ANIMATION',
-                     text="Render %s" % cam.name if cam is not None and cam.type == 'CAMERA' else "Render")
-        row.operator(RS_OT_clear.bl_idname, text="", icon='TRASH')
-
-        box = layout.box()
-        col = box.column(align=True)
-        col.label(text="Queue List:", icon='ALIGN_JUSTIFY')
-        if not len(rq.items):
-            col.label(text="(empty)", icon='INFO')
-        current = RUN.current["uid"] if RUN.current else None
-        last = len(rq.items) - 1
-        for i, item in enumerate(rq.items):
-            row = col.row(align=True)
-            if item.camera is not None:
-                rendering = item.uid == current
-                row.operator(RS_OT_view_camera.bl_idname, text=runner.item_label(scene, item),
-                             icon='RENDER_STILL' if rendering else 'CAMERA_DATA',
-                             emboss=False).index = i
-                parts = [item.variant, {"LOW": "Low", "HIGH": "High"}.get(item.quality, "")]
-                if item.mode == 'ANIM':
-                    parts.append("Anim")
-                if item.has_snapshot:
-                    parts.append(format_label(item.resolution_x, item.resolution_y))
-                sub = row.row()
-                if rendering:   # a bar instead of the settings while it renders
-                    sub.progress(factor=RUN.render_progress, type='BAR', text=_item_progress_text())
-                else:
-                    sub.alignment = 'RIGHT'
-                    sub.label(text=" · ".join(p for p in parts if p))
-            else:
-                row.label(text="Camera deleted", icon='ERROR')
-            sub = row.row(align=True)
-            up = sub.row(align=True)
-            up.enabled = i > 0
-            op = up.operator(RS_OT_move.bl_idname, text="", icon='TRIA_UP', emboss=False)
-            op.index, op.direction = i, -1
-            down = sub.row(align=True)
-            down.enabled = i < last
-            op = down.operator(RS_OT_move.bl_idname, text="", icon='TRIA_DOWN', emboss=False)
-            op.index, op.direction = i, 1
-            sub.operator(RS_OT_remove.bl_idname, text="", icon='X', emboss=False).index = i
-
-        if not RUN.busy:   # while rendering, progress and cancel are in the tab bar (RS_PT_tabs)
-            count = sum(1 for i in rq.items if i.camera)
-            if count:
-                # Left over after a cancel, or with "Render Right Away" off.
-                layout.operator(RS_OT_render_queue.bl_idname, text="Render (%d)" % count, icon='RENDER_STILL')
-            if RUN.message:
-                layout.label(text=RUN.message, icon='INFO')
+        if not entries:
+            sub = layout.row()
+            sub.active = False
+            sub.label(text="No renders yet: start them in the chat", icon='INFO')
+            return
+        index = 0 if live is not None or path not in entries else entries.index(path)
+        pic = layout.box()
+        head = pic.row(align=True)
+        older = head.row(align=True)
+        older.enabled = index < len(entries) - 1
+        older.operator(RS_OT_preview_step.bl_idname, text="", icon='TRIA_LEFT').direction = 1
+        count = head.row(align=True)
+        count.alignment = 'CENTER'
+        count.label(text="Rendering" if live is not None else
+                    "%d / %d" % (index + 1, len(entries)) if index else "Newest")
+        newer = head.row(align=True)
+        newer.enabled = index > 0
+        newer.operator(RS_OT_preview_step.bl_idname, text="", icon='TRIA_RIGHT').direction = -1
+        head.operator(RS_OT_show_render.bl_idname, text="", icon='ZOOM_IN')
+        scale = max(6.0, min(24.0, context.region.width / (20 * (context.preferences.system.ui_scale or 1.0)) - 2.5))
+        if image is not None and path:
+            pic.template_icon(icon_value=layout.icon(image), scale=scale)
+        else:   # the same height until the draft is there
+            wait = pic.row()
+            wait.alignment = 'CENTER'
+            wait.scale_y = scale
+            wait.active = False
+            wait.label(text="", icon='TIME' if live is not None else 'NONE')
+        if RUN.current:   # whatever renders: also while you browse, animations, previews for Claude
+            pic.progress(factor=RUN.render_progress, type='BAR', text=_item_progress_text())
+        row = pic.row(align=True)
+        if live is not None:
+            row.label(text=live["camera"], icon='RENDER_STILL', translate=False)
+        elif path:
+            _ab_button(row, path, "A")
+            _ab_button(row, path, "B")
+            row.label(text=_title(path), translate=False)
+            row.operator(RS_OT_render_reveal.bl_idname, text="", icon='FILE_FOLDER', emboss=False).path = path
+        shots.draw_results(pic)
+        _draw_overview(layout, images, path)
