@@ -489,10 +489,11 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         wm = context.window_manager
         # Render without Claude: a big button above the skills (all or some cameras, quality, size)
         if hasattr(bpy.types, "RS_PT_chat_render"):
-            render = col.row(align=True)
-            render.scale_y = 1.4
-            render.popover("RS_PT_chat_render", text=tr("Render"), icon='RENDER_STILL')
-            col.separator(factor=0.6)
+            import sys
+            chat_render = sys.modules.get(__package__ + ".studio.chat_render")
+            if chat_render is not None:
+                chat_render.draw_inline(col, context)
+                col.separator(factor=0.6)
         # Skills, always visible: one row of icons (name and text in the tooltip),
         # "+" creates a new one; checked skills are highlighted.
         items = [s for s in skills.list_skills(core.workdir()) if s["in_chat"]]
