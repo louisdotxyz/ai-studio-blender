@@ -206,6 +206,7 @@ wm.render_studio_krea_hand = False
 wm.render_studio_krea_zoom = 'KEEP'
 run(bpy.types.RS_PT_finish_settings, ctx)
 run(bpy.types.RS_MT_look_presets, ctx)
+run(bpy.types.RS_PT_chat_render, ctx)
 run(bpy.types.RS_MT_edit_presets, ctx)
 bpy.context.scene.render_studio.edit_exposure = 0.5
 run(bpy.types.RS_PT_finish, ctx)

@@ -565,6 +565,8 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         _prop_with_placeholder(row, context.window_manager, "claude_prompt", placeholder)
         row.operator("claude.send", text="", icon='EVENT_RETURN')
         row.operator("claude.queue_chat", text="", icon='NEXT_KEYFRAME')
+        if hasattr(bpy.types, "RS_PT_chat_render"):   # start renders without Claude: all or some cameras
+            row.popover("RS_PT_chat_render", text="", icon='RENDER_STILL')
         if busy:
             row.operator("claude.stop", text="", icon='SNAP_FACE')
 

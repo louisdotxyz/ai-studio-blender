@@ -262,7 +262,7 @@ def local_models_module():
 def skills_and_buttons():
     core, skills, ui = mod("core"), mod("skills"), mod("ui")
     listed = {s["name"]: s for s in skills.list_skills(core.workdir())}
-    check("shipped skills installed", {"sort", "camera", "render", "material"} <= set(listed), sorted(listed))
+    check("shipped skills installed", {"sort", "camera", "material"} <= set(listed) and "render" not in listed, sorted(listed))
     check("studio tab binding", listed.get("camera", {}).get("studio_tab") == "RENDER")
     ui.sync_skill_operators()
     bpy.ops.claude.skill_sort()

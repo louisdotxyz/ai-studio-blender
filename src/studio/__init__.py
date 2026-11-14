@@ -17,7 +17,7 @@ from bpy.types import Operator, Panel
 
 from . import (addons, background, cameras, claude_link, core, env_ui, environment, foreign, hdri,
                light_paint, light_ui, lights, presets_io, render_size, runner, shots, sync, tab_finish, tab_queue,
-               variants_ab)
+               variants_ab, chat_render)
 # Loaded for their side effects: the chat finds claude_tools (Claude's studio_* tools) in
 # sys.modules; api and variants are the helpers in execute_python.
 from . import api, baselib, claude_tools, light_items, looks, variants  # noqa: F401
@@ -287,6 +287,7 @@ def register():
     light_ui.register()
     tab_finish.register()
     variants_ab.register()
+    chat_render.register()
     render_size.register()
     presets_io.register()
     shots.register()
@@ -312,6 +313,7 @@ def unregister():
     shots.unregister()
     presets_io.unregister()
     render_size.unregister()
+    chat_render.unregister()
     variants_ab.unregister()
     tab_finish.unregister()
     light_ui.unregister()

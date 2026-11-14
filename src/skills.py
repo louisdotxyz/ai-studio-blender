@@ -48,6 +48,10 @@ def skills_dir(workdir):
 _checked = set()
 
 
+# Skills that are no longer shipped: removed from the user's folder while unchanged (sha1 of shipped versions)
+RETIRED = {"render": {"5f74fb865a31eaa85050bf2874ed4cf4d8d40d11"}}
+
+
 def install_defaults(folder):
     """Write the shipped skills that were never installed into `folder` (once per session check)."""
     if folder in _checked:
@@ -73,6 +77,13 @@ def install_defaults(folder):
         target = os.path.join(folder, name + ".md")
         if name in names and _sha1(target) in old:
             _copy_default(name, target)
+    for name, old in RETIRED.items():
+        target = os.path.join(folder, name + ".md")
+        if _sha1(target) in old:
+            try:
+                os.remove(target)
+            except OSError:
+                pass
     try:
         with open(record, "w", encoding="utf-8") as f:
             json.dump(sorted(installed), f)

@@ -62,12 +62,13 @@ class RS_OT_add(Operator):
                ('HIGH', "High Quality", ""),
                ('LOW', "Low Quality", "")),
         default='DEFAULT', options={'SKIP_SAVE'})
+    camera: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})    # this camera instead of the active one
 
     def execute(self, context):
         rq = context.scene.render_studio
         # The camera bar's camera, not the viewport selection: cameras are usually
         # hidden, and hidden objects cannot be selected.
-        cam = active_camera(context.scene)
+        cam = context.scene.objects.get(self.camera) if self.camera else active_camera(context.scene)
         if cam is None or cam.type != 'CAMERA':
             self.report({'WARNING'}, "No active camera, pick one in the Render tab")
             return {'CANCELLED'}
