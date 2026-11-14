@@ -13,8 +13,8 @@ photo 1:1. Use M (photo match helper, ready in execute_python).
    cam.data.lens = …; M.set_horizon(cam, share_from_bottom, height=camera_height)   # straight verticals
    Move the camera in x/y so the product stands where it makes sense in the photo (ask_user if unclear:
    middle / left / right / closer). Never move the product, the camera moves.
-3. Light to match the photo: environment with the HDRI skill (existing ENV or a room built from the photo,
-   ENV skill), a sun only for hard shadows. The shadow-catcher floor stays visible (is_shadow_catcher).
+3. Light to match the photo: environment with the WORLD skill (an existing room or one built from the photo,
+   part C), a sun only for hard shadows. The shadow-catcher floor stays visible (is_shadow_catcher).
 4. Check: out, mean = M.check(cam)  -> the cut-out render laid over the photo in attachments/check.png;
    look at it with Read. Compare floor contact, vanishing lines, size, brightness and color; adjust lens /
    height / horizon / world_strength.
@@ -22,4 +22,4 @@ photo 1:1. Use M (photo match helper, ready in execute_python).
    previous scene camera.
 Extend (wider view or another angle): build proxy geometry after the photo (floor, back wall, side walls as boxes
 in Set, marked obj["as_env"] = True, measured from the match camera), then M.project(cam, [objects]) projects the photo onto them.
-Fill outside the photo with materials as in the ENV skill.
+Fill outside the photo with materials as in the WORLD skill (part C).

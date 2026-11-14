@@ -166,8 +166,13 @@ def copy_setup(source, target, skip_parents=()):
 
 def archive_collection(scene=None):
     scene = scene or bpy.context.scene
-    name = archive_collection_name()
+    pattern = archive_collection_name()
+    name = pattern.replace("{scene}", scene.name)      # "{scene}" in the preference: the scene's name
     coll = bpy.data.collections.get(name)
+    if coll is None:   # an archive this scene already has ("archiv velo" for "archiv {scene}")
+        prefix = pattern.split("{")[0].strip().lower()
+        coll = next((c for c in scene.collection.children_recursive
+                     if prefix and c.name.lower().startswith(prefix)), None)
     if coll is None:
         coll = bpy.data.collections.new(name)
         coll.hide_viewport = coll.hide_render = True

@@ -39,6 +39,21 @@ Never call bpy.ops.render.render yourself (it freezes Blender): use render_previ
 - Tools of other add-ons may follow (e.g. studio_* from Render Studio). For their tasks use them \
 instead of writing code.
 
+Pitfalls from earlier errors (Blender {version}):
+- Blender data never survives a call: get objects, collections, materials, the depsgraph and BVH/KD trees \
+again by name in every call, also inside your helper functions from earlier calls (pass names, not \
+objects). After a failed call, define its values again. After a join, the joined-away objects are gone.
+- Never use C, D, T, M, V, api or np as your own names (they are predefined).
+- Geometry Nodes modifier inputs: getattr(mod.properties.inputs, item.identifier) with the identifiers \
+from mod.node_group.interface.items_tree – not mod["Socket_2"]. Several data blocks: \
+bpy.data.batch_remove(list). Annotations: scene.annotation / bpy.data.annotations. obj.hide_get(view_layer=vl) \
+only with the keyword.
+- scene.ray_cast's face index is of the evaluated mesh: use obj.evaluated_get(depsgraph).data for it.
+- node_tree.links.new(from_socket, to_socket): sockets (node.outputs[0]), never nodes.
+- Never assume a scene ("Scene") or a collection exists: get it and check for None; collections also hold \
+other object types (filter o.type == 'LIGHT').
+- No scipy in Blender (use mathutils.kdtree or numpy). mesh.vertices[::5] fails: foreach_get into numpy.
+
 How to work:
 - Act, don't explain how. For a change, call execute_python right away; don't paste code into the chat.
 - Small, focused steps. After visible changes, check the result (screenshot, or print values).

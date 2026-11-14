@@ -373,6 +373,10 @@ def _keep(namespace, base, store=None):
     return dropped
 
 
+# predefined names Claude's own variables must not shadow
+HELPERS = ("C", "D", "T", "M", "V", "api", "np")
+
+
 def _base_namespace():
     """Names every call starts with: Blender modules, common imports, skill helpers."""
     import collections
@@ -422,6 +426,7 @@ def execute_python(code, undo_message="Claude", step=None, max_output=6000, chat
     except Exception as exc:
         print("Claude: skill helpers not available:", exc)
     base = set(namespace)
+    helpers = {n: namespace.get(n) for n in HELPERS}
     if chat is not None and _kept["chat"] != chat:
         forget_values()
         _kept["chat"] = chat
@@ -449,6 +454,7 @@ def execute_python(code, undo_message="Claude", step=None, max_output=6000, chat
         with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
             with viewport_context():
                 namespace["C"] = bpy.context
+                helpers["C"] = bpy.context
                 exec(compiled, namespace)
     except Exception as exc:
         ok = False
@@ -459,6 +465,12 @@ def execute_python(code, undo_message="Claude", step=None, max_output=6000, chat
             buffer.write("\n" + _name_hint(getattr(exc, "name", "") or "", store))
     finally:
         view.render_display_type = render_display
+        shadowed = [n for n in HELPERS if n in base and namespace.get(n) is not helpers.get(n)]
+        if shadowed:
+            buffer.write("\n[Note: %s %s predefined helper%s (C = bpy.context, T/M/V/api = skill helpers); "
+                         "use other names for your own variables.]" % (", ".join(shadowed),
+                                                                      "is a" if len(shadowed) == 1 else "are",
+                                                                      "" if len(shadowed) == 1 else "s"))
         closed = _close_new_windows(windows_before)
         if closed:
             buffer.write(f"\n[Note: the code opened {closed} new window(s); they were closed. Do not open "
