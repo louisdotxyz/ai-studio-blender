@@ -590,6 +590,11 @@ def _ray_under_mouse(context, event):
     for area in context.window.screen.areas:
         if area.type != 'VIEW_3D':
             continue
+        # The sidebar, toolbar and headers lie over the viewport (region overlap): a click there
+        # is a click on a button, not on an object behind it.
+        if any(r.type != 'WINDOW' and r.width > 1 and r.height > 1 and
+               r.x <= x < r.x + r.width and r.y <= y < r.y + r.height for r in area.regions):
+            return None
         for region in area.regions:
             if region.type != 'WINDOW':
                 continue

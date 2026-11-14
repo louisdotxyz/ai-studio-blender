@@ -167,10 +167,9 @@ class RS_MT_formats(Menu):
     def draw(self, context):
         layout = self.layout
         render = context.scene.render
-        from .props import aspect_ratio
         for _short, long, w, h in FORMAT_PRESETS:
-            op = layout.operator(RS_OT_set_resolution.bl_idname, text="%s (%d : %d)" % ((long,) + aspect_ratio(w, h)),
-                                 icon='CHECKMARK' if _same_ratio(render, w, h) else 'BLANK1')
+            op = layout.operator(RS_OT_set_resolution.bl_idname, text="%s (%d × %d)" % (long, w, h),
+                                 icon='CHECKMARK' if (render.resolution_x, render.resolution_y) == (w, h) else 'BLANK1')
             op.width, op.height = w, h
 
 
@@ -226,8 +225,6 @@ class RS_MT_camera_presets(Menu):
             if not ortho:
                 layout.operator(RS_OT_camera_preset.bl_idname, text=name, icon='VIEW_PERSPECTIVE').view = key
         layout.operator(RS_OT_camera_from_view.bl_idname, text="From the Viewport", icon='VIEW_CAMERA')
-        layout.separator()
-        layout.operator(RS_OT_duplicate_camera.bl_idname, text="Copy of This Camera", icon='DUPLICATE')
 
 
 class RS_OT_toggle_ortho(Operator):
@@ -292,8 +289,9 @@ class RS_OT_set_resolution(Operator):
     def execute(self, context):
         render = context.scene.render
         render.resolution_x, render.resolution_y = self.width, self.height
+        render.resolution_percentage = 100
         from . import render_size
-        render_size.follow(context.scene)       # the format gives the ratio, the Render tab the size
+        context.scene.pop(render_size.KEY, None)   # a format with its own size: 1K/2K/4K is off until chosen again
         sync.schedule_fit()
         return {'FINISHED'}
 
@@ -329,10 +327,11 @@ class RS_PT_camera(_SidebarPanel, Panel):
         render = scene.render
         cam = active_camera(scene)
 
-        # The same head as every tab: [presets ▾] [A] [B] [−] [+ variant] [settings]
+        # The same head as every tab: [presets ▾] [A] [B] [−] [+ variant] [copy of this camera] [settings]
         from . import variants_ab
         head, _props = tab_head(layout, RS_MT_camera_presets.bl_idname, "Preset")
         variants_ab.draw(head, scene, 'CAMERA')
+        head.operator(RS_OT_duplicate_camera.bl_idname, text="", icon='DUPLICATE')
         head.popover(RS_PT_frame.__name__, text="", icon='PREFERENCES')
 
         # Camera: name, back, the cameras of the scene, orbit object and lock
@@ -383,10 +382,13 @@ class RS_PT_camera(_SidebarPanel, Panel):
                               depress=abs(data.lens - mm) < 0.01).lens = mm
         draw_dof(box, cam, space)
         # Format in one row: [3 : 4 ▾] [IG Portrait ▾] [📌 1500 × 2000] (pin: this camera keeps its format)
-        # only the aspect ratio here; the size (1K/2K/4K) is chosen in the Render tab
+        own = cam.render_studio_camera
+        pct = render.resolution_percentage / 100
         row = box.row(align=True)
         row.menu(RS_MT_aspect.bl_idname, text="%d : %d" % (rq.aspect_x, rq.aspect_y), icon='FULLSCREEN_ENTER')
         row.menu(RS_MT_formats.bl_idname, text=format_name(render))
+        row.prop(own, "use_resolution", icon='PINNED' if own.use_resolution else 'UNPINNED', translate=False,
+                 text="%d × %d" % (round(render.resolution_x * pct), round(render.resolution_y * pct)))
 
         # Orbit around the picked object (or the 3D cursor)
         box, _head, is_open = section(layout, "orbit", "Orbit", 'ORIENTATION_GIMBAL')
