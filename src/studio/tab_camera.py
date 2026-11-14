@@ -315,23 +315,19 @@ class RS_PT_camera(_SidebarPanel, Panel):
             for mm in LENS_PRESETS:
                 row.operator(RS_OT_set_lens.bl_idname, text=str(mm),
                              depress=abs(data.lens - mm) < 0.01).lens = mm
-        draw_dof(col, cam, space)
-        # Format: [3] : [4] [pin = this camera keeps it] and the size in pixels (presets: the menu on top)
+        draw_dof(box, cam, space)
+        # Format: [3] : [4] [1500 × 2000, pressed = this camera keeps its format] (presets: the menu on top)
         own = cam.render_studio_camera
         pct = render.resolution_percentage / 100
-        row = col.row(align=True)
+        row = box.row(align=True)
         row.prop(rq, "aspect_x", text="")
         sub = row.row(align=True)
         sub.ui_units_x = 0.7
         sub.alignment = 'CENTER'
         sub.label(text=":")
         row.prop(rq, "aspect_y", text="")
-        sub = row.row(align=True)
-        sub.ui_units_x = 5.5
-        sub.active = False
-        sub.alignment = 'CENTER'
-        sub.label(text="%d × %d" % (round(render.resolution_x * pct), round(render.resolution_y * pct)))
-        row.prop(own, "use_resolution", text="", icon='PINNED' if own.use_resolution else 'UNPINNED')
+        row.prop(own, "use_resolution", icon='PINNED' if own.use_resolution else 'UNPINNED', translate=False,
+                 text="%d × %d" % (round(render.resolution_x * pct), round(render.resolution_y * pct)))
 
         # Orbit around the picked object (or the 3D cursor)
         box, _head, is_open = section(layout, "orbit", "Orbit", 'ORIENTATION_GIMBAL')
