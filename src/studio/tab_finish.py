@@ -501,7 +501,7 @@ def _draw_image(layout, context):
     if not path:
         sub = box.row()
         sub.active = False
-        sub.label(text="Render an image in the Render tab first", icon='INFO')
+        sub.label(text="Render an image first", icon='INFO')
         return ""
     # with adjustments: a small adjusted copy (made in a timer), else the render itself
     shown = image_edit.preview_file(scene, path)
@@ -548,19 +548,17 @@ def _product_line(layout, context, path):
     row = layout.row(align=True)
     sub = row.row(align=True)
     sub.active = False
-    text = "Product: everything visible"
+    text = "All visible"
     if krea_scene.is_marked(scene):
         names = [o.name for o in krea_scene.product_objects(scene)]
-        text = "Product: " + ", ".join(names[:2]) + (" +%d" % (len(names) - 2) if len(names) > 2 else "")
+        text = names[0] + (" +%d" % (len(names) - 1) if len(names) > 1 else "")
     try:
         width, height = krea.image_size(path) if path else (0, 0)
         info = krea_scene.product_scale(scene, krea_scene.render_camera(scene, path), width, height)
     except (OSError, ValueError):
         info = None
     if info:
-        text += " · %s cm" % " × ".join("%g" % round(v) if v >= 10 else "%g" % v for v in info["size_cm"])
-        if info.get("frame"):
-            text += " · %d %%" % (info["frame"][0] * 100)
+        text += " · %s cm" % "×".join("%g" % round(v) if v >= 10 else "%g" % v for v in info["size_cm"])
     sub.label(text=text, icon='EMPTY_ARROWS', translate=False)
     row.operator(RS_OT_krea_product.bl_idname, text="", icon='RESTRICT_SELECT_OFF')
 
@@ -576,18 +574,18 @@ def _cost_lines(layout, used, names):
         if balance is not None:
             text += " · %g left" % round(float(balance))
     else:
-        text = "%s · %s" % (names[used], krea.price_text(used))
+        text = "%s · ~%d credits" % (names[used], krea.UNITS.get(used, 150))
         balance = krea.last_balance()
         if balance is not None:
             text += " · %g left" % round(balance)
-    sub.label(text=text, icon='FUND', translate=False)
+    sub.label(text=text, translate=False)
     count, known, _unknown, credits = krea.month_summary()
     if count:
         sub = layout.row()
         sub.active = False
-        month = "This month: %d pictures" % count + (", %g credits" % round(credits) if credits else "")
+        month = "Month: %d pictures" % count + (" · %g credits" % round(credits) if credits else "")
         if known:
-            month += ", about $%.2f API" % known
+            month += " · $%.2f" % known
         sub.label(text=month, translate=False)
 
 

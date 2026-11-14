@@ -1113,7 +1113,8 @@ def finish_image_adjust():
     target = edit.save(scene, render)
     check("adjust: saved next to the render, full size, render untouched",
           target == os.path.join(TMP, "Adjust_Cam_edit_01.png") and tuple(mod("studio.krea").image_size(target)) == (40, 30)
-          and edit.edit_path(render).endswith("_edit_02.png"))
+          and edit.edit_path(render).endswith("_edit_02.png"),
+          (target, mod("studio.krea").image_size(target), edit.edit_path(render)))
     saved = bpy.data.images.load(target)
     value = saved.pixels[0]
     bpy.data.images.remove(saved)

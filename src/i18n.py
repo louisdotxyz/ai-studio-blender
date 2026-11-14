@@ -1196,6 +1196,8 @@ DE = {
     'Reset Adjustments': 'Anpassungen zurücksetzen',
     'No saved adjustments yet (+)': 'Noch keine gespeicherten Anpassungen (+)',
     'Save Look…': 'Look speichern…',
+    'Render an image first': 'Zuerst ein Bild rendern',
+    'All visible': 'Alles Sichtbare',
     'Brighter or darker, in stops': 'Heller oder dunkler, in Blendenstufen',
     'Difference between light and dark parts': 'Unterschied zwischen hellen und dunklen Stellen',
     'Only the bright parts: darker (−) or brighter (+)': 'Nur die hellen Stellen: dunkler (−) oder heller (+)',

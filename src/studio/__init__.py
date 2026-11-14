@@ -92,9 +92,10 @@ class RS_PT_tabs(Panel):
         _unpin(self)
         # five tabs as five equal icons: always the same size, whatever is open (names in the tooltips)
         wm = context.window_manager
-        row = self.layout.row(align=True)
-        row.scale_y = 1.3
-        row.prop(wm, "render_studio_tab", expand=True, icon_only=True)
+        grid = self.layout.grid_flow(row_major=True, columns=len(STUDIO_TABS), even_columns=True, align=True)
+        grid.scale_y = 1.3
+        for key, _name, _text, icon, _n in STUDIO_TABS:
+            grid.prop_enum(wm, "render_studio_tab", key, text="", icon=icon)
         if RUN.busy:   # rendering: compact, in every sub-tab – ring for the queue, ✕ cancels
             row = self.layout.row(align=True)
             row.progress(factor=RUN.list_progress, type='BAR', text=_queue_progress_text())
