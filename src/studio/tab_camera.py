@@ -381,6 +381,10 @@ class RS_PT_camera(_SidebarPanel, Panel):
         row.prop(own, "use_resolution", icon='PINNED' if own.use_resolution else 'UNPINNED', translate=False,
                  text="%d × %d" % (round(render.resolution_x * pct), round(render.resolution_y * pct)))
 
+        # The look of the live camera: exposure, white balance, glow … (compositor), saved looks
+        from . import tab_finish
+        tab_finish.draw_look(layout, context)
+
         # Orbit around the picked object (or the 3D cursor)
         box, _head, is_open = section(layout, "orbit", "Orbit", 'ORIENTATION_GIMBAL')
         if is_open:

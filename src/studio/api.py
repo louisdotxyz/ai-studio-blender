@@ -258,7 +258,8 @@ def krea_prepare(prompt, upload_url, model=None, environment=None, zoom=None, vi
     """Krea with the user's plan (Krea connector): builds the full prompt (your English prompt + the product's
     true scale + keep the product), renders the mask that keeps the product untouched (Precise, protect) and
     uploads render, mask and environment picture to upload_url (from Krea's get_upload_url). None = the Finish
-    tab's choice. model: PRECISE, NANO or AUTO; zoom KEEP/SOME/FAR; view KEEP/EYE/ABOVE/LOW.
+    tab's choice. model: PRECISE, NANO or AUTO; zoom CLOSER/KEEP/WIDER; view (camera height)
+    LOWER/KEEP/HIGHER. The product is what the user marked (Finish tab), else everything visible.
     Returns {"model": Krea model id, "input": pass as generate_image's input unchanged, "credits_about", ...}."""
     from . import tab_finish
     return tab_finish.prepare(bpy.context.scene, prompt, upload_url, model, environment, zoom, view, protect)

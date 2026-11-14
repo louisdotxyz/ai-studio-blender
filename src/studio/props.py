@@ -353,6 +353,11 @@ def _look_changed(settings, context):
     look.on_change(settings, context)
 
 
+def _edit_changed(self, context):
+    from . import image_edit
+    image_edit.changed()
+
+
 class RS_Settings(PropertyGroup):
     items: CollectionProperty(type=RS_Item)
     shots: CollectionProperty(type=RS_Shot)
@@ -425,6 +430,26 @@ class RS_Settings(PropertyGroup):
     look_saturation: FloatProperty(name="Saturation", description="How strong the colors are: 0 = gray, 1 = as "
                                    "rendered (compositor)", default=1.0, min=0.0, max=2.0, soft_max=1.5,
                                    options=set(), update=_look_changed)
+    # Finish tab: adjustments of the finished render (image_edit), -100 … 100, exposure in stops
+    edit_exposure: FloatProperty(name="Exposure", description="Brighter or darker, in stops", default=0.0,
+                                 min=-4.0, max=4.0, soft_min=-2.0, soft_max=2.0, options=set(), update=_edit_changed)
+    edit_contrast: FloatProperty(name="Contrast", description="Difference between light and dark parts",
+                                 default=0.0, min=-100.0, max=100.0, precision=0, options=set(), update=_edit_changed)
+    edit_highlights: FloatProperty(name="Highlights", description="Only the bright parts: darker (−) or brighter (+)",
+                                   default=0.0, min=-100.0, max=100.0, precision=0, options=set(),
+                                   update=_edit_changed)
+    edit_shadows: FloatProperty(name="Shadows", description="Only the dark parts: brighter (+) or darker (−)",
+                                default=0.0, min=-100.0, max=100.0, precision=0, options=set(), update=_edit_changed)
+    edit_temperature: FloatProperty(name="Temperature", description="Cooler, bluer (−) or warmer, more orange (+)",
+                                    default=0.0, min=-100.0, max=100.0, precision=0, options=set(),
+                                    update=_edit_changed)
+    edit_tint: FloatProperty(name="Tint", description="Greener (−) or more magenta (+)", default=0.0,
+                             min=-100.0, max=100.0, precision=0, options=set(), update=_edit_changed)
+    edit_vibrance: FloatProperty(name="Vibrance", description="Stronger colors, mostly where they are weak",
+                                 default=0.0, min=-100.0, max=100.0, precision=0, options=set(), update=_edit_changed)
+    edit_saturation: FloatProperty(name="Saturation", description="All colors stronger (+) or grayer (−)",
+                                   default=0.0, min=-100.0, max=100.0, precision=0, options=set(),
+                                   update=_edit_changed)
     background_mode: EnumProperty(
         name="Background",
         items=[

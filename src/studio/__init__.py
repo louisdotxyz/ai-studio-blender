@@ -90,17 +90,11 @@ class RS_PT_tabs(Panel):
 
     def draw(self, context):
         _unpin(self)
-        # five tabs: the open one with its name, the others as icons (all names fit only in a wide sidebar)
+        # five tabs as five equal icons: always the same size, whatever is open (names in the tooltips)
         wm = context.window_manager
         row = self.layout.row(align=True)
         row.scale_y = 1.3
-        wide = context.region is not None and context.region.width > 520 * context.preferences.system.ui_scale
-        for key, name, _text, icon, _n in STUDIO_TABS:
-            show = wide or key == wm.render_studio_tab
-            sub = row.row(align=True)
-            if not show:
-                sub.ui_units_x = 1.6
-            sub.prop_enum(wm, "render_studio_tab", key, text=name if show else "", icon=icon)
+        row.prop(wm, "render_studio_tab", expand=True, icon_only=True)
         if RUN.busy:   # rendering: compact, in every sub-tab – ring for the queue, ✕ cancels
             row = self.layout.row(align=True)
             row.progress(factor=RUN.list_progress, type='BAR', text=_queue_progress_text())

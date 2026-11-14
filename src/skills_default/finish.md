@@ -21,7 +21,11 @@ The render (and an environment picture) are attached: look at them first.
    protect=False when a hand or a person touches the product (fingers go over it); say so then.
 3. get_upload_url, then in execute_python:
    p = api.krea_prepare(prompt, upload_url, model=…, environment=None, zoom=None, view=None, protect=…)
-   (None = the Finish tab's choice). It returns {"model", "input", ...}: pass both on unchanged.
+   (None = the Finish tab's choice; zoom CLOSER/KEEP/WIDER, view = camera height LOWER/KEEP/HIGHER, from
+   the wish: "näher" CLOSER, "weiter weg" WIDER, "von oben" HIGHER). It returns {"model", "input", ...}:
+   pass both on unchanged. The product's size is measured from what the user marked as the product
+   (Finish tab); the message's "Product:" line shows it. If it looks wrong (much bigger than the product),
+   ask the user to select the product and click "Product = Selection" first.
 4. Price first: generate_image(model=p["model"], input=p["input"], preflight=true). Then
    api.krea_quote(credits, balance) so the Finish tab shows it, and say it in the chat. More than
    400 credits, or fewer credits left than it costs: ask the user before going on.

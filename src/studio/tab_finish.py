@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The Finish tab: the image after rendering. The look (exposure, white balance, saturation, glow,
-contrast, vignette) with a live preview in the viewport, and refining a finished render with Krea."""
+"""The Finish tab: the finished render. Its preview, refining it with Krea, then adjusting it like a raw
+photo (image_edit; saved as a new file next to it). The look of the live camera (exposure, glow …) is in the
+Camera tab (look.draw); its saved looks and the viewport switch are defined here."""
 
 import json
 import os
@@ -9,7 +10,7 @@ import bpy
 from bpy.props import BoolProperty, EnumProperty, StringProperty
 from bpy.types import Menu, Operator, Panel
 
-from . import krea, krea_scene, look, runner, tab_queue
+from . import image_edit, krea, krea_scene, look, runner, tab_queue
 from .ui_common import _SidebarPanel, _unpin, section, tab_head
 
 FINISH_TAB_ORDER = 5
@@ -98,8 +99,8 @@ class RS_OT_look_save(Operator):
         return {'FINISHED'}
 
 
-class RS_MT_finish_presets(Menu):
-    bl_idname = "RS_MT_finish_presets"
+class RS_MT_look_presets(Menu):
+    bl_idname = "RS_MT_look_presets"
     bl_label = "Looks"
 
     def draw(self, context):
@@ -116,6 +117,7 @@ class RS_MT_finish_presets(Menu):
                 op = layout.operator(RS_OT_look_saved.bl_idname, text="Delete %s" % name, icon='TRASH')
                 op.name, op.delete = name, True
         layout.separator()
+        layout.operator(RS_OT_look_save.bl_idname, text="Save Look…", icon='ADD')
         layout.operator(look.RS_OT_look_reset.bl_idname, icon='LOOP_BACK')
 
 
@@ -145,7 +147,139 @@ class RS_OT_look_live(Operator):
         return {'FINISHED'}
 
 
+# ------------------------------------------------------------------ adjusting the finished image
+
+def _edits_file():
+    from .paths import data_dir
+    return os.path.join(data_dir(), "edit_presets.json")
+
+
+def saved_edits():
+    try:
+        with open(_edits_file(), encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_edits(data):
+    with open(_edits_file(), "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=1)
+
+
+class RS_OT_edit_reset(Operator):
+    bl_idname = "render_studio.edit_reset"
+    bl_label = "Reset Adjustments"
+    bl_description = "All adjustments back to 0: the preview shows the render as it is"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    def execute(self, context):
+        rs = context.scene.render_studio
+        for key in image_edit.KEYS:
+            rs.property_unset(key)
+        image_edit.changed()
+        return {'FINISHED'}
+
+
+class RS_OT_edit_saved(Operator):
+    bl_idname = "render_studio.edit_saved"
+    bl_label = "Saved Adjustments"
+    bl_description = "Use these saved adjustments"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    name: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    delete: BoolProperty(default=False, options={'HIDDEN', 'SKIP_SAVE'})
+
+    def execute(self, context):
+        edits = saved_edits()
+        if self.delete:
+            edits.pop(self.name, None)
+            _write_edits(edits)
+            return {'FINISHED'}
+        if self.name not in edits:
+            return {'CANCELLED'}
+        rs = context.scene.render_studio
+        for key in image_edit.KEYS:
+            setattr(rs, key, float(edits[self.name].get(key, 0.0)))
+        return {'FINISHED'}
+
+
+class RS_OT_edit_save_preset(Operator):
+    bl_idname = "render_studio.edit_save_preset"
+    bl_label = "Save Adjustments"
+    bl_description = "Save the adjustments as they are now (for every project)"
+
+    name: StringProperty(name="Name", default="My Edit")
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
+
+    def execute(self, context):
+        name = self.name.strip() or "My Edit"
+        edits = saved_edits()
+        edits[name] = image_edit.values(context.scene)
+        _write_edits(edits)
+        self.report({'INFO'}, "Saved %r" % name)
+        return {'FINISHED'}
+
+
+class RS_MT_edit_presets(Menu):
+    bl_idname = "RS_MT_edit_presets"
+    bl_label = "Adjustments"
+
+    def draw(self, context):
+        layout = self.layout
+        saved = sorted(saved_edits())
+        for name in saved:
+            layout.operator(RS_OT_edit_saved.bl_idname, text=name, translate=False, icon='USER').name = name
+        if saved:
+            layout.separator()
+            for name in saved:
+                op = layout.operator(RS_OT_edit_saved.bl_idname, text="Delete %s" % name, icon='TRASH')
+                op.name, op.delete = name, True
+            layout.separator()
+        else:
+            sub = layout.row()
+            sub.active = False
+            sub.label(text="No saved adjustments yet (+)")
+        layout.operator(RS_OT_edit_reset.bl_idname, icon='LOOP_BACK')
+
+
+class RS_OT_edit_export(Operator):
+    bl_idname = "render_studio.edit_export"
+    bl_label = "Save Image"
+    bl_description = ("Save the render with these adjustments as a new file next to it (…_edit_01.png), at full "
+                      "size; the render stays as it is")
+
+    def execute(self, context):
+        try:
+            path = image_edit.save(context.scene, current_image(context.scene))
+        except (ValueError, OSError, RuntimeError) as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        runner._images_cache["time"] = 0.0
+        self.report({'INFO'}, "Saved %s" % os.path.basename(path))
+        return {'FINISHED'}
+
+
 # ------------------------------------------------------------------ Krea
+
+class RS_OT_krea_product(Operator):
+    bl_idname = "render_studio.krea_product"
+    bl_label = "Product = Selection"
+    bl_description = ("Remember the selected objects as the product: Krea gets their true size and the mask keeps "
+                      "exactly them. Nothing selected: forget it (everything visible counts again)")
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    def execute(self, context):
+        objects = [o for o in context.selected_objects
+                   if o.type in {'MESH', 'CURVE', 'SURFACE', 'META', 'FONT'}]
+        krea_scene.mark_product(context.scene, objects)
+        self.report({'INFO'}, "Product: %s" % (", ".join(o.name for o in objects[:4]) if objects else
+                                                "everything visible"))
+        return {'FINISHED'}
+
 
 class RS_OT_krea_idea(Operator):
     bl_idname = "render_studio.krea_idea"
@@ -167,8 +301,8 @@ def _choices(prompt, model, environment, zoom, view, protect):
     wm = bpy.context.window_manager
     environment = wm.render_studio_krea_env if environment is None else environment
     environment = bpy.path.abspath(environment) if environment else ""
-    zoom = (zoom or wm.render_studio_krea_zoom).upper()
-    view = (view or wm.render_studio_krea_view).upper()
+    zoom = krea.zoom_key(zoom or wm.render_studio_krea_zoom)
+    view = krea.view_key(view or wm.render_studio_krea_view)
     protect = wm.render_studio_krea_protect if protect is None else bool(protect)
     used = krea.pick_model((model or wm.render_studio_krea_model).upper(), environment, zoom, view)
     source = current_image(bpy.context.scene)
@@ -369,9 +503,11 @@ def _draw_image(layout, context):
         sub.active = False
         sub.label(text="Render an image in the Render tab first", icon='INFO')
         return ""
+    # with adjustments: a small adjusted copy (made in a timer), else the render itself
+    shown = image_edit.preview_file(scene, path)
     image = bpy.data.images.get(runner.PREVIEW_IMAGE)
-    if image is None or os.path.normpath(bpy.path.abspath(image.filepath)) != os.path.normpath(path):
-        tab_queue._schedule_preview(path)
+    if image is None or os.path.normpath(bpy.path.abspath(image.filepath)) != os.path.normpath(shown):
+        tab_queue._schedule_preview(shown)
         image = None
     head = box.row(align=True)
     index = images.index(path) if path in images else 0
@@ -399,93 +535,109 @@ def _draw_image(layout, context):
     return path
 
 
-def _scale_line(layout, context, path):
-    """Product 12 × 4 × 3 cm · fills 34 % of the width: what Krea is told about the true size."""
-    if not path:
-        return
-    try:
-        width, height = krea.image_size(path)
-        info = krea_scene.product_scale(context.scene, krea_scene.render_camera(context.scene, path), width, height)
-    except (OSError, ValueError):
-        return
-    if not info:
-        return
-    text = "Product %s cm" % " × ".join("%g" % round(v) if v >= 10 else "%g" % v for v in info["size_cm"])
-    if info.get("frame"):
-        text += " · %d %% of the width" % (info["frame"][0] * 100)
-    sub = layout.row()
+def _step(layout, number, text):
+    """A small heading: 1  What · 2  Where · 3  Camera."""
+    row = layout.row()
+    row.active = False
+    row.label(text="%d   %s" % (number, text))
+
+
+def _product_line(layout, context, path):
+    """Product: Pod, PCB · 3.2 × 3.8 × 3.2 cm · 34 % of the width [⇥ selection]: what Krea is told."""
+    scene = context.scene
+    row = layout.row(align=True)
+    sub = row.row(align=True)
     sub.active = False
+    text = "Product: everything visible"
+    if krea_scene.is_marked(scene):
+        names = [o.name for o in krea_scene.product_objects(scene)]
+        text = "Product: " + ", ".join(names[:2]) + (" +%d" % (len(names) - 2) if len(names) > 2 else "")
+    try:
+        width, height = krea.image_size(path) if path else (0, 0)
+        info = krea_scene.product_scale(scene, krea_scene.render_camera(scene, path), width, height)
+    except (OSError, ValueError):
+        info = None
+    if info:
+        text += " · %s cm" % " × ".join("%g" % round(v) if v >= 10 else "%g" % v for v in info["size_cm"])
+        if info.get("frame"):
+            text += " · %d %%" % (info["frame"][0] * 100)
     sub.label(text=text, icon='EMPTY_ARROWS', translate=False)
+    row.operator(RS_OT_krea_product.bl_idname, text="", icon='RESTRICT_SELECT_OFF')
 
 
 def _cost_lines(layout, used, names):
-    """Before: the model and about what it costs; while Claude makes it: Krea's quote; after: the month."""
+    """Before: the model and about what it costs; while Claude makes it: Krea's quote; then the month."""
     quote = krea.job.get("quote")
-    line = layout.row(align=True)
-    sub = line.row(align=True)
+    sub = layout.row()
     sub.active = False
     if quote and krea.busy():
         credits, balance = quote
         text = "Krea: %s credits" % ("%g" % round(float(credits), 1) if credits is not None else "?")
         if balance is not None:
             text += " · %g left" % round(float(balance))
-        sub.label(text=text, icon='FUND', translate=False)
     else:
-        text = "%s · %s (Krea plan)" % (names[used], krea.price_text(used))
-        sub.label(text=text, icon='FUND', translate=False)
-    count, known, unknown, credits = krea.month_summary()
+        text = "%s · %s" % (names[used], krea.price_text(used))
+        balance = krea.last_balance()
+        if balance is not None:
+            text += " · %g left" % round(balance)
+    sub.label(text=text, icon='FUND', translate=False)
+    count, known, _unknown, credits = krea.month_summary()
     if count:
         sub = layout.row()
         sub.active = False
-        month = "This month: %d pictures" % count
-        if credits:
-            month += ", %g credits" % round(credits)
+        month = "This month: %d pictures" % count + (", %g credits" % round(credits) if credits else "")
         if known:
             month += ", about $%.2f API" % known
-        balance = krea.last_balance()
-        if balance is not None:
-            month += " · %g left" % round(balance)
         sub.label(text=month, translate=False)
 
 
 def _draw_krea(layout, context, path):
-    """[Hand] [In Use] [Setting] [Props]; the sentence; environment picture with zoom and perspective;
-    model and "keep the product"; [Refine with Claude] [▶ with an API token]; the product's size; the cost."""
+    """1 What: ideas and the sentence · 2 Where: an environment picture · 3 Camera: framing and height ·
+    the product and keeping it, the model · [Refine with Claude] · what it costs."""
     wm = context.window_manager
     box, head, is_open = section(layout, "krea", "Refine with Krea", 'BRUSHES_ALL')
     if not is_open:
         return
-    grid = box.grid_flow(row_major=True, columns=4, even_columns=True, align=True)
+    _step(box, 1, "What")
+    col = box.column(align=True)
+    grid = col.grid_flow(row_major=True, columns=4, even_columns=True, align=True)
     for label, text, protect in krea.IDEAS:
         op = grid.operator(RS_OT_krea_idea.bl_idname, text=label)
         op.text, op.protect = text, protect
-    box.prop(wm, "render_studio_krea_prompt", text="", placeholder="What should change? e.g. a hand holds it")
-    # environment picture: the product goes into it; zoom out and another perspective need the Free model
-    col = box.column(align=True)
-    row = col.row(align=True)
+    col.prop(wm, "render_studio_krea_prompt", text="", placeholder="What should change? e.g. a hand holds it")
+    _step(box, 2, "Where")
+    row = box.row(align=True)
     env = wm.render_studio_krea_env
     if env:
         row.label(text=os.path.basename(env), icon='IMAGE_DATA', translate=False)
         row.operator(RS_OT_krea_environment.bl_idname, text="", icon='X').clear = True
     else:
         row.operator(RS_OT_krea_environment.bl_idname, text="Environment Picture…", icon='IMAGE_DATA')
-    row = col.row(align=True)
-    row.prop(wm, "render_studio_krea_zoom", text="")
-    row.prop(wm, "render_studio_krea_view", text="")
-    row = box.row(align=True)
-    row.prop(wm, "render_studio_krea_model", expand=True)
+    _step(box, 3, "Camera")
+    col = box.column(align=True)
+    split = col.split(factor=0.3, align=True)
+    split.label(text="Framing")
+    split.row(align=True).prop(wm, "render_studio_krea_zoom", expand=True)
+    split = col.split(factor=0.3, align=True)
+    split.label(text="Height")
+    split.row(align=True).prop(wm, "render_studio_krea_view", expand=True)
+    # the product (what is measured and kept) and the model
+    box.separator(factor=0.5)
+    _product_line(box, context, path)
     used = krea.pick_model(wm.render_studio_krea_model, env, wm.render_studio_krea_zoom, wm.render_studio_krea_view)
     names = dict((k, n) for k, _p, n, _d in krea.MODELS)
     row = box.row(align=True)
-    row.active = used == 'PRECISE'
-    row.prop(wm, "render_studio_krea_protect", icon='LOCKED' if wm.render_studio_krea_protect else 'UNLOCKED')
+    sub = row.row(align=True)
+    sub.active = used == 'PRECISE'
+    sub.prop(wm, "render_studio_krea_protect", text="Keep Product",
+             icon='LOCKED' if wm.render_studio_krea_protect else 'UNLOCKED')
+    row.prop(wm, "render_studio_krea_model", text="")
     row = box.row(align=True)
-    row.scale_y = 1.3
+    row.scale_y = 1.4
     row.enabled = bool(path)
     row.operator(RS_OT_krea_claude.bl_idname, icon='OUTLINER_DATA_GP_LAYER')
     if krea.token():
         row.operator(RS_OT_krea_refine.bl_idname, text="", icon='PLAY')
-    _scale_line(box, context, path)
     _cost_lines(box, used, names)
     state = krea.job["state"]
     if state:
@@ -506,6 +658,27 @@ def _draw_krea(layout, context, path):
         sub = box.row()
         sub.active = False
         sub.label(text=reply[:90], icon='TIME' if status == "working" else 'OUTLINER_DATA_GP_LAYER', translate=False)
+
+
+def _draw_adjust(layout, context, path):
+    """Light (exposure, contrast, highlights, shadows) and color (temperature, tint, vibrance, saturation)
+    of the finished image; [Save Image] writes …_edit_01.png."""
+    rs = context.scene.render_studio
+    box, head, is_open = section(layout, "adjust", "Adjust Image", 'IMAGE_DATA')
+    head.operator(RS_OT_edit_reset.bl_idname, text="", icon='LOOP_BACK')
+    if not is_open:
+        return
+    for title, keys in (("Light", image_edit.LIGHT), ("Color", image_edit.COLOR)):
+        sub = box.row()
+        sub.active = False
+        sub.label(text=title)
+        col = box.column(align=True)
+        for key in keys:
+            col.prop(rs, key, slider=True)
+    row = box.row(align=True)
+    row.scale_y = 1.2
+    row.enabled = bool(path) and not image_edit.is_neutral(image_edit.values(context.scene))
+    row.operator(RS_OT_edit_export.bl_idname, icon='FILE_TICK')
 
 
 class RS_PT_finish_settings(Panel):
@@ -541,17 +714,23 @@ class RS_PT_finish(_SidebarPanel, Panel):
     def draw(self, context):
         _unpin(self)
         layout = self.layout
-        scene = context.scene
-        tab_head(layout, RS_MT_finish_presets.bl_idname, "Look", RS_OT_look_save.bl_idname,
-                 RS_PT_finish_settings.__name__, icon='NODE_COMPOSITING')
+        tab_head(layout, RS_MT_edit_presets.bl_idname, "Adjustments", RS_OT_edit_save_preset.bl_idname,
+                 RS_PT_finish_settings.__name__, icon='IMAGE_DATA')
         path = _draw_image(layout, context)
-        shading = _shading(context)
-        live = shading is not None and getattr(shading, "use_compositor", 'DISABLED') != 'DISABLED'
-        look.draw(layout, scene, live=live)
         _draw_krea(layout, context, path)
+        _draw_adjust(layout, context, path)
 
 
-classes = (RS_OT_look_saved, RS_OT_look_save, RS_MT_finish_presets, RS_OT_look_live, RS_OT_krea_idea,
+def draw_look(layout, context):
+    """The look of the live camera (compositor), in the Camera tab: its saved looks and the viewport switch."""
+    shading = _shading(context)
+    live = shading is not None and getattr(shading, "use_compositor", 'DISABLED') != 'DISABLED'
+    look.draw(layout, context.scene, live=live, menu=RS_MT_look_presets.bl_idname)
+
+
+classes = (RS_OT_look_saved, RS_OT_look_save, RS_MT_look_presets, RS_OT_look_live, RS_OT_edit_reset,
+           RS_OT_edit_saved, RS_OT_edit_save_preset, RS_MT_edit_presets, RS_OT_edit_export, RS_OT_krea_product,
+           RS_OT_krea_idea,
            RS_OT_krea_refine, RS_OT_krea_claude, RS_OT_krea_environment, RS_OT_krea_usage, RS_OT_krea_token,
            RS_PT_finish_settings, RS_PT_finish)
 
@@ -566,8 +745,8 @@ def register():
     wm.render_studio_krea_env = StringProperty(
         name="Environment", description="A photo of a place or mood the product goes into", subtype='FILE_PATH',
         options={'SKIP_SAVE'})
-    wm.render_studio_krea_zoom = EnumProperty(name="Zoom", items=krea.ZOOMS, default='KEEP', options={'SKIP_SAVE'})
-    wm.render_studio_krea_view = EnumProperty(name="Perspective", items=krea.VIEWS, default='KEEP',
+    wm.render_studio_krea_zoom = EnumProperty(name="Framing", items=krea.ZOOMS, default='KEEP', options={'SKIP_SAVE'})
+    wm.render_studio_krea_view = EnumProperty(name="Height", items=krea.VIEWS, default='KEEP',
                                               options={'SKIP_SAVE'})
     wm.render_studio_krea_protect = BoolProperty(
         name="Keep Product Untouched", default=True, options={'SKIP_SAVE'},

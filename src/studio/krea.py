@@ -40,15 +40,31 @@ MODELS = (
      "Nano Banana Pro: paints the picture anew; can change the environment, zoom out or the perspective. "
      "The product can shift a little; the result is scaled back to the render's size"),
 )
-ZOOMS = (('KEEP', "Keep", "The same framing"), ('SOME', "Wider", "Zoom out a little: more of the surroundings"),
-         ('FAR', "Far", "Zoom out a lot: a wide shot, the product small in the scene"))
-VIEWS = (('KEEP', "Keep", "The same perspective"), ('EYE', "Eye Level", "Seen from eye level"),
-         ('ABOVE', "From Above", "Seen from above"), ('LOW', "Low Angle", "Seen from a low angle, looking up"))
-ZOOM_TEXT = {'SOME': " Zoom out a little so that more of the surroundings are visible and the product is smaller "
-                     "in the frame.",
-             'FAR': " Zoom out to a wide shot: the product is small in the scene and the surroundings fill the frame."}
-VIEW_TEXT = {'EYE': " Show the scene from eye level.", 'ABOVE': " Show the scene from above.",
-             'LOW': " Show the scene from a low angle, looking up at the product."}
+ZOOMS = (('CLOSER', "Closer", "Closer to the product: it fills more of the picture"),
+         ('KEEP', "Same", "The same framing"),
+         ('WIDER', "Wider", "Further away: more of the surroundings, the product smaller"))
+VIEWS = (('LOWER', "Lower", "The camera lower, looking up at the product a little"),
+         ('KEEP', "Same", "The same camera height"),
+         ('HIGHER', "Higher", "The camera higher, looking down at the product"))
+# older names (Claude, saved files) → the current ones
+_ZOOM_ALIASES = {'SOME': 'WIDER', 'FAR': 'WIDER', 'NEAR': 'CLOSER'}
+_VIEW_ALIASES = {'EYE': 'KEEP', 'ABOVE': 'HIGHER', 'LOW': 'LOWER', 'HIGH': 'HIGHER'}
+ZOOM_TEXT = {'CLOSER': " Move the camera closer: the product is larger in the frame, cropped tighter.",
+             'WIDER': " Zoom out so that more of the surroundings are visible and the product is smaller in the frame."}
+VIEW_TEXT = {'LOWER': " Show the scene from a lower camera height, looking slightly up at the product.",
+             'HIGHER': " Show the scene from a higher camera height, looking down at the product."}
+
+
+def zoom_key(zoom):
+    zoom = str(zoom or 'KEEP').upper()
+    return _ZOOM_ALIASES.get(zoom, zoom if zoom in ZOOM_TEXT else 'KEEP')
+
+
+def view_key(view):
+    view = str(view or 'KEEP').upper()
+    return _VIEW_ALIASES.get(view, view if view in VIEW_TEXT else 'KEEP')
+
+
 ENV_TEXT = (" Place the product into the environment of the reference image: its space, surfaces, light and colors, "
             "with matching shadows and reflections.")
 # What Krea charges for one picture (its own price list, krea.ai/app/api/pricing); None = not published
@@ -84,7 +100,7 @@ def pick_model(key, environment="", zoom='KEEP', view='KEEP'):
     perspective needs the whole picture anew: Free."""
     if key != 'AUTO':
         return key
-    return 'NANO' if environment or zoom != 'KEEP' or view != 'KEEP' else 'PRECISE'
+    return 'NANO' if environment or zoom_key(zoom) != 'KEEP' or view_key(view) != 'KEEP' else 'PRECISE'
 
 
 def full_prompt(prompt, environment="", zoom='KEEP', view='KEEP', scale=""):
@@ -92,6 +108,7 @@ def full_prompt(prompt, environment="", zoom='KEEP', view='KEEP', scale=""):
     text = prompt.strip().rstrip(".") + "." if prompt.strip() else ""
     if environment:
         text += ENV_TEXT
+    zoom, view = zoom_key(zoom), view_key(view)
     text += ZOOM_TEXT.get(zoom, "") + VIEW_TEXT.get(view, "")
     if scale:
         text += " " + scale.strip()
@@ -331,7 +348,7 @@ def start(model, prompt, source, width, height, environment="", zoom='KEEP', vie
     environment = bpy.path.abspath(environment) if environment else ""
     if environment and not os.path.isfile(environment):
         raise ValueError("The environment picture is missing: %s" % environment)
-    if not prompt.strip() and not environment and zoom == 'KEEP' and view == 'KEEP':
+    if not prompt.strip() and not environment and zoom_key(zoom) == 'KEEP' and view_key(view) == 'KEEP':
         raise ValueError("Write what Krea should change")
     model = pick_model(model, environment, zoom, view)
     target = result_path(source)

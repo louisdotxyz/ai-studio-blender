@@ -853,10 +853,12 @@ def chat_queue_finish_wear():
           krea.pick_model('AUTO') == 'PRECISE' and krea.pick_model('AUTO', "/x/room.jpg") == 'NANO'
           and krea.pick_model('AUTO', zoom='FAR') == 'NANO' and krea.pick_model('AUTO', view='ABOVE') == 'NANO'
           and krea.pick_model('PRECISE', "/x/room.jpg") == 'PRECISE')
-    body = krea.request_body('NANO', "", "https://x/r.png", 1500, 2000, "https://x/room.png", 'SOME', 'EYE')
-    check("krea: environment picture as the second image, zoom and perspective in the prompt, framing free",
+    body = krea.request_body('NANO', "", "https://x/r.png", 1500, 2000, "https://x/room.png", 'WIDER', 'HIGHER')
+    check("krea: environment picture as the second image, framing and height in the prompt, framing free",
           body["image_urls"] == ["https://x/r.png", "https://x/room.png"] and "environment of the reference" in body["prompt"]
-          and "Zoom out a little" in body["prompt"] and "eye level" in body["prompt"]
+          and "Zoom out" in body["prompt"] and "higher camera height" in body["prompt"]
+          and krea.zoom_key('SOME') == 'WIDER' and krea.view_key('ABOVE') == 'HIGHER' and krea.zoom_key('x') == 'KEEP'
+          and "closer" in krea.full_prompt("x", zoom='CLOSER')
           and "Keep the camera angle" not in body["prompt"], body["prompt"])
     body = krea.request_body('PRECISE', "add a vase", "https://x/r.png", 1500, 2000, "https://x/room.png")
     check("krea: precise takes the environment as a reference", body["reference_images"] == ["https://x/room.png"])
@@ -991,6 +993,18 @@ def krea_plan_scale_mask():
           and "1.9 times" in text and "% of the image width" in text, text)
     wide = kscene.scale_text(info, 400, 300, framing_kept=False)
     check("krea scale: zooming out drops the picture shares", "of the width" not in wide and "10 × 10 × 10 cm" in wide)
+    other_mesh = bpy.data.objects.new("Krea Test Bar", cube.data.copy())
+    scene.collection.objects.link(other_mesh)
+    other_mesh.location = (0.5, 0, 0)
+    other_mesh.scale = (4, 1, 1)
+    bpy.context.view_layer.update()
+    wide_info = kscene.product_scale(scene, cam, 400, 300)
+    kscene.mark_product(scene, [cube])
+    marked_info = kscene.product_scale(scene, cam, 400, 300)
+    check("krea product: the remembered selection is measured, not the rest",
+          kscene.is_marked(scene) and kscene.product_objects(scene) == [cube] and wide_info["size_cm"][0] > 30
+          and abs(marked_info["size_cm"][0] - 10.0) < 0.2, (wide_info, marked_info))
+    bpy.data.objects.remove(other_mesh)
     body = krea.request_body('PRECISE', "a hand holds it", "https://x/r.png", 400, 300, scale=text,
                              mask_url="https://x/m.png")
     check("krea: precise gets the mask and the scale", body["mask_url"] == "https://x/m.png" and text in body["prompt"]
@@ -1050,12 +1064,64 @@ def krea_plan_scale_mask():
     finish_skill = open(os.path.join(os.path.dirname(core.__file__), "skills_default", "finish.md"), encoding="utf-8").read()
     check("krea plan: the skill uses the connector, price first", "krea_prepare" in finish_skill
           and "preflight=true" in finish_skill and "krea_quote" in finish_skill and "krea_save" in finish_skill)
+    kscene.mark_product(scene, [])
+    check("krea product: forgotten again", not kscene.is_marked(scene))
     scene.camera = keep_camera
     for obj in (cube, cam, other):
         bpy.data.objects.remove(obj)
     for name, value in render_state.items():
         if scene.objects.get(name) is not None:
             scene.objects[name].hide_render = value
+
+
+@section
+def finish_image_adjust():
+    import numpy as np
+    edit = mod("studio.image_edit")
+    rs = bpy.context.scene.render_studio
+    # dark gray, light gray, gray, a red: one row
+    px = np.array([0.1, 0.1, 0.1, 1, 0.9, 0.9, 0.9, 1, 0.5, 0.5, 0.5, 1, 0.8, 0.2, 0.2, 1], dtype=np.float32)
+    zero = {k: 0.0 for k in edit.KEYS}
+    check("adjust: nothing set, nothing changes", np.allclose(edit.apply(px, zero), px, atol=1e-5))
+    out = edit.apply(px, dict(zero, edit_exposure=1.0)).reshape(-1, 4)
+    check("adjust: exposure brightens", out[0, 0] > 0.12 and out[2, 0] > 0.6, out[:, 0])
+    out = edit.apply(px, dict(zero, edit_saturation=-100.0)).reshape(-1, 4)
+    check("adjust: saturation −100 is gray", abs(out[3, 0] - out[3, 1]) < 1e-4 and abs(out[3, 1] - out[3, 2]) < 1e-4)
+    out = edit.apply(px, dict(zero, edit_temperature=60.0)).reshape(-1, 4)
+    check("adjust: warmer is more red than blue", out[2, 0] > out[2, 2])
+    out = edit.apply(px, dict(zero, edit_highlights=-100.0)).reshape(-1, 4)
+    check("adjust: highlights darken the bright parts only", out[1, 0] < 0.88 and abs(out[0, 0] - 0.1) < 0.01, out[:, 0])
+    out = edit.apply(px, dict(zero, edit_shadows=100.0)).reshape(-1, 4)
+    check("adjust: shadows lift the dark parts only", out[0, 0] > 0.12 and abs(out[1, 0] - 0.9) < 0.02, out[:, 0])
+    out = edit.apply(px, dict(zero, edit_contrast=50.0)).reshape(-1, 4)
+    check("adjust: contrast spreads light and dark", out[0, 0] < 0.1 and out[1, 0] > 0.9 and abs(out[2, 0] - 0.5) < 0.01)
+    check("adjust: alpha stays", np.allclose(out[:, 3], 1.0))
+    # files: the preview copy (in a timer) and the saved image next to the render
+    render = os.path.join(TMP, "Adjust_Cam_01.png")
+    img = bpy.data.images.new("adjust", 40, 30)
+    img.pixels.foreach_set(np.tile(np.array([0.5, 0.4, 0.3, 1.0], dtype=np.float32), 40 * 30))
+    img.filepath_raw, img.file_format = render, 'PNG'
+    img.save()
+    bpy.data.images.remove(img)
+    scene = bpy.context.scene
+    check("adjust: preview is the render while nothing is set", edit.preview_file(scene, render) == render)
+    rs.edit_exposure = 0.7
+    first = edit.preview_file(scene, render)
+    edit._make_preview()
+    shown = edit.preview_file(scene, render)
+    check("adjust: preview is an adjusted copy", first == render and shown != render and os.path.exists(shown))
+    target = edit.save(scene, render)
+    check("adjust: saved next to the render, full size, render untouched",
+          target == os.path.join(TMP, "Adjust_Cam_edit_01.png") and tuple(mod("studio.krea").image_size(target)) == (40, 30)
+          and edit.edit_path(render).endswith("_edit_02.png"))
+    saved = bpy.data.images.load(target)
+    value = saved.pixels[0]
+    bpy.data.images.remove(saved)
+    check("adjust: the saved image is brighter", value > 0.55, value)
+    bpy.ops.render_studio.edit_reset()
+    check("adjust: reset", edit.is_neutral(edit.values(scene)))
+    check("adjust: look is in the camera tab, Krea and adjustments in Finish",
+          hasattr(mod("studio.tab_finish"), "draw_look") and "draw_look" in open(mod("studio.tab_camera").__file__).read())
 
 
 @section

@@ -40,6 +40,42 @@ def render_camera(scene, path):
     return best or scene.camera
 
 
+PRODUCT_KEY = "as_product"       # obj["as_product"] = True: this object is the product (Finish tab)
+
+
+def product_objects(scene):
+    """The objects marked as the product ("Use Selection" in the Finish tab), else everything the
+    product could be (environment.product_objects: all visible meshes that are not studio or room)."""
+    marked = [o for o in scene.objects if o.get(PRODUCT_KEY) and not o.hide_render
+              and o.type in {'MESH', 'CURVE', 'SURFACE', 'META', 'FONT'}]
+    return marked or environment.product_objects(scene)
+
+
+def is_marked(scene):
+    return any(o.get(PRODUCT_KEY) for o in scene.objects)
+
+
+def mark_product(scene, objects):
+    """Remembers these objects as the product (in the blend file); an empty list forgets it."""
+    for obj in scene.objects:
+        if PRODUCT_KEY in obj:
+            del obj[PRODUCT_KEY]
+    for obj in objects:
+        obj[PRODUCT_KEY] = True
+
+
+def product_bounds(scene):
+    """(min corner, max corner) of the product in world space, or None."""
+    lo = Vector((float("inf"),) * 3)
+    hi = Vector((float("-inf"),) * 3)
+    for obj in product_objects(scene):
+        for corner in obj.bound_box:
+            p = obj.matrix_world @ Vector(corner)
+            lo = Vector(map(min, lo, p))
+            hi = Vector(map(max, hi, p))
+    return (lo, hi) if lo.x <= hi.x else None
+
+
 def _cm(scene):
     """Centimeters per Blender unit."""
     unit = scene.unit_settings
@@ -49,7 +85,7 @@ def _cm(scene):
 def product_scale(scene, camera=None, width=0, height=0):
     """{"size_cm": [x, y, z], "longest_cm", "frame": [share of the width, of the height] (with a camera),
     "px_per_cm" (with width and height: the image's pixels)} or None without a product."""
-    bounds = environment.product_bounds(scene)
+    bounds = product_bounds(scene)
     if bounds is None:
         return None
     lo, hi = bounds
@@ -59,7 +95,7 @@ def product_scale(scene, camera=None, width=0, height=0):
     if camera is None or camera.type != 'CAMERA':
         return info
     xs, ys, ahead = [], [], True
-    for obj in environment.product_objects(scene):
+    for obj in product_objects(scene):
         for corner in obj.bound_box:
             p = world_to_camera_view(scene, camera, obj.matrix_world @ Vector(corner))
             xs.append(p.x)
@@ -146,7 +182,7 @@ def render_mask(scene, path, target=None):
     camera = render_camera(scene, path)
     if camera is None:
         raise ValueError("No camera for the mask")
-    products = set(environment.product_objects(scene))
+    products = set(product_objects(scene))
     if not products:
         raise ValueError("No product in the scene for the mask")
     target = target or mask_path()
