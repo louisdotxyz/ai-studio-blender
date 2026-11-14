@@ -2316,5 +2316,22 @@ def render_batches():
         tab_queue._ab.update(A="", B="")
 
 
+@section
+def env_skill_back():
+    """ENV is shipped again: a copy moved aside comes back once (with the user's changes)."""
+    import json
+    skills = mod("skills")
+    folder = os.path.join(TMP, "skills_env_back")
+    os.makedirs(os.path.join(folder, "_retired"))
+    with open(os.path.join(folder, skills.INSTALLED), "w") as f:
+        json.dump(["environment"], f)
+    with open(os.path.join(folder, "_retired", "environment.md"), "w") as f:
+        f.write("mine")
+    skills.install_defaults(folder)
+    back = open(os.path.join(folder, "environment.md")).read()
+    check("ENV skill back with the user's copy", back == "mine" and not os.path.exists(
+        os.path.join(folder, "_retired", "environment.md")), back)
+
+
 ok = all(results)
 print("FUNCTIONAL_OK" if ok else "FUNCTIONAL_FAIL", "%d/%d" % (sum(results), len(results)))

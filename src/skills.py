@@ -30,6 +30,7 @@ IN_CHAT = {"camera", "light", "material"}
 # Earlier shipped versions (sha1 of the file): a copy the user never changed gets the new text.
 UPGRADES = {"cad": {"e7b3d80ae27d22995023a36ddcaab3b3761f1b97"},
             "photo-match": {"a34caebb3fd705b8973cab6c1019c6d541e46aa2"},
+            "world": {"1a3ba7d58d06ff2b246bc978ab1c0c482f37f9a5"},
             "camera": {"925c6fe6c1b6442c271e4c0547a76407d2d139b7"},
             "finish": {"2c8e2980a4e3960e845ceaa0933402ef1aa3a520", "3a398b13b482836e9cbd207528b050c89c18fe95", "9ea64e3d802313f63d87e93dd73bf6399efdb5d1"},
             "material": {"6ce2e39e716956cfeadf82e2b4e65e6e6800d243", "0b5914cfc5e631ebaf7906c58f86cd84c29c8dba",
@@ -51,8 +52,9 @@ _checked = set()
 
 # Skills that are no longer shipped: moved into skills/_retired/ (the hashes: the shipped versions, for reference)
 RETIRED = {"render": {"5f74fb865a31eaa85050bf2874ed4cf4d8d40d11"},
-           "hdri": {"898cdb56736a4d8f429c42ae8373147c552c4c63"},
-           "environment": {"e00af628372dc3da2ebed39b418560bb08619f55"}}
+           "hdri": {"898cdb56736a4d8f429c42ae8373147c552c4c63"}}
+# Skills that were retired and are shipped again: the user's own copy comes back from skills/_retired/
+RESTORED = ("environment",)
 
 
 def install_defaults(folder):
@@ -80,6 +82,21 @@ def install_defaults(folder):
         target = os.path.join(folder, name + ".md")
         if name in names and _sha1(target) in old:
             _copy_default(name, target)
+    for name in RESTORED:     # back once: the copy moved aside before, else the shipped one
+        target = os.path.join(folder, name + ".md")
+        if "restored:" + name in installed or name not in names:
+            continue
+        installed.add("restored:" + name)
+        if os.path.exists(target):
+            continue
+        old = os.path.join(folder, "_retired", name + ".md")
+        try:
+            if os.path.exists(old):
+                os.replace(old, target)
+            else:
+                _copy_default(name, target)
+        except OSError:
+            pass
     for name in RETIRED:      # moved aside (also when changed by hand): skills/_retired/<name>.md
         target = os.path.join(folder, name + ".md")
         if os.path.exists(target):
