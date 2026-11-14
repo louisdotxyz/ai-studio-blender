@@ -1199,8 +1199,6 @@ DE = {
     'Render an image first': 'Zuerst ein Bild rendern',
     'All visible': 'Alles Sichtbare',
     # -- 2.13: render tab buttons and size, A/B variants, material click & give, Krea buttons
-    'High': 'Hoch',
-    'Low': 'Tief',
     'Scene': 'Szene',
     'Product': 'Produkt',
     'Pictures': 'Bilder',
