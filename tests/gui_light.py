@@ -205,9 +205,15 @@ def material_shot():
     shot("7_panel_material.png")
 
 
+def idle():
+    """One tick for Blender to draw what the step before changed."""
+    for area in view()[0].screen.areas:
+        area.tag_redraw()
+
+
 STEPS = [splash_away, splash_gone, setup, tool_on, tool_hover, click_press, click_release, placed, ctrl_press,
-         ctrl_release, new_light, studio_tab, studio_tab_press, studio_tab_release, panel, camera_tab, camera_shot,
-         material_shot, finish]
+         ctrl_release, new_light, studio_tab, studio_tab_press, studio_tab_release, idle, panel, idle, camera_tab,
+         idle, idle, camera_shot, idle, idle, material_shot, finish]
 
 
 def tick():
