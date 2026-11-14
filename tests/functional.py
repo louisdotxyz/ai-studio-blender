@@ -830,6 +830,29 @@ def chat_queue_finish_wear():
               and sent[0][2] == [picture] and sent[0][3] == [] and not core.chat_queue
               and not any(m.get("text") == "the chat before" for m in core.messages), sent)
         check("chat queue: the checked skills are back after", core.active_skills == ["material"])
+        # edit, move and hold before it starts
+        core.add_attachment(picture)
+        core.queue_chat("first wish")
+        core.queue_chat("second wish")
+        first, second = core.chat_queue[0]["id"], core.chat_queue[1]["id"]
+        check("chat queue: edited before it starts", core.edit_queued_chat(first, "first wish, changed",
+                                                                         keep_files=[False], keep_skills=[True])
+              and core.chat_queue[0]["text"] == "first wish, changed" and core.chat_queue[0]["attachments"] == []
+              and core.chat_queue[0]["skills"] == ["material"])
+        core.move_queued_chat(second, -1)
+        check("chat queue: moved up", [c["id"] for c in core.chat_queue] == [second, first]
+              and [c["id"] for c in core._read_json(core.CHAT_QUEUE_FILE, {})["chats"]] == [second, first])
+        sent.clear()
+        core.messages.clear()
+        core.hold_queued_chat(second)
+        core._next_queued_chat(); core._next_queued_chat()
+        check("chat queue: open for editing, it waits", not sent and len(core.chat_queue) == 2)
+        core.hold_queued_chat(None)
+        core._next_queued_chat(); core._next_queued_chat()
+        check("chat queue: then it starts", len(sent) == 1 and sent[0][0] == "second wish")
+        check("chat queue: editing one that started says so", not core.edit_queued_chat(second, "x"))
+        check("chat queue: emptied by editing, it is removed", core.edit_queued_chat(first, " ")
+              and not core.chat_queue)
     finally:
         core._send, core.QUEUE_PAUSE = real_send, real_pause
     core.queue_chat("one more")

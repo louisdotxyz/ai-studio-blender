@@ -529,7 +529,8 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         else:
             placeholder = tr("How can I help?")
 
-        # Chats waiting for the current one: their first words, skills and files; pause, remove
+        # Chats waiting for the current one: their first words, skills and files (click: edit); move up,
+        # remove; pause all
         if core.chat_queue:
             queue_box = col.box()
             head = queue_box.row(align=True)
@@ -539,7 +540,7 @@ class CLAUDE_PT_chat(bpy.types.Panel):
             head.operator("claude.chat_queue_pause", text="", emboss=False,
                           icon='PLAY' if paused else 'PAUSE')
             lines = queue_box.column(align=True)
-            for entry in core.chat_queue:
+            for index, entry in enumerate(core.chat_queue):
                 line = lines.row(align=True)
                 words = " ".join((entry.get("text") or tr("(see attachment)")).split())
                 extra = []
@@ -548,8 +549,15 @@ class CLAUDE_PT_chat(bpy.types.Panel):
                 if entry.get("attachments"):
                     extra.append("%d %s" % (len(entry["attachments"]), tr("files") if len(entry["attachments"]) > 1 else tr("file")))
                 text = (words[:46] + "…" if len(words) > 47 else words) + ("  ·  " + ", ".join(extra) if extra else "")
-                line.label(text=text, translate=False)
-                line.operator("claude.queued_chat_remove", text="", icon='X', emboss=False).chat_id = entry["id"]
+                edit = line.row(align=True)
+                edit.alignment = 'LEFT'
+                edit.operator("claude.queued_chat_edit", text=text, icon='GREASEPENCIL', emboss=False,
+                              translate=False).chat_id = entry["id"]
+                up = line.row(align=True)
+                up.alignment = 'RIGHT'
+                up.enabled = index > 0
+                up.operator("claude.queued_chat_move", text="", icon='TRIA_UP', emboss=False).chat_id = entry["id"]
+                up.operator("claude.queued_chat_remove", text="", icon='X', emboss=False).chat_id = entry["id"]
 
         # [ prompt ................ ] [send] [queue as a new chat] [stop]
         row = col.row(align=True)

@@ -4,7 +4,7 @@
 import os
 
 import bpy
-from bpy.props import BoolProperty, CollectionProperty, IntProperty, StringProperty
+from bpy.props import BoolProperty, BoolVectorProperty, CollectionProperty, IntProperty, StringProperty
 
 from . import attachments as att_mod
 from . import chatview, core
@@ -57,6 +57,67 @@ class CLAUDE_OT_queued_chat_remove(bpy.types.Operator):
 
     def execute(self, context):
         core.remove_queued_chat(self.chat_id)
+        return {'FINISHED'}
+
+
+class CLAUDE_OT_queued_chat_edit(bpy.types.Operator):
+    bl_idname = "claude.queued_chat_edit"
+    bl_label = "Edit Waiting Chat"
+    bl_description = "Change this message before it starts: its text, files and skills"
+    bl_options = {'INTERNAL'}
+
+    chat_id: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    text: StringProperty(name="Message", options={'SKIP_SAVE'})
+    keep_files: BoolVectorProperty(size=32, default=[True] * 32, options={'SKIP_SAVE'})
+    keep_skills: BoolVectorProperty(size=32, default=[True] * 32, options={'SKIP_SAVE'})
+
+    def invoke(self, context, event):
+        entry = core.queued_chat(self.chat_id)
+        if entry is None:
+            return {'CANCELLED'}
+        self.text = entry.get("text", "")
+        core.hold_queued_chat(self.chat_id)
+        return context.window_manager.invoke_props_dialog(self, width=520, confirm_text=tr("Save"))
+
+    def draw(self, context):
+        layout = self.layout
+        entry = core.queued_chat(self.chat_id)
+        layout.prop(self, "text", text="")
+        if entry is None:
+            layout.label(text=tr("Already started"), icon='INFO')
+            return
+        files = (entry.get("attachments") or [])[:32]
+        skills = (entry.get("skills") or [])[:32]
+        if files or skills:
+            col = layout.column(align=True)
+            for i, att in enumerate(files):
+                col.prop(self, "keep_files", index=i, text=att.get("name") or os.path.basename(att.get("path", "")),
+                         icon='FILE_IMAGE' if att.get("kind") == "image" else 'FILE', translate=False)
+            for i, name in enumerate(skills):
+                col.prop(self, "keep_skills", index=i, text=name, icon='BOOKMARKS', translate=False)
+
+    def execute(self, context):
+        core.hold_queued_chat(None)
+        if not core.edit_queued_chat(self.chat_id, self.text, list(self.keep_files), list(self.keep_skills)):
+            self.report({'WARNING'}, tr("This chat has already started"))
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+    def cancel(self, context):
+        core.hold_queued_chat(None)
+
+
+class CLAUDE_OT_queued_chat_move(bpy.types.Operator):
+    bl_idname = "claude.queued_chat_move"
+    bl_label = "Move Up"
+    bl_description = "Start this message earlier"
+    bl_options = {'INTERNAL'}
+
+    chat_id: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    step: IntProperty(default=-1, options={'HIDDEN', 'SKIP_SAVE'})
+
+    def execute(self, context):
+        core.move_queued_chat(self.chat_id, self.step)
         return {'FINISHED'}
 
 

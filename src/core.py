@@ -97,6 +97,7 @@ history_rev = 0      # bumped when old messages change (undo, step links)
 questions = []       # mcp_server.Task objects from ask_user waiting for an answer
 queued = []          # user messages sent while Claude works, answered after the current turn
 chat_queue = []      # whole new chats waiting for the current one: {"text", "skills", "attachments", "id"}
+queue_hold = {"id": None, "until": 0.0}   # the waiting chat being edited (does not start meanwhile)
 connectors_next = set()   # claude.ai connectors (e.g. "Krea") the next run may use, see request_connector
 chat_queue_paused = [False]   # stopped by hand: the queue waits until the user goes on
 attachments = []     # attachments for the next message (dicts from attachments.make)
@@ -268,6 +269,47 @@ def remove_queued_chat(chat_id):
     mark_dirty()
 
 
+def queued_chat(chat_id):
+    return next((c for c in chat_queue if c.get("id") == chat_id), None)
+
+
+def edit_queued_chat(chat_id, text, keep_files=None, keep_skills=None):
+    """Changes a waiting chat: its text, and which of its files and skills it keeps (lists of booleans, in
+    order). False when it is not waiting any more (already started or removed)."""
+    entry = queued_chat(chat_id)
+    if entry is None:
+        return False
+    text = (text or "").strip()
+    files = [a for i, a in enumerate(entry.get("attachments") or [])
+             if keep_files is None or (i < len(keep_files) and keep_files[i])]
+    if not text and not files:
+        remove_queued_chat(chat_id)
+        return True
+    entry["text"] = text
+    entry["attachments"] = files
+    entry["skills"] = [s for i, s in enumerate(entry.get("skills") or [])
+                       if keep_skills is None or (i < len(keep_skills) and keep_skills[i])]
+    _save_chat_queue()
+    mark_dirty()
+    return True
+
+
+def move_queued_chat(chat_id, step):
+    """Moves a waiting chat earlier (step −1) or later (+1) in the queue."""
+    index = next((i for i, c in enumerate(chat_queue) if c.get("id") == chat_id), None)
+    if index is None:
+        return
+    target = max(0, min(len(chat_queue) - 1, index + step))
+    chat_queue.insert(target, chat_queue.pop(index))
+    _save_chat_queue()
+    mark_dirty()
+
+
+def hold_queued_chat(chat_id):
+    """While a waiting chat is being edited it does not start (at most two minutes); None lets it go."""
+    queue_hold.update(id=chat_id, until=time.monotonic() + 120.0 if chat_id else 0.0)
+
+
 def set_chat_queue_paused(paused):
     chat_queue_paused[0] = bool(paused)
     _queue_ready[0] = 0.0
@@ -280,6 +322,8 @@ def _next_queued_chat():
     if not chat_queue or chat_queue_paused[0] or is_busy() or _prompt_queue or questions or pending:
         _queue_ready[0] = 0.0
         return
+    if queue_hold.get("id") == chat_queue[0].get("id") and time.monotonic() < queue_hold.get("until", 0.0):
+        return                      # the next one is open for editing
     now = time.monotonic()
     if not _queue_ready[0]:
         _queue_ready[0] = now + QUEUE_PAUSE
