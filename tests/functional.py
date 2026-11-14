@@ -1360,7 +1360,7 @@ def prompt_from_studio_tab():
     sent = core.studio_prompt('LIGHT', "softer key light")
     item = core._prompt_queue[-1] if len(core._prompt_queue) > before else None
     check("tab wish goes out with the tab's skills", sent and item and item[0] == "softer key light"
-          and {"light", "hdri"} <= set(item[1]), item)
+          and {"light", "world"} <= set(item[1]), item)
     core._prompt_queue[:] = core._prompt_queue[:before]
     core.studio_prompts.clear()
 
