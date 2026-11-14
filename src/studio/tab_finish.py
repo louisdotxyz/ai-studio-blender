@@ -620,9 +620,6 @@ def _cost_lines(layout, used, names):
         balance = krea.last_balance()
         if balance is not None:
             text += " · %g left" % round(balance)
-        count, _known, _unknown, credits = krea.month_summary()
-        if count:
-            text += " · month %g" % round(credits)
     sub.label(text=text, translate=False)
 
 
@@ -648,7 +645,7 @@ def _draw_krea(layout, context, path):
     row = _labeled(col, "Product")
     row.prop(wm, "render_studio_krea_scale", text="Size", toggle=True,
              icon='LOCKED' if wm.render_studio_krea_scale else 'UNLOCKED')
-    row.prop(wm, "render_studio_krea_protect", text="Untouched", toggle=True, icon='MOD_MASK')
+    row.prop(wm, "render_studio_krea_protect", text="Keep", toggle=True, icon='MOD_MASK')
     row.operator(RS_OT_krea_product.bl_idname, text="", icon='RESTRICT_SELECT_OFF',
                  depress=krea_scene.is_marked(context.scene))
     _product_info(col, context, path)
@@ -689,7 +686,7 @@ def _draw_krea(layout, context, path):
     row = box.row(align=True)
     row.scale_y = 1.4
     row.enabled = bool(path)
-    row.prop(wm, "render_studio_krea_prompt", text="", placeholder="What should change? e.g. a hand holds it")
+    row.prop(wm, "render_studio_krea_prompt", text="", placeholder="What should change?")
     row.operator(RS_OT_krea_claude.bl_idname, text="", icon='EVENT_RETURN')
     if krea.token():
         row.operator(RS_OT_krea_refine.bl_idname, text="", icon='PLAY')
