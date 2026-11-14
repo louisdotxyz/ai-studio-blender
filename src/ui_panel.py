@@ -487,6 +487,12 @@ class CLAUDE_PT_chat(bpy.types.Panel):
 
         chips = False
         wm = context.window_manager
+        # Render without Claude: a big button above the skills (all or some cameras, quality, size)
+        if hasattr(bpy.types, "RS_PT_chat_render"):
+            render = col.row(align=True)
+            render.scale_y = 1.4
+            render.popover("RS_PT_chat_render", text=tr("Render"), icon='RENDER_STILL')
+            col.separator(factor=0.6)
         # Skills, always visible: one row of icons (name and text in the tooltip),
         # "+" creates a new one; checked skills are highlighted.
         items = [s for s in skills.list_skills(core.workdir()) if s["in_chat"]]
@@ -565,8 +571,6 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         _prop_with_placeholder(row, context.window_manager, "claude_prompt", placeholder)
         row.operator("claude.send", text="", icon='EVENT_RETURN')
         row.operator("claude.queue_chat", text="", icon='NEXT_KEYFRAME')
-        if hasattr(bpy.types, "RS_PT_chat_render"):   # start renders without Claude: all or some cameras
-            row.popover("RS_PT_chat_render", text="", icon='RENDER_STILL')
         if busy:
             row.operator("claude.stop", text="", icon='SNAP_FACE')
 

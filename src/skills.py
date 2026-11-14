@@ -49,7 +49,7 @@ def skills_dir(workdir):
 _checked = set()
 
 
-# Skills that are no longer shipped: removed from the user's folder while unchanged (sha1 of shipped versions)
+# Skills that are no longer shipped: moved into skills/_retired/ (the hashes: the shipped versions, for reference)
 RETIRED = {"render": {"5f74fb865a31eaa85050bf2874ed4cf4d8d40d11"},
            "hdri": {"898cdb56736a4d8f429c42ae8373147c552c4c63"},
            "environment": {"e00af628372dc3da2ebed39b418560bb08619f55"}}
@@ -80,11 +80,12 @@ def install_defaults(folder):
         target = os.path.join(folder, name + ".md")
         if name in names and _sha1(target) in old:
             _copy_default(name, target)
-    for name, old in RETIRED.items():
+    for name in RETIRED:      # moved aside (also when changed by hand): skills/_retired/<name>.md
         target = os.path.join(folder, name + ".md")
-        if _sha1(target) in old:
+        if os.path.exists(target):
             try:
-                os.remove(target)
+                os.makedirs(os.path.join(folder, "_retired"), exist_ok=True)
+                os.replace(target, os.path.join(folder, "_retired", name + ".md"))
             except OSError:
                 pass
     try:
