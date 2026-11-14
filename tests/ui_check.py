@@ -193,6 +193,14 @@ wm.render_studio_mat_kind = ""
 run(bpy.types.RS_MT_material_kind_filter, ctx)
 wm.render_studio_tab = 'FINISH'
 run(bpy.types.RS_PT_finish, ctx)
+studio_p = bpy.context.preferences.addons[PKG].preferences.studio
+studio_p.krea_token = "test-token"
+wm.render_studio_krea_env = "/nonexistent/room.jpg"
+wm.render_studio_krea_zoom = 'FAR'
+run(bpy.types.RS_PT_finish, ctx)
+studio_p.krea_token = ""
+wm.render_studio_krea_env = ""
+wm.render_studio_krea_zoom = 'KEEP'
 run(bpy.types.RS_PT_finish_settings, ctx)
 run(bpy.types.RS_MT_finish_presets, ctx)
 run(bpy.types.RS_MT_aspect, ctx)

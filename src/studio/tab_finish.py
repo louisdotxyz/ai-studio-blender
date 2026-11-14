@@ -160,11 +160,44 @@ class RS_OT_krea_idea(Operator):
         return {'FINISHED'}
 
 
+def refine(scene, prompt, model=None, environment=None, zoom=None, view=None):
+    """Refines the render shown in the Finish tab; the choices of the tab where an argument is None.
+    Returns (result path, model used, width, height)."""
+    wm = bpy.context.window_manager
+    source = current_image(scene)
+    width, height = krea.image_size(source) if source and os.path.isfile(source) else (0, 0)
+    target, used = krea.start(model or wm.render_studio_krea_model, prompt, source, width, height,
+                              wm.render_studio_krea_env if environment is None else environment,
+                              zoom or wm.render_studio_krea_zoom, view or wm.render_studio_krea_view)
+    return target, used, width, height
+
+
 class RS_OT_krea_refine(Operator):
     bl_idname = "render_studio.krea_refine"
     bl_label = "Refine with Krea"
-    bl_description = ("Send the image shown above to Krea with this sentence. The result is saved next to it "
-                      "(…_krea_01.png) at exactly its size; the render stays as it is")
+    bl_description = ("Send the image shown above to Krea as it is written (without Claude). The result is "
+                      "saved next to it (…_krea_01.png) at exactly its size; the render stays as it is")
+
+    @classmethod
+    def poll(cls, context):
+        return not krea.busy()
+
+    def execute(self, context):
+        try:
+            target, used, width, height = refine(context.scene, context.window_manager.render_studio_krea_prompt)
+        except (ValueError, OSError) as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        self.report({'INFO'}, "Krea (%s): %s, %d × %d" % (dict((k, n) for k, _p, n, _d in krea.MODELS)[used],
+                                                         os.path.basename(target), width, height))
+        return {'FINISHED'}
+
+
+class RS_OT_krea_claude(Operator):
+    bl_idname = "render_studio.krea_claude"
+    bl_label = "Refine with Claude"
+    bl_description = ("Claude looks at the render (and the environment picture), writes the prompt for Krea from "
+                      "your sentence, picks the model and starts it. You see it in the chat")
 
     @classmethod
     def poll(cls, context):
@@ -173,13 +206,62 @@ class RS_OT_krea_refine(Operator):
     def execute(self, context):
         wm = context.window_manager
         source = current_image(context.scene)
-        try:
-            width, height = krea.image_size(source) if source and os.path.isfile(source) else (0, 0)
-            target = krea.start(wm.render_studio_krea_model, wm.render_studio_krea_prompt, source, width, height)
-        except (ValueError, OSError) as exc:
-            self.report({'ERROR'}, str(exc))
+        if not source:
+            self.report({'ERROR'}, "Render an image first")
             return {'CANCELLED'}
-        self.report({'INFO'}, "Krea: %s (%d × %d)" % (os.path.basename(target), width, height))
+        if not krea.token():
+            self.report({'ERROR'}, "Add your Krea API token in Preferences › Studio")
+            return {'CANCELLED'}
+        lines = ["Refine this render with Krea: %s" % (wm.render_studio_krea_prompt.strip() or "(no wish, see below)"),
+                 "Render: %s" % source]
+        if wm.render_studio_krea_env:
+            lines.append("Environment picture: %s" % bpy.path.abspath(wm.render_studio_krea_env))
+        if wm.render_studio_krea_zoom != 'KEEP' or wm.render_studio_krea_view != 'KEEP':
+            lines.append("Framing: zoom %s, perspective %s" % (wm.render_studio_krea_zoom, wm.render_studio_krea_view))
+        if wm.render_studio_krea_model != 'AUTO':
+            lines.append("Model: %s" % wm.render_studio_krea_model)
+        from .. import core
+        if not core.studio_prompt('FINISH', "\n".join(lines)):
+            return {'CANCELLED'}
+        try:
+            core.add_attachment(source)
+            if wm.render_studio_krea_env:
+                core.add_attachment(bpy.path.abspath(wm.render_studio_krea_env))
+        except Exception as exc:
+            print("ID Toolkit: Krea attachment:", exc)
+        return {'FINISHED'}
+
+
+class RS_OT_krea_environment(Operator):
+    bl_idname = "render_studio.krea_environment"
+    bl_label = "Environment Picture"
+    bl_description = "A photo of a place or a mood: Krea puts the product into it (a new environment needs the Free model)"
+    bl_options = {'INTERNAL'}
+
+    filepath: StringProperty(subtype='FILE_PATH', options={'SKIP_SAVE'})
+    filter_image: bpy.props.BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
+    filter_folder: bpy.props.BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
+    clear: bpy.props.BoolProperty(default=False, options={'HIDDEN', 'SKIP_SAVE'})
+
+    def invoke(self, context, event):
+        if self.clear:
+            return self.execute(context)
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        context.window_manager.render_studio_krea_env = "" if self.clear else self.filepath
+        return {'FINISHED'}
+
+
+class RS_OT_krea_usage(Operator):
+    bl_idname = "render_studio.krea_usage"
+    bl_label = "Krea Balance"
+    bl_description = "Open your Krea API balance and usage (Krea shows it only on its website)"
+    bl_options = {'INTERNAL'}
+
+    def execute(self, context):
+        bpy.ops.wm.url_open(url=krea.USAGE_URL)
         return {'FINISHED'}
 
 
@@ -243,6 +325,8 @@ def _draw_image(layout, context):
 
 
 def _draw_krea(layout, context, path):
+    """[Hand] [In Use] [Setting] [Props]; the sentence; environment picture with zoom and perspective;
+    model; [Refine with Claude] [as written]; what it costs."""
     wm = context.window_manager
     box, head, is_open = section(layout, "krea", "Refine with Krea", 'BRUSHES_ALL')
     if not is_open:
@@ -257,15 +341,46 @@ def _draw_krea(layout, context, path):
         if p is not None:
             col.prop(p, "krea_token", text="", placeholder="Paste the token here")
         return
-    box.row(align=True).prop(wm, "render_studio_krea_model", expand=True)
     grid = box.grid_flow(row_major=True, columns=4, even_columns=True, align=True)
     for label, text in krea.IDEAS:
         grid.operator(RS_OT_krea_idea.bl_idname, text=label).text = text
     box.prop(wm, "render_studio_krea_prompt", text="", placeholder="What should change? e.g. a hand holds it")
+    # environment picture: the product goes into it; zoom out and another perspective need the Free model
+    col = box.column(align=True)
+    row = col.row(align=True)
+    env = wm.render_studio_krea_env
+    if env:
+        row.label(text=os.path.basename(env), icon='IMAGE_DATA', translate=False)
+        row.operator(RS_OT_krea_environment.bl_idname, text="", icon='X').clear = True
+    else:
+        row.operator(RS_OT_krea_environment.bl_idname, text="Environment Picture…", icon='IMAGE_DATA')
+    row = col.row(align=True)
+    row.prop(wm, "render_studio_krea_zoom", text="")
+    row.prop(wm, "render_studio_krea_view", text="")
+    row = box.row(align=True)
+    row.prop(wm, "render_studio_krea_model", expand=True)
+    used = krea.pick_model(wm.render_studio_krea_model, env, wm.render_studio_krea_zoom, wm.render_studio_krea_view)
+    names = dict((k, n) for k, _p, n, _d in krea.MODELS)
     row = box.row(align=True)
     row.scale_y = 1.3
     row.enabled = bool(path)
-    row.operator(RS_OT_krea_refine.bl_idname, icon='BRUSHES_ALL')
+    row.operator(RS_OT_krea_claude.bl_idname, icon='OUTLINER_DATA_GP_LAYER')
+    row.operator(RS_OT_krea_refine.bl_idname, text="", icon='PLAY')
+    # cost: the model and its price, what this month cost (Krea has no balance API: the button opens it)
+    count, known, unknown = krea.month_summary()
+    line = box.row(align=True)
+    sub = line.row(align=True)
+    sub.active = False
+    text = "%s · %s" % (names[used], krea.price_text(used))
+    sub.label(text=text, icon='FUND', translate=False)
+    line.operator(RS_OT_krea_usage.bl_idname, text="", icon='URL', emboss=False)
+    if count:
+        sub = box.row()
+        sub.active = False
+        month = "This month: %d pictures" % count + (", about $%.2f" % known if known else "")
+        if unknown:
+            month += " + %d without a published price" % unknown
+        sub.label(text=month, translate=False)
     state = krea.job["state"]
     if state:
         line = box.row()
@@ -279,6 +394,12 @@ def _draw_krea(layout, context, path):
         elif state == "error":
             line.alert = True
             line.label(text=krea.job["text"], icon='ERROR', translate=False)
+    from .. import core
+    status, reply = core.studio_reply('FINISH')
+    if status:
+        sub = box.row()
+        sub.active = False
+        sub.label(text=reply[:90], icon='TIME' if status == "working" else 'OUTLINER_DATA_GP_LAYER', translate=False)
 
 
 class RS_PT_finish_settings(Panel):
@@ -294,7 +415,9 @@ class RS_PT_finish_settings(Panel):
         box.label(text="Krea", icon='BRUSHES_ALL')
         if p is not None:
             box.prop(p, "krea_token", text="API Token")
-        box.operator(RS_OT_krea_token.bl_idname, icon='URL')
+        row = box.row(align=True)
+        row.operator(RS_OT_krea_token.bl_idname, icon='URL')
+        row.operator(RS_OT_krea_usage.bl_idname, icon='FUND')
         sub = box.row()
         sub.active = False
         sub.label(text="The API has its own balance (not the plan's credits)")
@@ -320,7 +443,8 @@ class RS_PT_finish(_SidebarPanel, Panel):
 
 
 classes = (RS_OT_look_saved, RS_OT_look_save, RS_MT_finish_presets, RS_OT_look_live, RS_OT_krea_idea,
-           RS_OT_krea_refine, RS_OT_krea_token, RS_PT_finish_settings, RS_PT_finish)
+           RS_OT_krea_refine, RS_OT_krea_claude, RS_OT_krea_environment, RS_OT_krea_usage, RS_OT_krea_token,
+           RS_PT_finish_settings, RS_PT_finish)
 
 
 def register():
@@ -328,8 +452,14 @@ def register():
     wm.render_studio_krea_prompt = StringProperty(
         name="Change", description="What Krea should change in the image (one or two sentences)", options={'SKIP_SAVE'})
     wm.render_studio_krea_model = EnumProperty(
-        name="Model", items=[(k, label, text) for k, _path, label, text in krea.MODELS], default='PRECISE',
+        name="Model", items=[(k, label, text) for k, _path, label, text in krea.MODELS], default='AUTO',
         options={'SKIP_SAVE'})
+    wm.render_studio_krea_env = StringProperty(
+        name="Environment", description="A photo of a place or mood the product goes into", subtype='FILE_PATH',
+        options={'SKIP_SAVE'})
+    wm.render_studio_krea_zoom = EnumProperty(name="Zoom", items=krea.ZOOMS, default='KEEP', options={'SKIP_SAVE'})
+    wm.render_studio_krea_view = EnumProperty(name="Perspective", items=krea.VIEWS, default='KEEP',
+                                              options={'SKIP_SAVE'})
     for cls in classes:
         bpy.utils.register_class(cls)
 
@@ -341,3 +471,6 @@ def unregister():
         bpy.utils.unregister_class(cls)
     del bpy.types.WindowManager.render_studio_krea_prompt
     del bpy.types.WindowManager.render_studio_krea_model
+    del bpy.types.WindowManager.render_studio_krea_env
+    del bpy.types.WindowManager.render_studio_krea_zoom
+    del bpy.types.WindowManager.render_studio_krea_view

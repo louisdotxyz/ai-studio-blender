@@ -243,6 +243,18 @@ def camera_view(view):
     return camera
 
 
+def krea_refine(prompt, model="AUTO", environment="", zoom="KEEP", view="KEEP"):
+    """Refines the render shown in the Finish tab with Krea (in the background; the Finish tab shows the
+    progress and the result, saved next to the render at exactly its size). prompt: English, what to change.
+    model: PRECISE (edits in place: product, framing and size exact; hand, props, a person), NANO (paints anew:
+    new environment, zoom out, other perspective) or AUTO. environment: path of a picture the product goes
+    into. zoom: KEEP, SOME, FAR. view: KEEP, EYE, ABOVE, LOW. Returns the result path and the model."""
+    from . import tab_finish
+    target, used, width, height = tab_finish.refine(bpy.context.scene, prompt, str(model).upper(), environment,
+                                                    str(zoom).upper(), str(view).upper())
+    return {"result": target, "model": used, "size": [width, height]}
+
+
 def wear(material, remove=False, **values):
     """Scratches, fingerprints and dust over any material with a Principled BSDF. values: scratches,
     fingerprints, dust (0-1 each, the strength); their kind: scratch_length, one_direction (0 = all directions,

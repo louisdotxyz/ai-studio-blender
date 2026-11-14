@@ -847,7 +847,22 @@ def chat_queue_finish_wear():
     check("krea: free model gets the render's size", body["width"] == 1500 and body["height"] == 2000
           and body["aspect_ratio"] == "3:4" and body["resolution"] == "2K" and "Keep the product" in body["prompt"])
     body = krea.request_body('PRECISE', "a hand holds it.", "https://x/y.png", 1500, 2000)
-    check("krea: precise model edits in place", body["image_url"] == "https://x/y.png" and "width" not in body)
+    check("krea: precise model edits in place", body["image_url"] == "https://x/y.png" and "width" not in body
+          and "Keep the camera angle" in body["prompt"])
+    check("krea: auto picks precise to add, free for a new place, zoom or perspective",
+          krea.pick_model('AUTO') == 'PRECISE' and krea.pick_model('AUTO', "/x/room.jpg") == 'NANO'
+          and krea.pick_model('AUTO', zoom='FAR') == 'NANO' and krea.pick_model('AUTO', view='ABOVE') == 'NANO'
+          and krea.pick_model('PRECISE', "/x/room.jpg") == 'PRECISE')
+    body = krea.request_body('NANO', "", "https://x/r.png", 1500, 2000, "https://x/room.png", 'SOME', 'EYE')
+    check("krea: environment picture as the second image, zoom and perspective in the prompt, framing free",
+          body["image_urls"] == ["https://x/r.png", "https://x/room.png"] and "environment of the reference" in body["prompt"]
+          and "Zoom out a little" in body["prompt"] and "eye level" in body["prompt"]
+          and "Keep the camera angle" not in body["prompt"], body["prompt"])
+    body = krea.request_body('PRECISE', "add a vase", "https://x/r.png", 1500, 2000, "https://x/room.png")
+    check("krea: precise takes the environment as a reference", body["reference_images"] == ["https://x/room.png"])
+    krea._add_log('NANO', 1500, 2000)
+    count, known, _unknown = krea.month_summary()
+    check("krea: what this month cost", count >= 1 and known >= 0.15)
     render = os.path.join(TMP, "Pod_01.png")
     img = bpy.data.images.new("pod", 60, 80)
     img.filepath_raw, img.file_format = render, 'PNG'

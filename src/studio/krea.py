@@ -23,21 +23,39 @@ import bpy
 
 API = "https://api.krea.ai"
 TOKENS_URL = "https://www.krea.ai/app/api/tokens"
+USAGE_URL = "https://www.krea.ai/app/api/usage"
 # key: (model path, label, what it is good for)
 MODELS = (
+    ('AUTO', "", "Auto", "Precise when something is added to the picture as it is; Free for a new environment, "
+     "zooming out or another perspective"),
     ('PRECISE', "ideogram/ideogram-4.5-precise", "Precise",
-     "Ideogram 4.5 Precise: keeps the product, the framing and the size; best for adding a hand or props"),
+     "Ideogram 4.5 Precise: edits the picture in place; keeps the product, the framing and the size exactly. "
+     "Best for a hand, props, a person next to it"),
     ('NANO', "google/nano-banana-pro", "Free",
-     "Nano Banana Pro: freer, also new surroundings or a person; can move the product a little"),
+     "Nano Banana Pro: paints the picture anew; can change the environment, zoom out or the perspective. "
+     "The product can shift a little; the result is scaled back to the render's size"),
 )
+ZOOMS = (('KEEP', "Keep", "The same framing"), ('SOME', "Wider", "Zoom out a little: more of the surroundings"),
+         ('FAR', "Far", "Zoom out a lot: a wide shot, the product small in the scene"))
+VIEWS = (('KEEP', "Keep", "The same perspective"), ('EYE', "Eye Level", "Seen from eye level"),
+         ('ABOVE', "From Above", "Seen from above"), ('LOW', "Low Angle", "Seen from a low angle, looking up"))
+ZOOM_TEXT = {'SOME': " Zoom out a little so that more of the surroundings are visible and the product is smaller "
+                     "in the frame.",
+             'FAR': " Zoom out to a wide shot: the product is small in the scene and the surroundings fill the frame."}
+VIEW_TEXT = {'EYE': " Show the scene from eye level.", 'ABOVE': " Show the scene from above.",
+             'LOW': " Show the scene from a low angle, looking up at the product."}
+ENV_TEXT = (" Place the product into the environment of the reference image: its space, surfaces, light and colors, "
+            "with matching shadows and reflections.")
+# What Krea charges for one picture (its own price list, krea.ai/app/api/pricing); None = not published
+PRICES = {'PRECISE': None, 'NANO': 0.15}
 IDEAS = (
     ("Hand", "Add a realistic adult hand that holds the product naturally, matching the existing light."),
     ("In Use", "Show the product in use by a person, cropped so the product stays the hero of the image."),
     ("Setting", "Place the product in a fitting real-world setting with matching light and soft shadows."),
     ("Props", "Add a few tasteful props around the product, out of focus, matching the existing light."),
 )
-KEEP = (" Keep the product exactly as it is: same shape, proportions, materials, colors, details and text. "
-        "Keep the camera angle and the framing.")
+KEEP = " Keep the product exactly as it is: same shape, proportions, materials, colors, details and text."
+KEEP_FRAME = " Keep the camera angle and the framing."
 POLL = 2.0
 LIMIT = 300.0
 job = {"state": "", "text": "", "source": "", "result": "", "started": 0.0, "thread": None}
@@ -50,7 +68,64 @@ def token():
 
 
 def model_path(key):
-    return next((m[1] for m in MODELS if m[0] == key), MODELS[0][1])
+    return next((m[1] for m in MODELS if m[0] == key), MODELS[1][1])
+
+
+def pick_model(key, environment="", zoom='KEEP', view='KEEP'):
+    """Auto: Precise edits in place (product and size exact); a new environment, zooming out or another
+    perspective needs the whole picture anew: Free."""
+    if key != 'AUTO':
+        return key
+    return 'NANO' if environment or zoom != 'KEEP' or view != 'KEEP' else 'PRECISE'
+
+
+def full_prompt(prompt, environment="", zoom='KEEP', view='KEEP'):
+    text = prompt.strip().rstrip(".") + "." if prompt.strip() else ""
+    if environment:
+        text += ENV_TEXT
+    text += ZOOM_TEXT.get(zoom, "") + VIEW_TEXT.get(view, "")
+    text += KEEP + (KEEP_FRAME if zoom == 'KEEP' and view == 'KEEP' else "")
+    return text.strip()
+
+
+# ------------------------------------------------------------------ what it cost (Krea has no balance API)
+
+def _log_file():
+    from .paths import data_dir
+    return os.path.join(data_dir(), "krea_log.json")
+
+
+def log():
+    try:
+        with open(_log_file(), encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def _add_log(model, width, height):
+    entries = log()[-500:]
+    entries.append({"time": time.strftime("%Y-%m-%d %H:%M"), "model": model, "size": [width, height]})
+    try:
+        with open(_log_file(), "w", encoding="utf-8") as f:
+            json.dump(entries, f)
+    except OSError:
+        pass
+
+
+def month_summary():
+    """(pictures this month, known cost in $, pictures without a published price)."""
+    month = time.strftime("%Y-%m")
+    entries = [e for e in log() if str(e.get("time", "")).startswith(month)]
+    known = sum(PRICES.get(e.get("model")) or 0.0 for e in entries)
+    unknown = sum(1 for e in entries if PRICES.get(e.get("model")) is None)
+    return len(entries), known, unknown
+
+
+def price_text(model):
+    price = PRICES.get(model)
+    return ("about $%.2f per picture" % price) if price else "price per picture: see krea.ai/app/api/pricing"
 
 
 def busy():
@@ -75,13 +150,18 @@ def nearest_ratio(width, height):
     return min(ratios, key=lambda r: abs(int(r.split(":")[0]) / int(r.split(":")[1]) - want))
 
 
-def request_body(key, prompt, image_url, width, height):
-    """The JSON for one model; the size of the render goes with it where the model takes one."""
-    text = prompt.strip().rstrip(".") + "." + KEEP
+def request_body(key, prompt, image_url, width, height, environment_url="", zoom='KEEP', view='KEEP'):
+    """The JSON for one model; the render's size goes with it where the model takes one, an environment
+    picture as the second image (Free) or as a reference (Precise)."""
+    text = full_prompt(prompt, bool(environment_url), zoom, view)
     if key == 'NANO':
-        return {"prompt": text, "image_urls": [image_url], "width": width, "height": height,
-                "aspect_ratio": nearest_ratio(width, height), "resolution": "2K" if max(width, height) > 1100 else "1K"}
-    return {"prompt": text, "image_url": image_url, "quality": "high"}
+        return {"prompt": text, "image_urls": [image_url] + ([environment_url] if environment_url else []),
+                "width": width, "height": height, "aspect_ratio": nearest_ratio(width, height),
+                "resolution": "2K" if max(width, height) > 1100 else "1K"}
+    body = {"prompt": text, "image_url": image_url, "quality": "high"}
+    if environment_url:
+        body["reference_images"] = [environment_url]
+    return body
 
 
 # ------------------------------------------------------------------ HTTP (in the thread)
@@ -138,13 +218,14 @@ def upload(key, path):
     return url
 
 
-def _work(key, model, prompt, source, width, height, target):
+def _work(key, model, prompt, source, width, height, target, environment, zoom, view):
     try:
         job["state"] = "upload"
         image_url = upload(key, source)
+        environment_url = upload(key, environment) if environment else ""
         job["state"] = "working"
-        started = _call("POST", "/generate/" + "image/" + model_path(model), key,
-                        json.dumps(request_body(model, prompt, image_url, width, height)).encode(),
+        body = request_body(model, prompt, image_url, width, height, environment_url, zoom, view)
+        started = _call("POST", "/generate/" + "image/" + model_path(model), key, json.dumps(body).encode(),
                         {"Content-Type": "application/json"})
         job_id = started.get("job_id") if isinstance(started, dict) else ""
         if not job_id:
@@ -166,13 +247,14 @@ def _work(key, model, prompt, source, width, height, target):
                 raise RuntimeError("Krea took longer than %d s" % LIMIT)
         job["state"] = "download"
         urllib.request.urlretrieve(urls[0], target + ".download")
+        _add_log(model, width, height)
         job.update(state="loaded", result=target)
     except Exception as exc:         # everything goes to the panel as text
         job.update(state="error", text=str(exc))
 
 
-def start(model, prompt, source, width, height):
-    """Starts refining `source` (a render file) in the background."""
+def start(model, prompt, source, width, height, environment="", zoom='KEEP', view='KEEP'):
+    """Starts refining `source` (a render file) in the background. Returns (result path, model used)."""
     key = token()
     if not key:
         raise ValueError("Add your Krea API token in Preferences › Studio")
@@ -180,16 +262,21 @@ def start(model, prompt, source, width, height):
         raise ValueError("Krea is still working on the last image")
     if not source or not os.path.isfile(source):
         raise ValueError("Render an image first")
-    if not prompt.strip():
+    environment = bpy.path.abspath(environment) if environment else ""
+    if environment and not os.path.isfile(environment):
+        raise ValueError("The environment picture is missing: %s" % environment)
+    if not prompt.strip() and not environment and zoom == 'KEEP' and view == 'KEEP':
         raise ValueError("Write what Krea should change")
+    model = pick_model(model, environment, zoom, view)
     target = result_path(source)
-    job.update(state="upload", text="", source=source, result="", started=time.monotonic())
-    thread = threading.Thread(target=_work, args=(key, model, prompt, source, width, height, target), daemon=True)
+    job.update(state="upload", text="", source=source, result="", started=time.monotonic(), model=model)
+    thread = threading.Thread(target=_work, args=(key, model, prompt, source, width, height, target, environment,
+                                                  zoom, view), daemon=True)
     job["thread"] = thread
     thread.start()
     if not bpy.app.timers.is_registered(_finish):
         bpy.app.timers.register(_finish, first_interval=1.0)
-    return target
+    return target, model
 
 
 def fit_size(path, width, height):
