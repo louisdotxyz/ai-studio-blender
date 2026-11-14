@@ -6,7 +6,7 @@ import json
 import os
 
 import bpy
-from bpy.props import EnumProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, StringProperty
 from bpy.types import Menu, Operator, Panel
 
 from . import krea, look, runner, tab_queue
@@ -63,7 +63,7 @@ class RS_OT_look_saved(Operator):
     bl_options = {'UNDO', 'INTERNAL'}
 
     name: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
-    delete: bpy.props.BoolProperty(default=False, options={'HIDDEN', 'SKIP_SAVE'})
+    delete: BoolProperty(default=False, options={'HIDDEN', 'SKIP_SAVE'})
 
     def execute(self, context):
         looks = saved_looks()
@@ -239,9 +239,9 @@ class RS_OT_krea_environment(Operator):
     bl_options = {'INTERNAL'}
 
     filepath: StringProperty(subtype='FILE_PATH', options={'SKIP_SAVE'})
-    filter_image: bpy.props.BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
-    filter_folder: bpy.props.BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
-    clear: bpy.props.BoolProperty(default=False, options={'HIDDEN', 'SKIP_SAVE'})
+    filter_image: BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
+    filter_folder: BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
+    clear: BoolProperty(default=False, options={'HIDDEN', 'SKIP_SAVE'})
 
     def invoke(self, context, event):
         if self.clear:
