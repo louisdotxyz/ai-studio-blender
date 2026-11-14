@@ -245,7 +245,11 @@ def camera_view(view):
 
 def wear(material, remove=False, **values):
     """Scratches, fingerprints and dust over any material with a Principled BSDF. values: scratches,
-    fingerprints, dust (0-1 each), scale, dust_color. remove=True takes the layer off again."""
+    fingerprints, dust (0-1 each, the strength); their kind: scratch_length, one_direction (0 = all directions,
+    1 = drag marks in one direction), scratch_depth, print_size, smear (0-1), dust_on_top (0 = everywhere,
+    1 = only faces that look up), dust_size, dust_color; where: from_ and to_ are not names, use "from" / "to"
+    in a dict: api.wear(mat, **{"from": 0.0, "to": 0.4}) = scratches and prints only on the lower 40 % (where
+    a hand holds it); scale. remove=True takes the layer off again."""
     from . import matstructures
     if isinstance(material, str):
         material = bpy.data.materials[material]

@@ -96,6 +96,8 @@ _step = 0            # last undo marker used for Claude's code steps
 history_rev = 0      # bumped when old messages change (undo, step links)
 questions = []       # mcp_server.Task objects from ask_user waiting for an answer
 queued = []          # user messages sent while Claude works, answered after the current turn
+chat_queue = []      # whole new chats waiting for the current one: {"text", "skills", "attachments", "id"}
+chat_queue_paused = [False]   # stopped by hand: the queue waits until the user goes on
 attachments = []     # attachments for the next message (dicts from attachments.make)
 session_id = None
 current_run = None
@@ -216,6 +218,85 @@ def queue_prompt(text, skill_names=()):
         return False
     _prompt_queue.append((text, list(skill_names)))
     return True
+
+
+# ---------------------------------------------------------------------------
+# Chat queue: a message that becomes a new chat once the current chat is done. It keeps the skills
+# that were checked and the attachments it had when it was queued; the queue survives a restart.
+
+CHAT_QUEUE_FILE = "chat_queue.json"
+QUEUE_PAUSE = 2.0      # seconds between the end of a chat and the start of the next one
+_queue_ready = [0.0]
+
+
+def _save_chat_queue():
+    _write_json(CHAT_QUEUE_FILE, {"chats": chat_queue, "paused": chat_queue_paused[0]})
+
+
+def load_chat_queue():
+    data = _read_json(CHAT_QUEUE_FILE, {})
+    chats = data.get("chats") if isinstance(data, dict) else None
+    chat_queue[:] = [c for c in (chats or []) if isinstance(c, dict) and (c.get("text") or c.get("attachments"))]
+    chat_queue_paused[0] = bool(data.get("paused")) if isinstance(data, dict) else False
+
+
+def queue_chat(text, skill_names=None):
+    """Queues `text` as a new chat for after the current one, with the skills checked now (and one named
+    with /skill at the start) and the attachments of the message box. Returns False for an empty message."""
+    text = (text or "").strip()
+    if not text and not attachments:
+        return False
+    names = list(active_skills) if skill_names is None else list(skill_names)
+    name, rest = skills.split_command(text)
+    if name and skills.find(workdir(), name):
+        text = rest
+        names.append(skills.find(workdir(), name)["name"])
+    chat_queue.append({"id": str(uuid.uuid4()), "text": text, "skills": list(dict.fromkeys(names)),
+                       "attachments": [dict(a) for a in attachments]})
+    attachments.clear()
+    _queue_ready[0] = 0.0
+    _save_chat_queue()
+    mark_dirty()
+    return True
+
+
+def remove_queued_chat(chat_id):
+    chat_queue[:] = [c for c in chat_queue if c.get("id") != chat_id]
+    _save_chat_queue()
+    mark_dirty()
+
+
+def set_chat_queue_paused(paused):
+    chat_queue_paused[0] = bool(paused)
+    _queue_ready[0] = 0.0
+    _save_chat_queue()
+    mark_dirty()
+
+
+def _next_queued_chat():
+    """Starts the next queued chat when nothing else is going on (run from the timer)."""
+    if not chat_queue or chat_queue_paused[0] or is_busy() or _prompt_queue or questions or pending:
+        _queue_ready[0] = 0.0
+        return
+    now = time.monotonic()
+    if not _queue_ready[0]:
+        _queue_ready[0] = now + QUEUE_PAUSE
+        return
+    if now < _queue_ready[0]:
+        return
+    _queue_ready[0] = 0.0
+    entry = chat_queue.pop(0)
+    _save_chat_queue()
+    from . import chats
+    chats.new_chat()
+    attachments[:] = [a for a in entry.get("attachments") or [] if os.path.exists(a.get("path", ""))]
+    keep = list(active_skills)
+    active_skills[:] = []          # only the skills the message had when it was queued
+    try:
+        _send(entry.get("text", ""), entry.get("skills") or ())
+    finally:
+        active_skills[:] = keep
+    mark_dirty()
 
 
 # Wishes sent from a Studio tab: tab -> index in `messages` where its answer starts.
@@ -1074,6 +1155,8 @@ def _handle_done(rc, stderr):
     _empty_temp()
     if run and run.cancelled:
         add_message("info", tr("Stopped"))
+        if chat_queue:          # stopped by hand: the queued chats wait
+            set_chat_queue_paused(True)
     elif rc == -1 and (stderr or "").startswith("LM Studio"):
         add_message("error", stderr)
     elif rc != 0:
@@ -1366,6 +1449,10 @@ def _tick():
                 _send(text, extra)
             except Exception:
                 add_message("error", tr("Sending failed:") + "\n" + traceback.format_exc(limit=3))
+        try:
+            _next_queued_chat()
+        except Exception:
+            add_message("error", tr("Sending failed:") + "\n" + traceback.format_exc(limit=3))
 
         mcp_server.process_tasks(_dispatch)
 
@@ -1460,6 +1547,9 @@ def plain_text(text):
 
 def register():
     load_usage()
+    load_chat_queue()
+    if chat_queue and not bpy.app.background:
+        chat_queue_paused[0] = True     # after a restart the queued chats wait for the user
     crash = autosave.last_crash
     if crash:
         notes.append("Blender did not shut down cleanly last time (probably a crash)"

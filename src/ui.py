@@ -21,6 +21,7 @@ from .ui_chat_ops import (
     CLAUDE_OT_answer, CLAUDE_OT_approve, CLAUDE_OT_attach_files, CLAUDE_OT_compact_chat,
     CLAUDE_OT_copy_message, CLAUDE_OT_delete_chat, CLAUDE_OT_load_chat, CLAUDE_OT_new_chat, CLAUDE_OT_paste,
     CLAUDE_OT_remove_attachment, CLAUDE_OT_send, CLAUDE_OT_show_code, CLAUDE_OT_stop, CLAUDE_OT_undo_steps,
+    CLAUDE_OT_queue_chat, CLAUDE_OT_queued_chat_remove, CLAUDE_OT_chat_queue_pause,
     CLAUDE_OT_usage_info
 )  # noqa: F401
 from .ui_skills import (
@@ -54,6 +55,9 @@ _previews = None
 classes = (
     CLAUDE_OT_send,
     CLAUDE_OT_stop,
+    CLAUDE_OT_queue_chat,
+    CLAUDE_OT_queued_chat_remove,
+    CLAUDE_OT_chat_queue_pause,
     CLAUDE_OT_new_chat,
     CLAUDE_OT_load_chat,
     CLAUDE_OT_delete_chat,

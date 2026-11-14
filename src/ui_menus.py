@@ -113,16 +113,21 @@ class CLAUDE_OT_prompt_confirmed(bpy.types.Operator):
         return {'CANCELLED'}  # no event: never send
 
 
-def _send_prompt(wm):
+def _clear_prompt(wm):
+    """Empties the message box without it counting as a new message."""
     global _clearing
+    _clearing = True
+    try:
+        wm.claude_prompt = ""
+    finally:
+        _clearing = False
+    core.mark_dirty()
+
+
+def _send_prompt(wm):
     if core.queue_prompt(wm.claude_prompt):
-        _clearing = True
-        try:
-            wm.claude_prompt = ""
-        finally:
-            _clearing = False
+        _clear_prompt(wm)
         chatview.scroll(-10**9)  # jump to the newest message
-        core.mark_dirty()
 
 
 def _prompt_update(self, context):

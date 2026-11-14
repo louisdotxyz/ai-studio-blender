@@ -34,7 +34,11 @@ Material of the active object (the one in the Studio Material tab). Answer in 1-
   the product (made for 10-30 cm: a 1 m part needs about 0.3). For another look start from the nearest
   structure and change it inside its group, instead of a new node tree from nothing.
 - Used look on any material: api.wear(material, scratches=0.4, fingerprints=0.3, dust=0.2, scale=1)
-  (api.wear(material, remove=True) takes it off). Subtle is right: 0.2-0.4.
+  (api.wear(material, remove=True) takes it off). Subtle is right: 0.2-0.4. Their kind: scratch_length,
+  one_direction (1 = drag marks), scratch_depth, print_size, smear, dust_on_top, dust_size, dust_color;
+  where: **{"from": 0.0, "to": 0.4} keeps scratches and prints on the lower 40 % (a grip zone). The Material
+  tab shows the same values in its Wear section.
+- Wear in a finished render with an image AI (Krea) looks painted on: keep wear in the material.
 - Several pictures of materials at once ("build these for my library", 5 to 50 images): work through
   them one by one without asking in between. For each picture: say in one line what it is (material, finish,
   color), then ONE call api.library_material(name, structure=…, kind=…, wear=…, **values): the nearest

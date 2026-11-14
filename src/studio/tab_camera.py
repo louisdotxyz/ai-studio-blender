@@ -5,7 +5,7 @@ import bpy
 from bpy.props import (BoolProperty, FloatProperty, IntProperty, StringProperty)
 from bpy.types import Menu, Operator, Panel
 
-from . import cameras, env_ui, look, runner, sync
+from . import cameras, env_ui, runner, sync
 from .props import FORMAT_PRESETS, PPI
 from .ui_common import (RENDER_TAB_ORDER, _SidebarPanel, _look_through, _unpin, section, tab_head,
                         active_camera, studio_tab)
@@ -115,6 +115,69 @@ class RS_OT_camera_from_view(Operator):
 LENS_PRESETS = (24, 35, 50, 85, 135)
 
 
+RATIOS = ((1, 1), (4, 5), (3, 4), (2, 3), (9, 16), (5, 4), (4, 3), (3, 2), (16, 9), (21, 9))
+
+
+class RS_OT_set_aspect(Operator):
+    bl_idname = "render_studio.set_aspect"
+    bl_label = "Aspect Ratio"
+    bl_description = "Set the aspect ratio (the short side stays 1080 px at 1x)"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    x: IntProperty(default=3, min=1, options={'HIDDEN', 'SKIP_SAVE'})
+    y: IntProperty(default=4, min=1, options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, _context, props):
+        return "%d : %d (%s)" % (props.x, props.y, "portrait" if props.y > props.x else
+                                 "landscape" if props.x > props.y else "square")
+
+    def execute(self, context):
+        rq = context.scene.render_studio
+        rq.aspect_x = self.x      # the setter sizes the image
+        rq.aspect_y = self.y
+        return {'FINISHED'}
+
+
+class RS_MT_aspect(Menu):
+    """Left in the format row: the aspect ratio, and two fields for any other ratio."""
+    bl_idname = "RS_MT_aspect"
+    bl_label = "Aspect Ratio"
+
+    def draw(self, context):
+        layout = self.layout
+        rq = context.scene.render_studio
+        current = (rq.aspect_x, rq.aspect_y)
+        for x, y in RATIOS:
+            op = layout.operator(RS_OT_set_aspect.bl_idname, text="%d : %d" % (x, y),
+                                 icon='CHECKMARK' if (x, y) == current else 'BLANK1')
+            op.x, op.y = x, y
+        layout.separator()
+        row = layout.row(align=True)
+        row.prop(rq, "aspect_x", text="")
+        row.label(text=":")
+        row.prop(rq, "aspect_y", text="")
+
+
+class RS_MT_formats(Menu):
+    """Right in the format row: formats with a fixed size (Instagram, HD …)."""
+    bl_idname = "RS_MT_formats"
+    bl_label = "Formats"
+
+    def draw(self, context):
+        layout = self.layout
+        render = context.scene.render
+        for _short, long, w, h in FORMAT_PRESETS:
+            op = layout.operator(RS_OT_set_resolution.bl_idname, text="%s (%d × %d)" % (long, w, h),
+                                 icon='CHECKMARK' if (render.resolution_x, render.resolution_y) == (w, h) else 'BLANK1')
+            op.width, op.height = w, h
+
+
+def format_name(render):
+    return next((short for short, _l, w, h in FORMAT_PRESETS if (render.resolution_x, render.resolution_y) == (w, h)),
+                "Format")
+
+
 class RS_OT_camera_preset(Operator):
     bl_idname = "render_studio.camera_preset"
     bl_label = "Camera Preset"
@@ -149,7 +212,6 @@ class RS_MT_camera_presets(Menu):
 
     def draw(self, context):
         layout = self.layout
-        render = context.scene.render
         layout.label(text="Orthographic")
         for key, name, _a, _h, ortho, _lens, _room in cameras.VIEW_PRESETS:
             if ortho:
@@ -160,12 +222,6 @@ class RS_MT_camera_presets(Menu):
             if not ortho:
                 layout.operator(RS_OT_camera_preset.bl_idname, text=name, icon='VIEW_PERSPECTIVE').view = key
         layout.operator(RS_OT_camera_from_view.bl_idname, text="From the Viewport", icon='VIEW_CAMERA')
-        layout.separator()
-        layout.label(text="Format")
-        for _short, long, w, h in FORMAT_PRESETS:
-            op = layout.operator(RS_OT_set_resolution.bl_idname, text="%s (%d × %d)" % (long, w, h),
-                                 icon='CHECKMARK' if (render.resolution_x, render.resolution_y) == (w, h) else 'BLANK1')
-            op.width, op.height = w, h
 
 
 class RS_OT_toggle_ortho(Operator):
@@ -316,16 +372,12 @@ class RS_PT_camera(_SidebarPanel, Panel):
                 grid.operator(RS_OT_set_lens.bl_idname, text=str(mm),
                               depress=abs(data.lens - mm) < 0.01).lens = mm
         draw_dof(box, cam, space)
-        # Format: [3] : [4] [1500 × 2000, pressed = this camera keeps its format] (presets: the menu on top)
+        # Format in one row: [3 : 4 ▾] [IG Portrait ▾] [📌 1500 × 2000] (pin: this camera keeps its format)
         own = cam.render_studio_camera
         pct = render.resolution_percentage / 100
         row = box.row(align=True)
-        row.prop(rq, "aspect_x", text="")
-        sub = row.row(align=True)
-        sub.ui_units_x = 0.7
-        sub.alignment = 'CENTER'
-        sub.label(text=":")
-        row.prop(rq, "aspect_y", text="")
+        row.menu(RS_MT_aspect.bl_idname, text="%d : %d" % (rq.aspect_x, rq.aspect_y), icon='FULLSCREEN_ENTER')
+        row.menu(RS_MT_formats.bl_idname, text=format_name(render))
         row.prop(own, "use_resolution", icon='PINNED' if own.use_resolution else 'UNPINNED', translate=False,
                  text="%d × %d" % (round(render.resolution_x * pct), round(render.resolution_y * pct)))
 
@@ -346,8 +398,6 @@ class RS_PT_camera(_SidebarPanel, Panel):
         box, _head, is_open = section(layout, "backdrop", "Backdrop", 'IMAGE_BACKGROUND')
         if is_open:
             env_ui.draw_backdrop(box, context)
-
-        look.draw(layout, scene)
 
 
 class RS_OT_fit_frame(Operator):

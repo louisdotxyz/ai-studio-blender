@@ -270,46 +270,121 @@ class RS_OT_material_kind(Operator):
         return {'FINISHED'}
 
 
+def _value_row(col, socket, label):
+    """One control: label on the left, value on the right. Something plugged in shows what feeds it."""
+    split = col.split(factor=0.42, align=True)
+    split.label(text=label)
+    if socket.is_linked:
+        src = socket.links[0].from_node
+        sub = split.row(align=True)
+        sub.active = False
+        sub.label(text=src.label or src.name, icon='NODE_TEXTURE', translate=False)
+    else:
+        split.prop(socket, "default_value", text="", slider=socket.type == 'VALUE')
+
+
 def _draw_kind_controls(box, material, node):
-    """[Kind ▾], then the same few controls for every material, only the ones the kind has. An input with
-    something plugged in shows what feeds it (its values follow below, under the structure)."""
+    """[Kind ▾], then the same few controls for every material, only the ones the kind has."""
     kind = material_kind(material)
     row = box.row(align=True)
     row.operator_menu_enum(RS_OT_material_kind.bl_idname, "kind", text=kind, icon='MATERIAL')
     col = box.column(align=True)
     for name, label in matkinds.CONTROLS.get(kind, matkinds.CONTROLS["Other"]):
         socket = node.inputs.get(name)
-        if socket is None:
-            continue
-        if socket.is_linked:
-            src = socket.links[0].from_node
-            line = col.row()
-            line.active = False
-            line.label(text="%s: %s" % (label, src.label or src.name), icon='NODE_TEXTURE', translate=False)
-        else:
-            col.prop(socket, "default_value", text=label)
+        if socket is not None:
+            _value_row(col, socket, label)
     normal = node.inputs.get("Normal")
     if normal is not None and normal.is_linked:
         src = normal.links[0].from_node
         known = {matstructures.NODE_BUMP, matstructures.NODE_WEAR_BUMP}
         if "Strength" in src.inputs and src.name not in known:     # Normal Map / Bump node
-            col.prop(src.inputs["Strength"], "default_value", text="Surface Depth")
+            _value_row(col, src.inputs["Strength"], "Surface Depth")
 
 
 def _draw_structure(layout, material):
-    """The values of a structure and of the wear layer (their node groups' inputs), and how deep they go."""
-    for node in matstructures.control_nodes(material):
+    """The values of a structure (its node group's inputs) and how deep its surface goes."""
+    for node in matstructures.control_nodes(material, wear=False):
         col = layout.column(align=True)
+        col.separator(factor=0.5)
         col.label(text=node.label or node.name, icon='NODE_MATERIAL')
         for socket in node.inputs:
             if socket.is_linked or socket.type == 'VECTOR' or not socket.enabled:
                 continue
-            col.prop(socket, "default_value", text=socket.name)
-    nodes = material.node_tree.nodes
-    for name, label in ((matstructures.NODE_BUMP, "Surface Depth"), (matstructures.NODE_WEAR_BUMP, "Wear Depth")):
-        bump = nodes.get(name)
+            _value_row(col, socket, socket.name)
+        bump = material.node_tree.nodes.get(matstructures.NODE_BUMP)
         if bump is not None:
-            layout.prop(bump.inputs["Strength"], "default_value", text=label, slider=True)
+            _value_row(col, bump.inputs["Strength"], "Surface Depth")
+
+
+_wear_upgrading = set()
+
+
+def _upgrade_wear_later(material):
+    """An older wear layer is rebuilt outside of drawing (drawing must not change data)."""
+    name = material.name
+    if name in _wear_upgrading:
+        return
+    _wear_upgrading.add(name)
+
+    def run():
+        _wear_upgrading.discard(name)
+        mat = bpy.data.materials.get(name)
+        if mat is not None:
+            matstructures.wear_node(mat)
+        runner.tag_redraw()
+    bpy.app.timers.register(run, first_interval=0.05)
+
+
+WEAR_GROUPS = (
+    ("Scratches", 'MOD_NOISE', "Scratches", (("Scratch Length", "Length"), ("One Direction", "One Direction"),
+                                             ("Scratch Depth", "Depth"))),
+    ("Fingerprints", 'HAND', "Fingerprints", (("Print Size", "Size"), ("Smear", "Smeared"))),
+    ("Dust", 'PARTICLES', "Dust", (("Dust On Top", "Only on Top"), ("Dust Size", "Size"), ("Dust Color", "Color"))),
+)
+
+
+def draw_wear(layout, material):
+    """Wear and tear: scratches, fingerprints and dust, each with its strength and its own kind, and where
+    on the object they are (height from / to)."""
+    has = matstructures.has_wear(material)
+    box, head, is_open = section(layout, "wear", "Wear", 'MOD_NOISE', default_open=has)
+    if not has:
+        head.operator(RS_OT_material_wear.bl_idname, text="Add", icon='ADD')
+        if is_open:
+            sub = box.row()
+            sub.active = False
+            sub.label(text="Scratches, fingerprints and dust, procedural", icon='INFO')
+        return
+    head.operator(RS_OT_material_wear.bl_idname, text="", icon='X').remove = True
+    if not is_open:
+        return
+    node = material.node_tree.nodes[matstructures.NODE_WEAR]
+    if node.node_tree is None or node.node_tree.get(matstructures.VERSION_KEY) != matstructures.VERSION:
+        _upgrade_wear_later(material)
+    inputs = node.inputs
+    for key, icon, label, extra in WEAR_GROUPS:
+        if key not in inputs:
+            continue
+        col = box.column(align=True)
+        strength = inputs[key]
+        row = col.row(align=True)
+        row.prop(strength, "default_value", text=label, slider=True, icon=icon)
+        if strength.default_value > 0.001:
+            for name, text in extra:
+                if name in inputs and not inputs[name].is_linked:
+                    _value_row(col, inputs[name], text)
+    if "From" in inputs:
+        col = box.column(align=True)
+        col.label(text="Where (height on the object)", icon='EMPTY_SINGLE_ARROW')
+        row = col.row(align=True)
+        row.prop(inputs["From"], "default_value", text="From", slider=True)
+        row.prop(inputs["To"], "default_value", text="To", slider=True)
+    col = box.column(align=True)
+    if "Scale" in inputs:
+        _value_row(col, inputs["Scale"], "Scale")
+    bump = material.node_tree.nodes.get(matstructures.NODE_WEAR_BUMP)
+    if bump is not None:
+        _value_row(col, bump.inputs["Strength"], "Depth")
 
 
 class RS_OT_material_structure(Operator):
@@ -406,12 +481,6 @@ class RS_MT_material_more(Menu):
             layout.operator(RS_OT_material_unlink.bl_idname, text="Unlink from the Others", icon='UNLINKED')
         layout.operator(RS_OT_pick_from_object.bl_idname, text="Pick Color from Object",
                         icon='EYEDROPPER').mode = 'COLOR'
-        if material is not None and _principled(material) is not None:
-            if matstructures.has_wear(material):
-                layout.operator(RS_OT_material_wear.bl_idname, text="Remove Wear", icon='X').remove = True
-            else:
-                layout.operator(RS_OT_material_wear.bl_idname, text="Add Wear (Scratches, Prints, Dust)",
-                                icon='MOD_NOISE')
         layout.separator()
         layout.menu(RS_MT_material_new.bl_idname, icon='ADD')
         if material is not None:
@@ -1121,8 +1190,22 @@ class RS_OT_material_kind_filter(Operator):
 
     def execute(self, context):
         wm = context.window_manager
-        wm.render_studio_mat_kind = "" if wm.render_studio_mat_kind == self.kind else self.kind
+        wm.render_studio_mat_kind = "" if self.kind in {wm.render_studio_mat_kind, "-"} else self.kind
         return {'FINISHED'}
+
+
+class RS_MT_material_kind_filter(Menu):
+    bl_idname = "RS_MT_material_kind_filter"
+    bl_label = "Kind"
+
+    def draw(self, context):
+        layout = self.layout
+        wm = context.window_manager
+        layout.operator(RS_OT_material_kind_filter.bl_idname, text="All",
+                        icon='CHECKMARK' if not wm.render_studio_mat_kind else 'BLANK1').kind = wm.render_studio_mat_kind or "-"
+        for name in library_kinds(wm.render_studio_mat_source):
+            layout.operator(RS_OT_material_kind_filter.bl_idname, text=name,
+                            icon='CHECKMARK' if name == wm.render_studio_mat_kind else 'BLANK1').kind = name
 
 
 def _library_groups(search="", source='PROJECT', kind=""):
@@ -1202,9 +1285,11 @@ class RS_PT_material(_SidebarPanel, Panel):
                 grid.operator(RS_OT_material_slot.bl_idname, text=slot.material.name if slot.material else "(empty)",
                               depress=(i == obj.active_material_index)).index = i
 
-        # 2. Its values, right under it
+        # 2. Its values, right under it; its wear in a section of its own
         if material is not None:
             self._draw_settings(box, material, _principled(material), p)
+            if _principled(material) is not None:
+                draw_wear(layout, material)
 
         # 3. Library
         self._draw_library(layout, context, material, None)
@@ -1248,17 +1333,18 @@ class RS_PT_material(_SidebarPanel, Panel):
         source = wm.render_studio_mat_source
         row = box.row(align=True)
         row.prop(wm, "render_studio_mat_search", text="", icon='VIEWZOOM')
+        kinds_here = library_kinds(source)
+        if len(kinds_here) > 1:     # filter by kind: a dropdown with only the kinds this source has
+            sub = row.row(align=True)
+            sub.ui_units_x = 4.5
+            current = wm.render_studio_mat_kind if wm.render_studio_mat_kind in kinds_here else ""
+            sub.menu(RS_MT_material_kind_filter.bl_idname, text=current or "All", icon='FILTER')
         unused = len(unused_materials()) if source == 'PROJECT' else 0
         if unused:
             row.operator(RS_OT_material_clean_unused.bl_idname, text=str(unused), icon='TRASH')
         search = wm.render_studio_mat_search
         kinds = library_kinds(source)
         kind = wm.render_studio_mat_kind if wm.render_studio_mat_kind in kinds else ""
-        if len(kinds) > 1:      # filter by kind: only the kinds this source has
-            chips = box.grid_flow(row_major=True, columns=4, even_columns=True, align=True)
-            chips.scale_y = 0.9
-            for name in kinds:
-                chips.operator(RS_OT_material_kind_filter.bl_idname, text=name, depress=name == kind).kind = name
         _ensure_base_library()
         from .. import setup_flow
         if setup_flow.running() and setup_flow.flow["step"] == "materials":

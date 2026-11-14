@@ -790,6 +790,124 @@ def tabs_unified():
 
 
 @section
+def chat_queue_finish_wear():
+    core, chats = mod("core"), mod("chats")
+    # the chat queue: skills and files of the moment go with the message
+    keep_skills, keep_queue = list(core.active_skills), list(core.chat_queue)
+    core.chat_queue.clear()
+    core.active_skills[:] = ["material"]
+    picture = os.path.join(TMP, "queue_ref.png")
+    img = bpy.data.images.new("queue_ref", 8, 8)
+    img.filepath_raw, img.file_format = picture, 'PNG'
+    img.save()
+    bpy.data.images.remove(img)
+    core.attachments.clear()
+    core.add_attachment(picture)
+    check("chat queue: an empty message is not queued", core.queue_chat("   ") is True and len(core.chat_queue) == 1)
+    core.chat_queue.clear()
+    core.add_attachment(picture)
+    core.queue_chat("/camera make three views")
+    entry = core.chat_queue[0] if core.chat_queue else {}
+    check("chat queue: text, checked skills, the /skill and the files go with it",
+          entry.get("text") == "make three views" and set(entry.get("skills", [])) == {"material", "camera"}
+          and [a["path"] for a in entry.get("attachments", [])] == [picture] and not core.attachments, entry)
+    saved = core._read_json(core.CHAT_QUEUE_FILE, {})
+    check("chat queue: kept on disk", [c["id"] for c in saved.get("chats", [])] == [entry.get("id")])
+    sent = []
+    real_send, real_pause = core._send, core.QUEUE_PAUSE
+    core._send = lambda text, extra=(): sent.append((text, list(extra), [a["path"] for a in core.attachments],
+                                                    list(core.active_skills)))
+    core.QUEUE_PAUSE = 0.0
+    try:
+        core.set_chat_queue_paused(True)
+        core._next_queued_chat(); core._next_queued_chat()
+        check("chat queue: paused waits", not sent and len(core.chat_queue) == 1)
+        core.set_chat_queue_paused(False)
+        core.messages.append({"role": "user", "text": "the chat before"})
+        core._next_queued_chat(); core._next_queued_chat()
+        check("chat queue: next chat starts in a new chat with its own skills and files",
+              len(sent) == 1 and sent[0][0] == "make three views" and set(sent[0][1]) == {"material", "camera"}
+              and sent[0][2] == [picture] and sent[0][3] == [] and not core.chat_queue
+              and not any(m.get("text") == "the chat before" for m in core.messages), sent)
+        check("chat queue: the checked skills are back after", core.active_skills == ["material"])
+    finally:
+        core._send, core.QUEUE_PAUSE = real_send, real_pause
+    core.queue_chat("one more")
+    core.remove_queued_chat(core.chat_queue[0]["id"])
+    check("chat queue: removed", not core.chat_queue)
+    core.attachments.clear()
+    core.active_skills[:] = keep_skills
+    core.chat_queue[:] = keep_queue
+    core.set_chat_queue_paused(False)
+    # Krea: the render's size goes with the request and the result comes back at exactly that size
+    krea = mod("studio.krea")
+    check("krea: nearest ratio", krea.nearest_ratio(1500, 2000) == "3:4" and krea.nearest_ratio(1920, 1080) == "16:9"
+          and krea.nearest_ratio(1080, 1350) == "4:5")
+    body = krea.request_body('NANO', "a hand holds it", "https://x/y.png", 1500, 2000)
+    check("krea: free model gets the render's size", body["width"] == 1500 and body["height"] == 2000
+          and body["aspect_ratio"] == "3:4" and body["resolution"] == "2K" and "Keep the product" in body["prompt"])
+    body = krea.request_body('PRECISE', "a hand holds it.", "https://x/y.png", 1500, 2000)
+    check("krea: precise model edits in place", body["image_url"] == "https://x/y.png" and "width" not in body)
+    render = os.path.join(TMP, "Pod_01.png")
+    img = bpy.data.images.new("pod", 60, 80)
+    img.filepath_raw, img.file_format = render, 'PNG'
+    img.save()
+    bpy.data.images.remove(img)
+    check("krea: the size from the file", tuple(krea.image_size(render)) == (60, 80))
+    first = krea.result_path(render)
+    check("krea: result next to the render, never over it", first == os.path.join(TMP, "Pod_01_krea_01.png"))
+    big = bpy.data.images.new("big", 72, 96)
+    big.filepath_raw, big.file_format = first + ".download", 'PNG'
+    big.save()
+    bpy.data.images.remove(big)
+    krea.fit_size(first, 60, 80)
+    check("krea: result fitted to the render's pixels", tuple(krea.image_size(first)) == (60, 80)
+          and not os.path.exists(first + ".download") and krea.result_path(first).endswith("Pod_01_krea_02.png"))
+    try:
+        krea.start('PRECISE', "x", render, 60, 80) if not krea.token() else None
+        no_token = krea.token() != ""
+    except ValueError:
+        no_token = True
+    check("krea: without a token it says so", no_token)
+    # wear: strength, kind and where, also on a layer made by an older version
+    ms, presets = mod("studio.matstructures"), mod("studio.matpresets")
+    mat = bpy.data.materials.new("Test Wear Kinds")
+    shader = presets._principled(mat)
+    shader.inputs["Roughness"].default_value = 0.3
+    mod("studio.api").wear(mat, scratches=0.6, one_direction=1.0, print_size=2.0, dust_on_top=0.0,
+                           **{"from": 0.1, "to": 0.4})
+    node = mat.node_tree.nodes[ms.NODE_WEAR]
+    check("wear: kinds and height set by name", abs(node.inputs["One Direction"].default_value - 1.0) < 1e-6
+          and abs(node.inputs["Print Size"].default_value - 2.0) < 1e-6 and node.inputs["Dust On Top"].default_value == 0.0
+          and abs(node.inputs["From"].default_value - 0.1) < 1e-6 and abs(node.inputs["To"].default_value - 0.4) < 1e-6
+          and node.inputs["Generated"].is_linked)
+    group = node.node_tree
+    group[ms.VERSION_KEY] = ms.VERSION - 1          # as if made by the version before
+    ms.wear_node(mat)
+    check("wear: an older layer is rebuilt inside, its links and values stay",
+          group.get(ms.VERSION_KEY) == ms.VERSION and node.node_tree == group
+          and shader.inputs["Base Color"].links[0].from_node == node and node.inputs["Generated"].is_linked
+          and abs(node.inputs["Scratches"].default_value - 0.6) < 1e-6 and abs(node.inputs["Roughness"].default_value - 0.3) < 1e-6)
+    bpy.data.materials.remove(mat)
+    # format row: the aspect ratio
+    rs = bpy.context.scene.render_studio
+    keep = (bpy.context.scene.render.resolution_x, bpy.context.scene.render.resolution_y)
+    bpy.ops.render_studio.set_aspect(x=3, y=4)
+    check("format: 3 : 4 sets the picture", (rs.aspect_x, rs.aspect_y) == (3, 4)
+          and bpy.context.scene.render.resolution_x * 4 == bpy.context.scene.render.resolution_y * 3,
+          (bpy.context.scene.render.resolution_x, bpy.context.scene.render.resolution_y))
+    bpy.context.scene.render.resolution_x, bpy.context.scene.render.resolution_y = keep
+    # finish tab: looks saved for every project
+    finish = mod("studio.tab_finish")
+    rs.look_saturation, rs.look_glow = 0.7, 0.2
+    data = finish.capture_look(bpy.context.scene)
+    rs.look_saturation, rs.look_glow = 1.0, 0.0
+    finish.apply_look(bpy.context.scene, data)
+    check("finish: a look comes back", abs(rs.look_saturation - 0.7) < 1e-6 and abs(rs.look_glow - 0.2) < 1e-6)
+    bpy.ops.render_studio.look_reset()
+
+
+@section
 def shots_presets_check():
     scene = bpy.context.scene
     rs = scene.render_studio

@@ -27,7 +27,7 @@ import bpy
 from . import matpresets
 
 PREFIX = "ID | "
-VERSION = 2
+VERSION = 3
 VERSION_KEY = "id_structure_version"
 STRUCTURE_KEY = "id_structure"        # material[STRUCTURE_KEY] = kind
 NODE_GROUP, NODE_BUMP, NODE_MAPPING = "ID Structure", "ID Bump", "ID Mapping"
@@ -154,17 +154,22 @@ def _group(name, inputs, outputs, build):
         return tree
     if tree is None:
         tree = bpy.data.node_groups.new(PREFIX + name, 'ShaderNodeTree')
-    else:
-        tree.nodes.clear()
-        tree.interface.clear()
+    tree.nodes.clear()      # a newer version: the inside again, the sockets (and the links to them) stay
+    have = {(item.in_out, item.name): item for item in tree.interface.items_tree if item.item_type == 'SOCKET'}
+    wanted = {('OUTPUT', label) for label, _kind in outputs} | {('INPUT', i[0]) for i in inputs}
+    for key, item in list(have.items()):
+        if key not in wanted:
+            tree.interface.remove(item)
     for label, kind in outputs:
-        tree.interface.new_socket(label, in_out='OUTPUT', socket_type=kind)
+        if ('OUTPUT', label) not in have:
+            tree.interface.new_socket(label, in_out='OUTPUT', socket_type=kind)
     for label, kind, default, low, high in inputs:
-        socket = tree.interface.new_socket(label, in_out='INPUT', socket_type=kind)
+        socket = have.get(('INPUT', label)) or tree.interface.new_socket(label, in_out='INPUT', socket_type=kind)
         if kind == V:
             socket.hide_value = True
             continue
-        socket.default_value = default
+        if ('INPUT', label) not in have:
+            socket.default_value = default
         if kind == F:
             socket.min_value, socket.max_value = low, high
             if (low, high) == (0.0, 1.0):
@@ -191,6 +196,7 @@ def scratches():
         v = b.vector('SCALE', ins["Vector"], scale=ins["Scale"])
         bend = b.math('MULTIPLY', b.noise(v, 7.0, detail=1.0), 0.02)
         mask = None
+        others = b.math('SUBTRACT', 1.0, ins["One Direction"])     # 1 = only the first direction (drag marks)
         for i, direction in enumerate(directions):
             across = b.math('ADD', b.vector('DOT_PRODUCT', v, direction), bend)
             line = b.math('ABSOLUTE', b.math('SUBTRACT', b.noise_1d(across, 430.0 + 70.0 * i), 0.5))
@@ -198,16 +204,19 @@ def scratches():
             pieces = b.noise(b.vector('ADD', v, (3.1 * i, 1.7, 0.4 * i)), b.math('DIVIDE', 45.0, ins["Length"]), detail=2.0)
             start = b.math('MULTIPLY_ADD', ins["Amount"], -0.3, 0.72)
             layer = b.math('MULTIPLY', line, b.smooth(pieces, start, b.math('ADD', start, 0.06)))
+            if i:
+                layer = b.math('MULTIPLY', layer, others)
             mask = layer if mask is None else b.math('MAXIMUM', mask, layer)
         return {"Mask": mask}
     return _group("Scratches", (("Vector", V, None, 0, 0), ("Scale", F, 1.0, 0.01, 100.0), ("Amount", F, 0.5, 0.0, 1.0),
-                                ("Length", F, 1.0, 0.1, 20.0)), (("Mask", F),), build)
+                                ("Length", F, 1.0, 0.1, 20.0), ("One Direction", F, 0.0, 0.0, 1.0)),
+                  (("Mask", F),), build)
 
 
 def fingerprints():
     """Oval prints with ridges, here and there. Mask: 1 on a ridge."""
     def build(b, ins):
-        v = b.vector('SCALE', ins["Vector"], scale=ins["Scale"])
+        v = b.vector('SCALE', ins["Vector"], scale=b.math('DIVIDE', ins["Scale"], ins["Size"]))
         cells = b.voronoi(v, 22.0)
         local = b.vector('MULTIPLY', b.vector('SUBTRACT', v, cells.outputs["Position"]), (1.0, 0.72, 1.0))
         distance = b.math('ADD', b.vector('LENGTH', local), b.math('MULTIPLY', b.noise(v, 90.0), 0.003))
@@ -215,10 +224,12 @@ def fingerprints():
         area = b.math('SUBTRACT', 1.0, b.smooth(distance, 0.007, 0.012))
         there = b.math('LESS_THAN', b.xyz(cells.outputs["Color"])[0], b.math('MULTIPLY', ins["Amount"], 0.75))
         smear = b.math('MULTIPLY_ADD', b.noise(v, 140.0, detail=3.0), 0.7, 0.3)
-        mask = b.math('MULTIPLY', b.math('MULTIPLY', ridges, area), b.math('MULTIPLY', there, smear))
+        lines = b.blend(ins["Smear"], ridges, 1.0)            # smeared: the ridges blur into a greasy patch
+        mask = b.math('MULTIPLY', b.math('MULTIPLY', lines, area), b.math('MULTIPLY', there, smear))
         return {"Mask": mask}
     return _group("Fingerprints", (("Vector", V, None, 0, 0), ("Scale", F, 1.0, 0.01, 100.0),
-                                   ("Amount", F, 0.4, 0.0, 1.0)), (("Mask", F),), build)
+                                   ("Amount", F, 0.4, 0.0, 1.0), ("Size", F, 1.0, 0.2, 5.0),
+                                   ("Smear", F, 0.2, 0.0, 1.0)), (("Mask", F),), build)
 
 
 def dust():
@@ -226,34 +237,54 @@ def dust():
     def build(b, ins):
         v = b.vector('SCALE', ins["Vector"], scale=ins["Scale"])
         up = b.smooth(b.xyz(b.node('ShaderNodeNewGeometry').outputs["Normal"])[2], 0.1, 0.9)
-        specks = b.smooth(b.noise(v, 2200.0, detail=2.0), 0.6, 0.8)
+        up = b.blend(ins["On Top"], 1.0, up)                  # 0 = everywhere, 1 = only what faces up
+        specks = b.smooth(b.noise(v, b.math('DIVIDE', 2200.0, ins["Size"]), detail=2.0), 0.6, 0.8)
         cover = b.math('MULTIPLY', up, b.smooth(b.noise(v, 9.0, detail=3.0), 0.3, 0.7))
         lying = b.math('MULTIPLY', specks, b.math('MULTIPLY_ADD', up, 0.85, 0.15))
         both = b.math('ADD', b.math('MULTIPLY', cover, 0.5), b.math('MULTIPLY', lying, 0.45))
         return {"Mask": b.math('MULTIPLY', both, ins["Amount"], clamp=True)}
-    return _group("Dust", (("Vector", V, None, 0, 0), ("Scale", F, 1.0, 0.01, 100.0), ("Amount", F, 0.3, 0.0, 1.0)),
-                  (("Mask", F),), build)
+    return _group("Dust", (("Vector", V, None, 0, 0), ("Scale", F, 1.0, 0.01, 100.0), ("Amount", F, 0.3, 0.0, 1.0),
+                           ("On Top", F, 0.8, 0.0, 1.0), ("Size", F, 1.0, 0.2, 5.0)), (("Mask", F),), build)
+
+
+# Inputs of the wear layer, in the order the Material tab shows them: (label, kind, default, min, max)
+WEAR_INPUTS = (
+    ("Vector", V, None, 0, 0), ("Generated", V, None, 0, 0),
+    ("Color", C, rgb(0.8, 0.8, 0.8), 0, 0), ("Roughness", F, 0.5, 0.0, 1.0),
+    ("Scale", F, 1.0, 0.01, 100.0),
+    ("Scratches", F, 0.4, 0.0, 1.0), ("Scratch Length", F, 1.0, 0.1, 20.0),
+    ("One Direction", F, 0.0, 0.0, 1.0), ("Scratch Depth", F, 1.0, 0.0, 5.0),
+    ("Fingerprints", F, 0.3, 0.0, 1.0), ("Print Size", F, 1.0, 0.2, 5.0), ("Smear", F, 0.2, 0.0, 1.0),
+    ("Dust", F, 0.2, 0.0, 1.0), ("Dust On Top", F, 0.8, 0.0, 1.0), ("Dust Size", F, 1.0, 0.2, 5.0),
+    ("Dust Color", C, rgb(0.55, 0.52, 0.47), 0, 0),
+    ("From", F, 0.0, 0.0, 1.0), ("To", F, 1.0, 0.0, 1.0), ("Edge", F, 0.08, 0.0, 0.5),
+)
 
 
 def wear_group():
-    """Scratches, fingerprints and dust over any color and roughness."""
+    """Scratches, fingerprints and dust over any color and roughness. Scratches and prints only between
+    From and To (height on the object, 0 = bottom, 1 = top: e.g. only where a hand holds it)."""
     def build(b, ins):
         v = ins["Vector"]
-        s = b.math('MULTIPLY', b.group(scratches(), Vector=v, Scale=ins["Scale"], Amount=ins["Scratches"]).outputs[0],
-                   b.smooth(ins["Scratches"], 0.0, 0.15))
-        f = b.math('MULTIPLY', b.group(fingerprints(), Vector=v, Scale=ins["Scale"],
-                                       Amount=ins["Fingerprints"]).outputs[0], b.smooth(ins["Fingerprints"], 0.0, 0.15))
-        d = b.group(dust(), Vector=v, Scale=ins["Scale"], Amount=ins["Dust"]).outputs[0]
+        height = b.xyz(ins["Generated"])[2]
+        low = b.smooth(height, b.math('SUBTRACT', ins["From"], ins["Edge"]), ins["From"])
+        high = b.math('SUBTRACT', 1.0, b.smooth(height, ins["To"], b.math('ADD', ins["To"], ins["Edge"])))
+        where = b.math('MULTIPLY', low, high)
+        s = b.group(scratches(), Vector=v, Scale=ins["Scale"], Amount=ins["Scratches"], Length=ins["Scratch Length"],
+                    One_Direction=ins["One Direction"]).outputs[0]
+        s = b.math('MULTIPLY', b.math('MULTIPLY', s, b.smooth(ins["Scratches"], 0.0, 0.15)), where)
+        f = b.group(fingerprints(), Vector=v, Scale=ins["Scale"], Amount=ins["Fingerprints"], Size=ins["Print Size"],
+                    Smear=ins["Smear"]).outputs[0]
+        f = b.math('MULTIPLY', b.math('MULTIPLY', f, b.smooth(ins["Fingerprints"], 0.0, 0.15)), where)
+        d = b.group(dust(), Vector=v, Scale=ins["Scale"], Amount=ins["Dust"], On_Top=ins["Dust On Top"],
+                    Size=ins["Dust Size"]).outputs[0]
         rough = b.math('ADD', b.math('MULTIPLY_ADD', s, 0.3, ins["Roughness"]), b.math('MULTIPLY', f, 0.35), clamp=True)
         color = b.mix(b.math('MULTIPLY', s, 0.2), ins["Color"], rgb(1.0, 1.0, 1.0))
         return {"Color": b.mix(b.math('MULTIPLY', d, 0.6), color, ins["Dust Color"]),
                 "Roughness": b.blend(d, rough, 0.85),
-                "Height": b.math('MULTIPLY_ADD', s, -1.0, b.math('MULTIPLY', d, 0.3))}
-    return _group("Wear", (("Vector", V, None, 0, 0), ("Color", C, rgb(0.8, 0.8, 0.8), 0, 0),
-                           ("Roughness", F, 0.5, 0.0, 1.0), ("Scale", F, 1.0, 0.01, 100.0),
-                           ("Scratches", F, 0.4, 0.0, 1.0), ("Fingerprints", F, 0.3, 0.0, 1.0),
-                           ("Dust", F, 0.2, 0.0, 1.0), ("Dust Color", C, rgb(0.55, 0.52, 0.47), 0, 0)),
-                  (("Color", C), ("Roughness", F), ("Height", F)), build)
+                "Height": b.math('MULTIPLY_ADD', b.math('MULTIPLY', s, ins["Scratch Depth"]), -1.0,
+                                 b.math('MULTIPLY', d, 0.3))}
+    return _group("Wear", WEAR_INPUTS, (("Color", C), ("Roughness", F), ("Height", F)), build)
 
 
 # ------------------------------------------------------------------ the structures
@@ -459,12 +490,24 @@ def set_values(material, values):
     return done
 
 
-def control_nodes(material):
-    """The structure group and the wear layer of a material (their inputs are its controls)."""
+def control_nodes(material, wear=True):
+    """The structure group and (wear=True) the wear layer of a material (their inputs are its controls)."""
     if material is None or material.node_tree is None:
         return []
     nodes = material.node_tree.nodes
-    return [n for n in (nodes.get(NODE_GROUP), nodes.get(NODE_WEAR)) if n is not None and n.type == 'GROUP']
+    found = [nodes.get(NODE_GROUP)] + ([nodes.get(NODE_WEAR)] if wear else [])
+    return [n for n in found if n is not None and n.type == 'GROUP']
+
+
+def wear_node(material):
+    """The wear layer's node (its group made current first), or None."""
+    if not has_wear(material):
+        return None
+    node = material.node_tree.nodes[NODE_WEAR]
+    if node.node_tree is not None and node.node_tree.get(VERSION_KEY) != VERSION:
+        wear_group()                        # an older version: rebuilt inside, the links stay
+        _link_generated(material)
+    return node
 
 
 # ------------------------------------------------------------------ wear on any material
@@ -502,9 +545,25 @@ def add_wear(material, **values):
             tree.links.new(normal.links[0].from_socket, bump.inputs["Normal"])
         tree.links.new(wear.outputs["Height"], bump.inputs["Height"])
         tree.links.new(bump.outputs[0], normal)
+    _link_generated(material)
     if values:
         set_values(material, values)
     return tree.nodes[NODE_WEAR]
+
+
+def _link_generated(material):
+    """The wear layer's height mask needs the object's Generated coordinates (0..1 over its bounds)."""
+    tree = material.node_tree
+    wear = tree.nodes.get(NODE_WEAR)
+    if wear is None or "Generated" not in wear.inputs or wear.inputs["Generated"].is_linked:
+        return
+    mapping = tree.nodes.get(NODE_MAPPING)
+    coord = None
+    if mapping is not None and mapping.inputs["Vector"].is_linked:
+        coord = mapping.inputs["Vector"].links[0].from_node
+    if coord is None or coord.type != 'TEX_COORD':
+        coord = next((n for n in tree.nodes if n.type == 'TEX_COORD'), None) or tree.nodes.new('ShaderNodeTexCoord')
+    tree.links.new(coord.outputs["Generated"], wear.inputs["Generated"])
 
 
 def remove_wear(material):

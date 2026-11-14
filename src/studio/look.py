@@ -172,13 +172,15 @@ class RS_OT_look_reset(bpy.types.Operator):
         return {'FINISHED'}
 
 
-def draw(layout, scene):
+def draw(layout, scene, live=None):
     """Look: exposure, white balance and saturation first (the basics), then the presets with glow,
-    contrast and vignette."""
+    contrast and vignette. live: the viewport shows the look (None: no switch)."""
     from .ui_common import section
     rq = scene.render_studio
     view = scene.view_settings
     box, head, is_open = section(layout, "look", "Look", 'NODE_COMPOSITING')
+    if live is not None:
+        head.operator("render_studio.look_live", text="", icon='HIDE_OFF' if live else 'HIDE_ON', depress=live)
     head.operator(RS_OT_look_reset.bl_idname, text="", icon='LOOP_BACK')
     if not is_open:
         return

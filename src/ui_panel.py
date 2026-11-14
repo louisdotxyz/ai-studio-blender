@@ -529,11 +529,34 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         else:
             placeholder = tr("How can I help?")
 
-        # [ prompt ................ ] [send] [stop]
+        # Chats waiting for the current one: their first words, skills and files; pause, remove
+        if core.chat_queue:
+            queue_box = col.box()
+            head = queue_box.row(align=True)
+            paused = core.chat_queue_paused[0]
+            head.label(text=tr("Next chats ({})").format(len(core.chat_queue)) + (
+                "  ·  " + tr("paused") if paused else ""), icon='NEXT_KEYFRAME', translate=False)
+            head.operator("claude.chat_queue_pause", text="", emboss=False,
+                          icon='PLAY' if paused else 'PAUSE')
+            lines = queue_box.column(align=True)
+            for entry in core.chat_queue:
+                line = lines.row(align=True)
+                words = " ".join((entry.get("text") or tr("(see attachment)")).split())
+                extra = []
+                if entry.get("skills"):
+                    extra.append("%d %s" % (len(entry["skills"]), tr("skills") if len(entry["skills"]) > 1 else tr("skill")))
+                if entry.get("attachments"):
+                    extra.append("%d %s" % (len(entry["attachments"]), tr("files") if len(entry["attachments"]) > 1 else tr("file")))
+                text = (words[:46] + "…" if len(words) > 47 else words) + ("  ·  " + ", ".join(extra) if extra else "")
+                line.label(text=text, translate=False)
+                line.operator("claude.queued_chat_remove", text="", icon='X', emboss=False).chat_id = entry["id"]
+
+        # [ prompt ................ ] [send] [queue as a new chat] [stop]
         row = col.row(align=True)
         row.scale_y = 1.4
         _prop_with_placeholder(row, context.window_manager, "claude_prompt", placeholder)
         row.operator("claude.send", text="", icon='EVENT_RETURN')
+        row.operator("claude.queue_chat", text="", icon='NEXT_KEYFRAME')
         if busy:
             row.operator("claude.stop", text="", icon='SNAP_FACE')
 

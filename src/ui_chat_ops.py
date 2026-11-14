@@ -31,6 +31,46 @@ class CLAUDE_OT_send(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class CLAUDE_OT_queue_chat(bpy.types.Operator):
+    bl_idname = "claude.queue_chat"
+    bl_label = "Queue as New Chat"
+    bl_description = ("Send this message as a new chat that starts when the current one is done. "
+                      "It keeps the checked skills and the attached files")
+
+    def execute(self, context):
+        wm = context.window_manager
+        if not wm.claude_prompt.strip() and not core.attachments:
+            self.report({'WARNING'}, tr("Write a message first"))
+            return {'CANCELLED'}
+        if core.queue_chat(wm.claude_prompt):
+            ui_menus._clear_prompt(wm)
+        return {'FINISHED'}
+
+
+class CLAUDE_OT_queued_chat_remove(bpy.types.Operator):
+    bl_idname = "claude.queued_chat_remove"
+    bl_label = "Remove from Queue"
+    bl_description = "Take this message out of the queue"
+    bl_options = {'INTERNAL'}
+
+    chat_id: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    def execute(self, context):
+        core.remove_queued_chat(self.chat_id)
+        return {'FINISHED'}
+
+
+class CLAUDE_OT_chat_queue_pause(bpy.types.Operator):
+    bl_idname = "claude.chat_queue_pause"
+    bl_label = "Pause Queue"
+    bl_description = "Pause or continue the queued chats"
+    bl_options = {'INTERNAL'}
+
+    def execute(self, context):
+        core.set_chat_queue_paused(not core.chat_queue_paused[0])
+        return {'FINISHED'}
+
+
 class CLAUDE_OT_stop(bpy.types.Operator):
     bl_idname = "claude.stop"
     bl_label = "Stop"

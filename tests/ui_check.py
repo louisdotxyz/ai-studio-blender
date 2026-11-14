@@ -190,6 +190,14 @@ sys.modules[PKG + ".studio.tab_material"].toggle_favorite(structure_mat.name)
 wm.render_studio_mat_kind = "Metal"
 run(bpy.types.RS_PT_material, ctx)
 wm.render_studio_mat_kind = ""
+run(bpy.types.RS_MT_material_kind_filter, ctx)
+wm.render_studio_tab = 'FINISH'
+run(bpy.types.RS_PT_finish, ctx)
+run(bpy.types.RS_PT_finish_settings, ctx)
+run(bpy.types.RS_MT_finish_presets, ctx)
+run(bpy.types.RS_MT_aspect, ctx)
+run(bpy.types.RS_MT_formats, ctx)
+wm.render_studio_tab = 'MATERIAL'
 for source in ('PROJECT', 'LIBRARY', 'FAVORITES'):
     for lib_view in ('TILES', 'LIST'):
         wm.render_studio_mat_source = source
@@ -259,6 +267,17 @@ gate.set()
 flow.flow["thread"].join()
 flow.flow.update(step="", installer=None)
 run(bpy.types.CLAUDE_PT_chat, ctx)
+# the chat with two queued chats (one paused)
+core_mod = sys.modules[PKG + ".core"]
+keep_queue = list(core_mod.chat_queue)
+core_mod.chat_queue[:] = [{"id": "a", "text": "make three views of the pod " * 3, "skills": ["camera", "light"],
+                           "attachments": [{"name": "x.png", "kind": "image", "path": "/nonexistent/x.png"}]},
+                          {"id": "b", "text": "", "skills": [], "attachments": []}]
+for paused in (False, True):
+    core_mod.chat_queue_paused[0] = paused
+    run(bpy.types.CLAUDE_PT_chat, ctx)
+core_mod.chat_queue[:] = keep_queue
+core_mod.chat_queue_paused[0] = False
 # every section of the add-on's preferences (Chat, Files, Renders, Studio with Onshape, …)
 addon_prefs = bpy.context.preferences.addons[PKG].preferences
 

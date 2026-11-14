@@ -636,6 +636,11 @@ def _frame_update(_self, _context):
 class RS_Preferences(PropertyGroup):
     """Studio settings, shown in the extension's preferences (formerly their own add-on)."""
 
+    krea_token: StringProperty(
+        name="Krea API Token", subtype='PASSWORD',
+        description="For refining renders in the Finish tab (krea.ai/app/api/tokens). Uses the API balance of "
+                    "your Krea workspace, not the plan's credits")
+
     # Camera frame (passepartout) in the viewport, see sync.py
     frame_auto: BoolProperty(
         name="Auto Fit",
@@ -783,12 +788,13 @@ class RS_Preferences(PropertyGroup):
         col.prop(self, "notify")
 
     def draw_studio(self, layout):
-        """Preferences › Studio: HDRIs, base materials, names."""
+        """Preferences › Studio: HDRIs, base materials, names, Krea."""
         col = layout.column()
         col.use_property_split = True
         col.prop(self, "hdri_folder")
         col.prop(self, "material_library")
         col.prop(self, "name_scheme")
+        col.prop(self, "krea_token")
 
     def draw_advanced(self, layout):
         """Preferences › Advanced: the Studio part (folder names, collections, shortcuts)."""

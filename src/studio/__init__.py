@@ -16,7 +16,7 @@ from bpy.props import (EnumProperty, PointerProperty, StringProperty)
 from bpy.types import Operator, Panel
 
 from . import (addons, background, cameras, claude_link, core, env_ui, environment, foreign, hdri,
-               light_paint, light_ui, lights, presets_io, runner, shots, sync, tab_queue)
+               light_paint, light_ui, lights, presets_io, runner, shots, sync, tab_finish, tab_queue)
 # Loaded for their side effects: the chat finds claude_tools (Claude's studio_* tools) in
 # sys.modules; api and variants are the helpers in execute_python.
 from . import api, baselib, claude_tools, light_items, looks, variants  # noqa: F401
@@ -24,7 +24,7 @@ from .props import (RS_CameraSettings, RS_HdriPin, RS_Item, RS_LightSettings, RS
                     RS_Settings, _apply_clipping)
 from .ui_common import STUDIO_TABS, _queue_progress_text, _unpin
 from .keymaps import register_keymaps, unregister_keymaps
-from .tab_camera import (RS_MT_camera_presets, RS_OT_camera_back, RS_OT_camera_from_view, RS_OT_camera_preset,
+from .tab_camera import (RS_MT_aspect, RS_MT_formats, RS_OT_set_aspect, RS_MT_camera_presets, RS_OT_camera_back, RS_OT_camera_from_view, RS_OT_camera_preset,
                          RS_OT_dof_focus, RS_OT_duplicate_camera,
                          RS_OT_fit_frame, RS_OT_reset_frame, RS_OT_set_camera, RS_OT_set_fstop,
                          RS_OT_set_lens, RS_OT_toggle_ortho, RS_OT_set_resolution, RS_OT_set_scale, RS_PT_camera, RS_PT_frame)
@@ -38,7 +38,7 @@ from .tab_material import (RS_MT_material_more, RS_MT_material_new, RS_MT_materi
                            RS_OT_material_clean_unused, RS_OT_material_delete, RS_OT_material_favorite,
                            RS_OT_material_rename, RS_OT_material_select, RS_OT_material_variant,
                            draw_tile_menu, RS_OT_material_duplicate, RS_OT_material_group_toggle, RS_OT_material_new,
-                           RS_OT_material_kind, RS_OT_material_kind_filter, RS_OT_material_structure, RS_OT_material_to_base,
+                           RS_OT_material_kind, RS_OT_material_kind_filter, RS_MT_material_kind_filter, RS_OT_material_structure, RS_OT_material_to_base,
                            RS_OT_material_wear,
                            RS_OT_material_preset, RS_OT_material_preset_delete, RS_OT_material_preset_save,
                            RS_OT_material_presets_io, RS_OT_material_slot, RS_OT_material_unlink,
@@ -90,9 +90,17 @@ class RS_PT_tabs(Panel):
 
     def draw(self, context):
         _unpin(self)
+        # five tabs: the open one with its name, the others as icons (all names fit only in a wide sidebar)
+        wm = context.window_manager
         row = self.layout.row(align=True)
         row.scale_y = 1.3
-        row.prop(context.window_manager, "render_studio_tab", expand=True)
+        wide = context.region is not None and context.region.width > 520 * context.preferences.system.ui_scale
+        for key, name, _text, icon, _n in STUDIO_TABS:
+            show = wide or key == wm.render_studio_tab
+            sub = row.row(align=True)
+            if not show:
+                sub.ui_units_x = 1.6
+            sub.prop_enum(wm, "render_studio_tab", key, text=name if show else "", icon=icon)
         if RUN.busy:   # rendering: compact, in every sub-tab – ring for the queue, ✕ cancels
             row = self.layout.row(align=True)
             row.progress(factor=RUN.list_progress, type='BAR', text=_queue_progress_text())
@@ -141,6 +149,9 @@ classes = render_setup.classes + (
     RS_OT_camera_from_view,
     RS_OT_camera_preset,
     RS_MT_camera_presets,
+    RS_OT_set_aspect,
+    RS_MT_aspect,
+    RS_MT_formats,
     RS_OT_show_render,
     RS_OT_set_lens,
     RS_OT_toggle_ortho,
@@ -174,6 +185,7 @@ classes = render_setup.classes + (
     RS_OT_material_wear,
     RS_OT_material_kind,
     RS_OT_material_kind_filter,
+    RS_MT_material_kind_filter,
     RS_OT_material_rename,
     RS_OT_material_delete,
     RS_OT_material_clean_unused,
@@ -275,6 +287,7 @@ def register():
     env_ui.register()
     light_paint.register()
     light_ui.register()
+    tab_finish.register()
     presets_io.register()
     shots.register()
     cad_link.register()
@@ -298,6 +311,7 @@ def unregister():
     cad_link.unregister()
     shots.unregister()
     presets_io.unregister()
+    tab_finish.unregister()
     light_ui.unregister()
     light_paint.unregister()
     env_ui.unregister()
