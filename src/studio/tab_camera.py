@@ -374,7 +374,7 @@ class STUDIO_PT_camera(_SidebarPanel, Panel):
         col = box.column(align=True)
         row = col.row(align=True)
         if data.type == 'ORTHO':
-            row.prop(rq, "cam_ortho_scale", text="Ortho Scale")
+            row.prop(data, "ortho_scale", text="Ortho Scale")
         else:
             row.prop(data, "lens", text="Focal Length")
         row.operator(STUDIO_OT_toggle_ortho.bl_idname, text="",
@@ -405,7 +405,9 @@ class STUDIO_PT_camera(_SidebarPanel, Panel):
                  text="%d × %d" % (round(render.resolution_x * pct), round(render.resolution_y * pct)))
 
         # Orbit around the picked object (or the 3D cursor)
-        box, _head, is_open = section(layout, "orbit", "Orbit", 'ORIENTATION_GIMBAL')
+        box, head, is_open = section(layout, "orbit", "Orbit", 'ORIENTATION_GIMBAL')
+        from . import keys
+        keys.button(head, 'ORBIT')
         if is_open:
             col = box.column(align=True)
             col.enabled = not locked
@@ -477,8 +479,8 @@ class STUDIO_PT_frame(Panel):
         box.prop(p, "min_clipping")
         if cam is not None and cam.type == 'CAMERA' and not p.min_clipping:
             row = box.row(align=True)
-            row.prop(context.scene.studio, "cam_clip_start", text="Start")
-            row.prop(context.scene.studio, "cam_clip_end", text="End")
+            row.prop(cam.data, "clip_start", text="Start")
+            row.prop(cam.data, "clip_end", text="End")
 
         layout.label(text="Camera Frame", icon='SELECT_SET')
         layout.prop(p, "frame_auto")
@@ -523,7 +525,7 @@ def draw_dof(layout, cam, space):
     row.operator(STUDIO_OT_dof_focus.bl_idname, text="", icon='PIVOT_CURSOR').target = "ORBIT"
     row.operator(STUDIO_OT_dof_focus.bl_idname, text="", icon='RESTRICT_SELECT_OFF').target = "ACTIVE"
     if dof.focus_object is None:
-        layout.prop(bpy.context.scene.studio, "cam_focus_distance", text="Focus Distance")   # 1 mm steps
+        layout.prop(dof, "focus_distance", text="Focus Distance")
     hint = dof_hint(space)
     if hint:
         row = layout.row()

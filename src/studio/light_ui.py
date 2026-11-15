@@ -319,6 +319,9 @@ def draw_open_light(layout, context):
         power = row.row(align=True)
         power.ui_units_x = 4.5
         power.prop(obj.data, "energy", text="")
+    if item[0] != 'PIN':
+        from . import keys
+        keys.button(row, 'LIGHT')
     _set_item(row.operator(STUDIO_OT_light_open.bl_idname, text="", icon='X'), item)
     if item[0] == 'PIN':
         _draw_pin(box, context, item)

@@ -512,6 +512,8 @@ class STUDIO_PT_lighting(_SidebarPanel, Panel):
 
         # World: one line (what it is, how bright); everything else inside
         box, head, is_open = section(layout, "world", "World", 'WORLD', default_open=False)
+        from . import keys
+        keys.button(head, 'WORLD')
         path = hdri.current_path(scene)
         name = {'STUDIO': "Studio", 'SKY': "Sky"}.get(rs.world_mode) or (hdri.display_name(path) if path else "")
         if name:

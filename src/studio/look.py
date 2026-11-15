@@ -184,6 +184,8 @@ def draw(layout, scene, live=None, menu=None):
     if live is not None:
         head.operator("studio.look_live", text="", icon='HIDE_OFF' if live else 'HIDE_ON', depress=live)
     head.operator(STUDIO_OT_look_reset.bl_idname, text="", icon='LOOP_BACK')
+    from . import keys
+    keys.button(head, 'LOOK')
     if not is_open:
         return
     col = box.column(align=True)

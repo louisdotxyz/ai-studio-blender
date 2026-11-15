@@ -2369,5 +2369,35 @@ def three_zero():
                      'RENDERING')
     check("film: part, frames, time left", "Part 2/4" in line and "250/960" in line and "left" in line, line)
 
+@section
+def orbit_keys():
+    """Orbit keys: the camera on a pivot keeps its place, and between two keys it moves on an arc."""
+    orbit, keys = mod("studio.orbit"), mod("studio.keys")
+    scene = bpy.context.scene
+    data = bpy.data.cameras.new("Arc Test")
+    cam = bpy.data.objects.new("Arc Test", data)
+    scene.collection.objects.link(cam)
+    cam.matrix_world = orbit.orbit_matrix(Vector((0, 0, 0)), 0.0, 0.3, 2.0, Vector((1, 1, 1)))
+    bpy.context.view_layer.update()
+    before = cam.matrix_world.translation.copy()
+    pivot = orbit.rig(cam, 2.0)
+    bpy.context.view_layer.update()
+    keep = scene.frame_current
+    try:
+        check("pivot: camera stays where it was", (cam.matrix_world.translation - before).length < 1e-4,
+              cam.matrix_world.translation)
+        keys.key_camera(scene, cam, 1)
+        pivot.rotation_euler.z = 1.5
+        keys.key_camera(scene, cam, 21)
+        scene.frame_set(11)
+        mid = cam.matrix_world.translation - pivot.matrix_world.translation
+        check("keys: an arc between the keys", abs(mid.length - 2.0) < 1e-3 and 0.3 < pivot.rotation_euler.z < 1.2,
+              (mid.length, pivot.rotation_euler.z))
+    finally:
+        scene.frame_set(keep)
+        bpy.data.objects.remove(cam)
+        bpy.data.objects.remove(pivot)
+
+
 ok = all(results)
 print("FUNCTIONAL_OK" if ok else "FUNCTIONAL_FAIL", "%d/%d" % (sum(results), len(results)))

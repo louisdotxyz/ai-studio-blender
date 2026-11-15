@@ -683,6 +683,7 @@ class Runner:
             frames = (scene.frame_start, scene.frame_end)
         stem = os.path.basename(core.anim_frame_pattern(folder, camera.name, name)).rstrip("_")
         video = scene.studio.anim_format if scene.studio.anim_format in film.VIDEOS else None
+        job = dict(job, camera=None)    # the real camera with its keys (no still copy at one place)
         try:
             film.start(scene, job, folder, stem, frames, item.parts or 1, video, label)
         except Exception as ex:

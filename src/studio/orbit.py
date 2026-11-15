@@ -13,6 +13,7 @@ view keeps its direction.
 
 import math
 
+import bpy
 from mathutils import Matrix, Vector
 
 from . import cameras
@@ -105,13 +106,76 @@ def set_orbit(camera, target, horizontal=None, vertical=None, distance=None, lif
     d = cur_d if distance is None else distance
     v = max(-MAX_VERTICAL, min(MAX_VERTICAL, v))
     d = max(MIN_DISTANCE, d)
-    camera.matrix_world = orbit_matrix(target_center(target, lift), h, v, d, camera.matrix_world.to_scale())
+    put(camera, orbit_matrix(target_center(target, lift), h, v, d, camera.matrix_world.to_scale()), d)
 
 
 def aim(camera, target, lift=0.0):
     """Camera stays where it is and looks at the object."""
-    camera.matrix_world = look_at_matrix(camera.matrix_world.translation.copy(), target_center(target, lift),
-                                         camera.matrix_world.to_scale())
+    center = target_center(target, lift)
+    put(camera, look_at_matrix(camera.matrix_world.translation.copy(), center, camera.matrix_world.to_scale()),
+        (camera.matrix_world.translation - center).length)
+
+
+# The pivot (for keyframes): the camera hangs on an empty in the middle of its orbit, so keys on the
+# empty's turn and the camera's distance give an arc between two keys (a turntable), not a straight
+# line. The empty: X turned by −vertical around Y, then by horizontal around Z; the camera sits at
+# (distance, 0, 0) on it and looks back at it.
+PIVOT_KEY = "studio_pivot"
+_ON_PIVOT = Matrix(((0, 0, 1, 0), (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 0, 1)))
+
+
+def pivot_of(camera):
+    parent = camera.parent if camera is not None else None
+    return parent if parent is not None and parent.get(PIVOT_KEY) else None
+
+
+def _angles(matrix):
+    z = matrix.to_3x3().normalized().col[2]
+    vertical = math.asin(max(-1.0, min(1.0, z.z)))
+    if math.hypot(z.x, z.y) > 1e-6:
+        return math.atan2(z.y, z.x), vertical
+    x = matrix.to_3x3().normalized().col[0]
+    return math.atan2(-x.x, x.y), vertical
+
+
+def put(camera, matrix, distance=None):
+    """Place the camera (its world matrix, no roll); on a pivot the pivot turns and moves instead."""
+    pivot = pivot_of(camera)
+    if pivot is None:
+        camera.matrix_world = matrix
+        return
+    d = max(MIN_DISTANCE, distance if distance is not None else (camera.location.x or 1.0))
+    h, v = _angles(matrix)
+    before = pivot.rotation_euler.z                     # no jump 359° → 1° between keys
+    h = before + (h - before + math.pi) % (2 * math.pi) - math.pi
+    direction = Vector((math.cos(v) * math.cos(h), math.cos(v) * math.sin(h), math.sin(v)))
+    pivot.rotation_mode = 'XYZ'
+    pivot.location = matrix.translation - direction * d
+    pivot.rotation_euler = (0.0, -v, h)
+    scale = camera.scale.copy()
+    camera.matrix_parent_inverse = Matrix.Identity(4)
+    camera.rotation_mode = 'XYZ'
+    camera.location = (d, 0.0, 0.0)
+    camera.rotation_euler = _ON_PIVOT.to_euler('XYZ')
+    camera.scale = scale
+
+
+def rig(camera, distance):
+    """The camera's pivot (made the first time, in the camera's collection)."""
+    pivot = pivot_of(camera)
+    if pivot is not None:
+        return pivot
+    matrix = camera.matrix_world.copy()
+    pivot = bpy.data.objects.new(camera.name + "_pivot", None)
+    pivot[PIVOT_KEY] = True
+    pivot.empty_display_type = 'SPHERE'
+    pivot.empty_display_size = 0.01
+    pivot.hide_render = True
+    for coll in camera.users_collection or [bpy.context.scene.collection]:
+        coll.objects.link(pivot)
+    camera.parent = pivot
+    put(camera, matrix, distance)
+    return pivot
 
 
 # Getters/setters for the scene properties (STUDIO_Settings) ---------------------
@@ -147,7 +211,7 @@ def _center(settings, camera, horizontal, vertical=None):
 # was not moved otherwise, the fields show exactly what was set (0° stays 0°, 90° stays 90° also
 # after Height, Left / Right …). Recomputing them from the position drifts (rounding, the
 # straight top view) and made the values jump.
-ORBIT_KEY = "_rs_orbit"
+ORBIT_KEY = "_studio_orbit"
 
 
 def _flat(matrix):
@@ -177,6 +241,9 @@ def camera_orbit(settings, camera=None):
     camera = camera or settings.id_data.camera
     if camera is None:
         return 0.0, 0.0, 0.0
+    pivot = pivot_of(camera)
+    if pivot is not None:                 # exact also while keys play
+        return pivot.rotation_euler.z, -pivot.rotation_euler.y, camera.location.x
     stored = stored_orbit(camera)
     if stored is not None:
         return stored
@@ -186,8 +253,8 @@ def camera_orbit(settings, camera=None):
 def _place(settings, camera, horizontal, vertical, distance):
     vertical = max(-MAX_VERTICAL, min(MAX_VERTICAL, vertical))
     distance = max(MIN_DISTANCE, distance)
-    camera.matrix_world = orbit_matrix(_center(settings, camera, horizontal, vertical), horizontal, vertical,
-                                       distance, camera.matrix_world.to_scale())
+    put(camera, orbit_matrix(_center(settings, camera, horizontal, vertical), horizontal, vertical,
+                             distance, camera.matrix_world.to_scale()), distance)
     remember(camera, (horizontal, vertical, distance))
 
 
@@ -201,6 +268,15 @@ def _setter(index):
     def set_(settings, value):
         camera = _camera(settings)
         if camera is None:
+            return
+        pivot = pivot_of(camera)
+        if pivot is not None:             # on the pivot: only its turn or the distance changes
+            if index == 0:
+                pivot.rotation_euler.z = value
+            elif index == 1:
+                pivot.rotation_euler.y = -max(-MAX_VERTICAL, min(MAX_VERTICAL, value))
+            else:
+                camera.location.x = max(MIN_DISTANCE, value)
             return
         values = list(camera_orbit(settings, camera))
         values[index] = value
@@ -220,7 +296,7 @@ def set_height(settings, value):
     values = camera_orbit(settings, camera)
     matrix = camera.matrix_world.copy()
     matrix.translation.z += value - settings.orbit_lift
-    camera.matrix_world = matrix
+    put(camera, matrix)
     settings.orbit_lift = value
     remember(camera, values)
 
@@ -237,7 +313,7 @@ def set_side(settings, value):
     values = camera_orbit(settings, camera)
     matrix = camera.matrix_world.copy()
     matrix.translation += _right(values[0]) * (value - settings.orbit_side)
-    camera.matrix_world = matrix
+    put(camera, matrix)
     settings.orbit_side = value
     remember(camera, values)
 
@@ -255,7 +331,7 @@ def set_up(settings, value):
     values = camera_orbit(settings, camera)
     matrix = camera.matrix_world.copy()
     matrix.translation += _up(values[0], values[1]) * (value - settings.orbit_up)
-    camera.matrix_world = matrix
+    put(camera, matrix)
     settings.orbit_up = value
     remember(camera, values)
 
