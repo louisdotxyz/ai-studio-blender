@@ -17,7 +17,7 @@ from bpy.types import Operator, Panel
 
 from . import (addons, background, cameras, claude_link, core, env_ui, environment, foreign, hdri,
                light_paint, light_ui, lights, presets_io, render_size, runner, shots, sync, tab_finish, tab_queue,
-               variants_ab, chat_render, render_review, film, migrate, keys, motion, tab_anim)
+               variants_ab, chat_render, render_review, film, migrate, keys, motion, tab_anim, project)
 # Loaded for their side effects: the chat finds claude_tools (Claude's studio_* tools) in
 # sys.modules; api and variants are the helpers in execute_python.
 from . import api, baselib, claude_tools, light_items, looks, variants  # noqa: F401
@@ -96,10 +96,12 @@ class STUDIO_PT_tabs(Panel):
         _unpin(self)
         # five tabs as five equal icons: always the same size, whatever is open (names in the tooltips)
         wm = context.window_manager
-        grid = self.layout.grid_flow(row_major=True, columns=len(STUDIO_TABS), even_columns=True, align=True)
-        grid.scale_y = 1.3
+        row = self.layout.row(align=True)
+        row.scale_y = 1.3
+        grid = row.grid_flow(row_major=True, columns=len(STUDIO_TABS), even_columns=True, align=True)
         for key, _name, _text, icon, _n in STUDIO_TABS:
             grid.prop_enum(wm, "studio_tab", key, text="", icon=icon)
+        row.popover("STUDIO_PT_project", text="", icon='FILE_BLEND')   # scenes, archive, CAD rules
 
 
 # ------------------------------------------------------------------ Register
@@ -297,6 +299,7 @@ def register():
     keys.register()
     motion.register()
     tab_anim.register()
+    project.register()
     chat_render.register()
     render_size.register()
     presets_io.register()
@@ -324,6 +327,7 @@ def unregister():
     keys.unregister()
     motion.unregister()
     tab_anim.unregister()
+    project.unregister()
     cad_link.unregister()
     shots.unregister()
     presets_io.unregister()

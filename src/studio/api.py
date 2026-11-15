@@ -837,3 +837,56 @@ def look(name=None, new=False, scene=None):
     index = looks.active(scene)
     names = looks.names(scene)
     return {"looks": names, "open": names[index] if index >= 0 else None, "notes": notes}
+
+
+# ------------------------------------------------------------------ project (several scenes, CAD, archive)
+
+def sync_scenes(source=None, targets=None, look=True, props=True, lights=True):
+    """Copy the look, the scene's own properties (Glow …) and light values from `source` (default: open
+    scene) into the other scenes; lights matched by name without the scene's word ("light present").
+    Returns one line per scene."""
+    from . import project
+    return project.sync_scenes(source, targets, look, props, lights)
+
+
+def copy_scene(word, scene=None):
+    """A full copy of the scene named "<name> <word>" ("present"), its objects, collections and materials
+    ending with " <word>" instead of ".001". Returns the new scene's name."""
+    from . import project
+    return project.copy_scene(word, scene).name
+
+
+def cad_rules(rules=None):
+    """The file's CAD rules: [{"match": "Huelle", "material": "TPU", "parent": "Empty Pod"}, …] (match is a
+    regex on the part name). With `rules` they are replaced. Every CAD import applies them. Returns them."""
+    from . import project
+    return project.set_cad_rules(rules) if rules is not None else project.cad_rules()
+
+
+def archive_overview():
+    """[(collection, objects, triangles)] of the archive and its versions."""
+    from . import project
+    return project.archive_overview()
+
+
+def export_archive(names, remove=False):
+    """Write archive collections (with their objects) into <file>_archiv.blend; remove=True then takes them
+    out of this file (ask the user first). Returns the path."""
+    from . import project
+    return project.export_archive(list(names), remove=remove)
+
+
+def light_link(light, targets, name=None):
+    """`light` (object or name) lights only `targets` (objects/collections or names); nested collections
+    are made flat. Returns the receiver collection's name."""
+    from . import project
+    light = bpy.data.objects[light] if isinstance(light, str) else light
+    resolved = [bpy.data.collections.get(t) or bpy.data.objects.get(t) if isinstance(t, str) else t for t in targets]
+    return project.light_link(light, [t for t in resolved if t is not None], name).name
+
+
+def material_slider(name, materials, socket, value=0.5, minimum=0.0, maximum=1.0):
+    """One slider for several materials: a property `name` on every scene drives `socket` ("Roughness") of
+    each material through an Attribute node. Returns the materials changed."""
+    from . import project
+    return project.material_slider(name, materials, socket, value, minimum, maximum)

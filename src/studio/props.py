@@ -396,6 +396,10 @@ class STUDIO_Settings(PropertyGroup):
     low_denoise: BoolProperty(name="Denoise", description="Always denoise Low Quality renders (Cycles)",
                               default=True)
     name_pattern: EnumProperty(name="File Names", items=core.NAME_PATTERNS, default='NAME_CAM')
+    name_template: StringProperty(
+        name="Template", default="{name}_{camera}",
+        description="File name of renders: {name} {camera} {quality} {date} {scene} and the scene's own "
+        "properties, e.g. {Farbe} ({NCS}) - {Lasur} - {camera}; the number comes after it")
     output_name: StringProperty(
         name="Name",
         description="Name for the folder and the files. Empty = name of the blend file",

@@ -116,7 +116,35 @@ NAME_PATTERNS = (
     ('CAM', "Camera_01", "Only camera and number"),
     ('NAME_CAM_DATE', "Name_Camera_Date_01", "With today's date"),
     ('NAME_CAM_Q', "Name_Camera_HQ_01", "With the quality (preview or HQ)"),
+    ('TEMPLATE', "Template", "Your own: {name} {camera} {quality} {date} {scene} and the scene's own "
+     "properties, e.g. {Farbe} ({NCS}) - {Lasur} - {camera}"),
 )
+
+
+def template_stem(template, camera_name, name="", blend_filepath=None, quality=None, scene=None):
+    """A file name from a template; unknown fields are left out."""
+    import string
+    import time
+    scene = scene or bpy.context.scene
+    fields = {"name": project_name(blend_filepath, name), "camera": camera_name, "ansicht": camera_name,
+              "quality": folder_names().get(quality, "") if quality else "", "date": time.strftime("%Y-%m-%d"),
+              "scene": scene.name if scene else ""}
+    try:
+        for key, value in scene.items():
+            if isinstance(value, (str, int, float)):
+                fields.setdefault(key, value if not isinstance(value, float) else "%g" % value)
+    except (TypeError, AttributeError):
+        pass
+
+    class Fields(dict):
+        def __missing__(self, key):
+            return self.get(key.lower(), "")
+
+    try:
+        text = string.Formatter().vformat(template, (), Fields(fields))
+    except (ValueError, IndexError):
+        text = template
+    return safe_name(text)
 
 
 def _stem(camera_name, name="", blend_filepath=None, quality=None):
@@ -133,6 +161,13 @@ def _stem(camera_name, name="", blend_filepath=None, quality=None):
     if pattern == 'NAME_CAM_DATE':
         import time
         return "%s_%s_%s" % (project, cam, time.strftime("%Y-%m-%d"))
+    if pattern == 'TEMPLATE':
+        try:
+            template = bpy.context.scene.studio.name_template
+        except AttributeError:
+            template = ""
+        if template.strip():
+            return template_stem(template, camera_name, name, blend_filepath, quality)
     if pattern == 'NAME_CAM_Q' and quality in QUALITIES:
         return "%s_%s_%s" % (project, cam, folder_names()[quality])
     return "%s_%s" % (project, cam)

@@ -710,6 +710,8 @@ class STUDIO_PT_output(Panel):
         box = layout.box()
         box.label(text="File Names", icon='SORTALPHA')
         box.prop(rq, "name_pattern", text="")
+        if rq.name_pattern == 'TEMPLATE':
+            box.prop(rq, "name_template", text="", icon='SORTALPHA')
 
         # Behaviour
         if p is not None:

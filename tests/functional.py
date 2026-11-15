@@ -2445,5 +2445,34 @@ def skills_switch_themselves():
           and (sort is None or skills.is_once(sort)), names)
 
 
+@section
+def project_tools():
+    """CAD rules give materials, a slider drives several materials, a file name template."""
+    project, core_s = mod("studio.project"), mod("studio.core")
+    mat = bpy.data.materials.new("TPU Rule")
+    part = bpy.data.objects.new("Pod Huelle links", bpy.data.meshes.new("Pod Huelle links"))
+    bpy.context.scene.collection.objects.link(part)
+    keep = project.cad_rules()
+    try:
+        project.set_cad_rules([{"match": "huelle", "material": "TPU Rule"}])
+        done = project.apply_cad_rules([part])
+        check("CAD rules: material after the name", part.active_material == mat and done, done)
+        slider = bpy.data.materials.new("Slider Test")
+        slider.use_nodes = True
+        changed = project.material_slider("Rauheit Test", [slider], "Roughness", 0.3)
+        check("material slider: scene property drives the material", changed == ["Slider Test"]
+              and bpy.context.scene["Rauheit Test"] == 0.3, changed)
+        bpy.context.scene["Farbe"] = "Rot"
+        stem = core_s.template_stem("{Farbe} - {camera} {unknown}", "P_front_01")
+        check("name template", stem == "Rot - P_front_01", stem)
+    finally:
+        project.set_cad_rules(keep)
+        bpy.data.objects.remove(part)
+        for key in ("Rauheit Test", "Farbe"):
+            for scene in bpy.data.scenes:
+                if key in scene:
+                    del scene[key]
+
+
 ok = all(results)
 print("FUNCTIONAL_OK" if ok else "FUNCTIONAL_FAIL", "%d/%d" % (sum(results), len(results)))

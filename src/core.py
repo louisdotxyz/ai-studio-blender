@@ -44,6 +44,11 @@ Pitfalls from earlier errors (Blender {version}):
 again by name in every call, also inside your helper functions from earlier calls (pass names, not \
 objects). After a failed call, define its values again. After a join, the joined-away objects are gone.
 - Never use C, D, T, M, V, api or np as your own names (they are predefined).
+- Several scenes: api.sync_scenes() copies look, the scene's own properties and light values into the \
+others; api.copy_scene("present") copies a scene with a word instead of ".001". CAD: api.cad_rules([...]) \
+keeps rules in the file (part name regex → material, empty), every import applies them. A big archive: \
+api.archive_overview(), api.export_archive(names, remove=True) (ask first). api.light_link(light, targets) \
+makes nested collections flat; api.material_slider(name, materials, "Roughness") makes one slider for many.
 - Since 3.0 the add-on's data is scene.studio, obj.studio_camera, obj.studio_light, bpy.ops.studio.* \
 (older notes and skills may say render_studio: that name is gone).
 - Geometry Nodes modifier inputs: getattr(mod.properties.inputs, item.identifier) with the identifiers \

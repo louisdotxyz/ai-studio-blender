@@ -282,6 +282,8 @@ def cad_import(path, take_over=True, materials=True, collections=True, setup=Tru
     report["check"] = cadswap.check(objects, floor=bool((sidecar or {}).get("floor", sidecar is None)))
     report["size_off"], report["missing_parts"] = size_check(objects, sidecar, tolerance_mm)
     report["variants"] = write_variants((sidecar or {}).get("variants"), meshes)
+    from . import project
+    report["rules"] = project.apply_cad_rules(meshes)   # the file's CAD rules (material, empty)
     folder = os.path.dirname(_last["file"])
     report["feedback_open"] = cadfiles.open_feedback(folder)
     for obj in bpy.context.view_layer.objects:
