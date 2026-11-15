@@ -2217,13 +2217,16 @@ def release_1_0():
     del os.environ["AI_STUDIO_LIVE_FILE"]
     folder = bridge.INSTANCES
     os.makedirs(folder, exist_ok=True)
-    for pid, name, active in ((os.getpid(), "/x/VELO_now.blend", 2.0), (os.getppid(), "/x/Lampe.blend", 1.0)):
+    import subprocess
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])   # a second "Blender"
+    for pid, name, active in ((os.getpid(), "/x/VELO_now.blend", 2.0), (other.pid, "/x/Lampe.blend", 1.0)):
         with open(os.path.join(folder, "%d.json" % pid), "w") as f:
             json.dump({"pid": pid, "port": 1, "token": "t", "file": name, "active": active}, f)
     last, count = bridge.pick()
     asked, _n = bridge.pick("lampe")
     check("two Blenders: the last one worked in, or the one named", count == 2 and last["file"].endswith("VELO_now.blend")
           and asked["file"].endswith("Lampe.blend"), (last, asked))
+    other.kill()
     for name in os.listdir(folder):
         os.remove(os.path.join(folder, name))
 
