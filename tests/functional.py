@@ -2363,12 +2363,16 @@ def three_zero():
     """3.0: old settings move to the new names, the six fixed collections, a film's progress text."""
     migrate, cams, film = mod("studio.migrate"), mod("studio.cameras"), mod("studio.film")
     scene = bpy.context.scene
-    keep = scene.studio.film_parts
-    store = scene.bl_system_properties_get(do_create=True) if hasattr(scene, "bl_system_properties_get") else scene
-    store["render_studio"] = {"film_parts": 7}
-    migrate.run()
-    check("old scene settings taken over", scene.studio.film_parts == 7 and "render_studio" not in store.keys(),
-          scene.studio.film_parts)
+    keep, keep_mode = scene.studio.film_parts, scene.studio.mode
+    try:
+        store = scene.bl_system_properties_get(do_create=True) if hasattr(scene, "bl_system_properties_get") else scene
+        store["render_studio"] = {"film_parts": 7, "mode": 1}
+        migrate.run()
+        result = (scene.studio.film_parts, scene.studio.mode, "render_studio" in store.keys())
+    except Exception as ex:
+        result = repr(ex)
+    check("old scene settings taken over", result == (7, 'ANIM', False), result)
+    scene.studio.mode = keep_mode
     scene.studio.film_parts = keep
     old = bpy.data.collections.new("AS_lights")
     temp = bpy.data.collections.new("temp")

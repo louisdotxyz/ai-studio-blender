@@ -47,10 +47,58 @@ def _move_keys(block):
             if new is None:
                 continue
             value = group[key]
-            group[new] = value.to_dict() if hasattr(value, "to_dict") else value
-            del group[key]
+            data = value.to_dict() if hasattr(value, "to_dict") else value
+            target = _rna_pointer(block, new)
+            if target is not None and isinstance(data, dict):
+                _copy_rna(data, target)            # registered settings: through their properties
+            else:
+                group[new] = data
+            try:
+                del group[key]
+            except (KeyError, TypeError):
+                pass
             moved += 1
     return moved
+
+
+def _rna_pointer(block, name):
+    prop = block.bl_rna.properties.get(name)
+    return getattr(block, name) if prop is not None and prop.type == 'POINTER' else None
+
+
+def _copy_rna(data, target):
+    """Stored values (enums as numbers, collections as lists) onto registered properties."""
+    props = target.bl_rna.properties
+    for key, value in data.items():
+        prop = props.get(key)
+        if prop is None or prop.is_readonly and prop.type not in {'POINTER', 'COLLECTION'}:
+            continue
+        try:
+            if prop.type == 'POINTER':
+                if isinstance(value, dict):
+                    _copy_rna(value, getattr(target, key))
+                elif value is None or isinstance(value, bpy.types.ID):
+                    setattr(target, key, value)
+            elif prop.type == 'COLLECTION':
+                items = getattr(target, key)
+                items.clear()
+                for entry in value or []:
+                    _copy_rna(entry if isinstance(entry, dict) else {}, items.add())
+            elif prop.type == 'ENUM':
+                if isinstance(value, str):
+                    setattr(target, key, {value} if prop.is_enum_flag else value)
+                elif prop.is_enum_flag:
+                    setattr(target, key, {i.identifier for i in prop.enum_items if i.value & int(value)})
+                else:
+                    match = next((i.identifier for i in prop.enum_items if i.value == int(value)), None)
+                    if match is not None:
+                        setattr(target, key, match)
+            elif prop.type == 'BOOLEAN' and getattr(prop, "array_length", 0) == 0:
+                setattr(target, key, bool(value))
+            else:
+                setattr(target, key, tuple(value) if isinstance(value, (list, tuple)) else value)
+        except (TypeError, ValueError, AttributeError) as ex:
+            print("AI Studio: setting %s not taken over: %s" % (key, ex))
 
 
 def _trees():
