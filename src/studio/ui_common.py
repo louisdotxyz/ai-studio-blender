@@ -114,6 +114,7 @@ STUDIO_TABS = (
     ('RENDER', "Camera", "Camera, format and image", 'CAMERA_DATA', 0),
     ('LIGHT', "Environment", "Scene presets, lights, World, background and floor", 'WORLD', 1),
     ('MATERIAL', "Material", "Materials of the active object", 'MATERIAL', 2),
+    ('ANIM', "Animation", "Sections, motion, preview and the film", 'RENDER_ANIMATION', 5),
     ('QUEUE', "Render", "What renders now, all renders: compare, rate, sort", 'RENDER_STILL', 3),
     ('FINISH', "Refine", "Refine a render: Krea, the look and adjustments", 'NODE_COMPOSITING', 4),
 )

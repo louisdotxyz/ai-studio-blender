@@ -142,6 +142,28 @@ def scene_summary_parts(max_objects=80):
             f"{c.name}({len(c.objects)})" + ("[hidden]" if c.hide_viewport else "") for c in cols[:30]))
 
     objects = list(scene.objects)
+    if len(objects) > max_objects:
+        # A big scene: one line per collection (what is in it), the archive only counted; then the
+        # objects that matter most (selected, cameras, lights, the rest outside the archive)
+        archived = set()
+        for coll in cols:
+            if coll.name.lower().startswith("archiv"):
+                archived.update(coll.all_objects)
+        lines.append(f"Large scene ({len(objects)} objects, {len(archived)} in the archive) – per collection:")
+        for coll in scene.collection.children:
+            members = list(coll.all_objects)
+            kinds = {}
+            for obj in members:
+                kinds[obj.type] = kinds.get(obj.type, 0) + 1
+            sample = ", ".join(o.name for o in members[:3]) + (" …" if len(members) > 3 else "")
+            lines.append(f"- {coll.name}: {len(members)} ("
+                         + ", ".join(f"{n} {k.lower()}" for k, n in sorted(kinds.items(), key=lambda kv: -kv[1]))
+                         + (f") e.g. {sample}" if sample and not coll.name.lower().startswith("archiv") else ")"))
+        first = [o for o in objects if o.select_get(view_layer=view_layer) or o.type in {'CAMERA', 'LIGHT'}]
+        rest = [o for o in objects if o not in archived and o not in first]
+        objects = first + rest
+        lines.append(f"Objects (the {min(max_objects, len(objects))} that matter most; get_object_info for others):")
+        return lines, [(obj.name, _object_line(obj, view_layer)) for obj in objects[:max_objects]], len(objects)
     lines.append(f"Objects ({len(objects)}):")
     return lines, [(obj.name, _object_line(obj, view_layer)) for obj in objects[:max_objects]], len(objects)
 
@@ -589,6 +611,11 @@ def capture_viewport(max_size=1280):
 
     path = os.path.join(tempfile.gettempdir(), f"claude_viewport_{os.getpid()}.png")
     with bpy.context.temp_override(window=window, screen=window.screen, area=area, region=region):
+        area.tag_redraw()
+        try:   # draw the newest state first (else the picture lags one or two changes behind)
+            bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
+        except RuntimeError:
+            pass
         bpy.ops.screen.screenshot_area(filepath=path)
 
     try:

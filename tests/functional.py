@@ -1557,8 +1557,8 @@ def short_names():
         made.append(bpy.data.objects.new(name, data))
         scene.collection.objects.link(made[-1])
     renamed = cams.tidy_names()
-    check("scheme in the file: P_/O_, the view, a number", [o.name for o in made] ==
-          ["P_top_01", "P_top_02", "O_top_01", "P_detail-pod_01", "O_front_01"]
+    check("scheme in the file: P_/O_, the view, a number; names you gave stay", [o.name for o in made] ==
+          ["P_top_01", "P_top_02", "Ortho Oben", "detail pod", "O_front_01"]
           and made[1].data.name == "P_top_02", [o.name for o in made])
     made[4].data.type = 'PERSP'
     cams.tidy_names()
@@ -1568,15 +1568,15 @@ def short_names():
     check("rename: a name in the scheme stays", cams.rename(made[3], "P_side_07") == "P_side_07")
     made[3].studio_camera.short_name = "detail"
     check("rename field of the Render tab", made[3].name == "P_detail_01", made[3].name)
-    scene.camera = made[2]
+    scene.camera = made[1]
     bpy.ops.studio.duplicate_camera()
     copy = scene.camera
-    check("duplicate camera: next number, not .001", copy.name == "O_top_02" and copy.data.name == "O_top_02",
+    check("duplicate camera: next number, not .001", copy.name == "P_top_03" and copy.data.name == "P_top_03",
           copy.name)
     key = bpy.data.objects.new("Key", bpy.data.lights.new("Key", 'AREA'))
     light = mod("studio").lights.duplicate_light(scene, key)
     check("duplicate light: A_key_01, not .001", light.name == "A_key_01", light.name)
-    sun = bpy.data.objects.new("Sonne", bpy.data.lights.new("Sonne", 'SUN'))
+    sun = bpy.data.objects.new("Sun", bpy.data.lights.new("Sun", 'SUN'))
     scene.collection.objects.link(sun)
     cams.tidy_names()
     check("sun: D_", sun.name == "D_sun_01", sun.name)

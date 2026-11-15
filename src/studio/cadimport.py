@@ -260,6 +260,8 @@ def cad_import(path, take_over=True, materials=True, collections=True, setup=Tru
                tolerance_mm=0.5):
     """Import a CAD export with its sidecar and take it over from the version in the scene.
     Returns a report dict (see api.cad_import)."""
+    from .. import autosave
+    autosave.before_heavy("before CAD import")
     before = set(bpy.data.materials)
     objects, sidecar = import_tagged(path)
     imported_materials = set(bpy.data.materials) - before

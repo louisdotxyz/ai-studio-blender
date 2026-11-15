@@ -101,6 +101,23 @@ def role_of(name, prefixes=(), fallback="view"):
     return role if role and not role.isdigit() else fallback
 
 
+_GENERIC = {"area", "light", "point", "spot", "sun", "camera", "kamera", "licht", "lamp", "lampe", "view",
+            "untitled", "empty", "area light", "point light", "spot light", "sun light"}
+
+
+def chosen(name, prefixes=()):
+    """A name someone chose ("light present", "Licht | Streifenkarte"): not Blender's default
+    ("Area", "Camera.002"), not an old prefix ("AS_lights Key"), not in the scheme already. Such
+    names are never renamed."""
+    text = (name or "").strip()
+    if not text or _SCHEME.match(text) or re.search(r"\.\d{3}$", text):
+        return False
+    for prefix in prefixes:
+        if prefix and text.startswith(prefix) and text[len(prefix):len(prefix) + 1] in (" ", "_", "|"):
+            return False
+    return base_of(text).lower() not in _GENERIC
+
+
 def scheme_base(letter, role):
     return "%s_%s" % (letter, role)
 

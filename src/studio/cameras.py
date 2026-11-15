@@ -326,6 +326,8 @@ def tidy_names():
     from ..naming import scheme_names, tidy
     objects = [o for o in bpy.data.objects if o.type in {'CAMERA', 'LIGHT'} and o.library is None
                and "studio_temp_camera" not in o and o.data is not None]
+    from ..naming import chosen
+    objects = [o for o in objects if not chosen(o.name, _prefixes())]   # names you gave stay
     if scheme_on():
         # a camera whose name says nothing ("Camera", "View") is named after where it looks from
         names = scheme_names([(o.name, letter_of(o), view_role(o.matrix_world) if o.type == 'CAMERA'

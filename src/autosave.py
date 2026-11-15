@@ -419,6 +419,17 @@ def save_now(reason, force=False):
     return path
 
 
+def before_heavy(reason, gap=120.0):
+    """A backup copy right before a long or risky step (CAD import, render list, film) – also with
+    the periodic backups off; not again within `gap` seconds."""
+    if time.time() - state["last"] < gap:
+        return None
+    try:
+        return save_now(reason, force=True)
+    except Exception:
+        return None
+
+
 def before_risky(reason):
     """Call right before something that might crash Blender (model code, renders)."""
     prefs = _prefs()

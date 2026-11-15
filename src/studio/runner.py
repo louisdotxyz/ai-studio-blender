@@ -278,8 +278,17 @@ _FINGERPRINT_PATHS = (
 )
 
 
+def _custom(block):
+    """A block's own custom properties (Glow, Rauheit … that drivers read) as plain data."""
+    try:
+        return tuple(sorted((key, repr(value)[:120]) for key, value in block.items()
+                            if not key.startswith(("_", "studio")) and key != "cycles"))
+    except (TypeError, AttributeError):
+        return ()
+
+
 def scene_fingerprint(scene):
-    values = []
+    values = [_custom(scene)]   # a changed custom property must reach the preview copy
     for path in _FINGERPRINT_PATHS:
         try:
             value = scene.path_resolve(path)
@@ -307,9 +316,10 @@ def scene_content(scene):
             obj.visible_camera, () if camera else tuple(round(v, 5) for row in obj.matrix_world for v in row),
             tuple(s.material.name if s.material else "" for s in obj.material_slots),
             tuple((m.name, m.type, m.show_render) for m in obj.modifiers),
+            _custom(obj),
         ))
     items.sort()
-    return hash((tuple(items), tuple(sorted(m.name for m in bpy.data.materials)),
+    return hash((tuple(items), tuple(sorted((m.name, _custom(m)) for m in bpy.data.materials)),
                  scene.world.name if scene.world else ""))
 
 
@@ -503,6 +513,9 @@ class Runner:
             return   # already running: it reads the list live and takes new entries along
         if not any(item.camera for item in scene.studio.items) and not _previews:
             raise RuntimeError("No camera in the queue")
+        if not _previews:
+            from .. import autosave
+            autosave.before_heavy("before rendering")
         self._reset()
         self.message = ""
         self.busy = True
