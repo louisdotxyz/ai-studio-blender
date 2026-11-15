@@ -110,8 +110,7 @@ class STUDIO_PT_tabs(Panel):
 
     def draw(self, context):
         _unpin(self)
-        # five tabs as five equal icons: always the same size, whatever is open (names in the tooltips)
-        wm = context.window_manager
+        # Still | Film, then the mode's five tabs as equal icons (names in the tooltips)
         from .ui_common import studio_tab, visible_tabs
         switch = self.layout.row(align=True)
         switch.prop_enum(context.scene.studio, "mode", 'STILL', icon='IMAGE_DATA')
