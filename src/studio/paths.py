@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Where Render Studio keeps its files inside the combined extension."""
+"""Where AI Studio keeps its files inside the combined extension."""
 
 import os
 
@@ -14,7 +14,7 @@ def data_dir():
         base = bpy.utils.extension_path_user(ADDON, path="studio", create=True)
     except Exception:
         import tempfile
-        base = os.path.join(tempfile.gettempdir(), "render_studio")
+        base = os.path.join(tempfile.gettempdir(), "ai_studio")
         os.makedirs(base, exist_ok=True)
     return base
 

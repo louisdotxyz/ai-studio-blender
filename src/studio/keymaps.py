@@ -28,9 +28,9 @@ EDITOR_KEYMAPS = (
 # (operator, key, modifier keys with ⌘, operator properties, label):
 # ⌘R High Quality, ⇧⌘R Low Quality, ⇧⌘E view the newest image.
 SHORTCUTS = (
-    ("render_studio.add", 'R', {}, {"quality": 'HIGH'}, "Render High Quality"),
-    ("render_studio.add", 'R', {"shift": True}, {"quality": 'LOW'}, "Render Low Quality"),
-    ("render_studio.show_render", 'E', {"shift": True}, {}, "View Render"),
+    ("studio.add", 'R', {}, {"quality": 'HIGH'}, "Render High Quality"),
+    ("studio.add", 'R', {"shift": True}, {"quality": 'LOW'}, "Render Low Quality"),
+    ("studio.show_render", 'E', {"shift": True}, {}, "View Render"),
 )
 
 
@@ -65,7 +65,7 @@ def register_keymaps():
             _keymaps.append((km, kmi))
     # Stop the queue (only does something while it runs, otherwise the key passes on).
     km = kc.keymaps.new(name="Window", space_type='EMPTY')
-    _keymaps.append((km, km.keymap_items.new('render_studio.cancel', 'ESC', 'PRESS', shift=True)))
+    _keymaps.append((km, km.keymap_items.new('studio.cancel', 'ESC', 'PRESS', shift=True)))
 
 
 def unregister_keymaps():

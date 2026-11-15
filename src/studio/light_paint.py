@@ -24,7 +24,7 @@ from . import light_items, orbit, world_modes
 from .props import PLACE_MODES
 
 MODES = PLACE_MODES
-TOOL_ID = "render_studio.light_place"
+TOOL_ID = "studio.light_place"
 _previous = {"tool": ""}
 
 
@@ -107,8 +107,8 @@ def _restore_item(scene, item, state):
         obj.data.size, obj.data.size_y = state[2], state[3]
 
 
-class RS_OT_light_paint(Operator):
-    bl_idname = "render_studio.light_paint"
+class STUDIO_OT_light_paint(Operator):
+    bl_idname = "studio.light_paint"
     bl_label = "Place Light on the Product"
     bl_description = ("Click or drag on the product to place the open light. Ctrl + click: a new light. "
                       "While dragging: wheel = distance, Ctrl + wheel = size, Shift + wheel = brightness")
@@ -123,7 +123,7 @@ class RS_OT_light_paint(Operator):
     def _item(self, context):
         scene = context.scene
         if self.pin >= 0:
-            return ('PIN', self.pin) if self.pin < len(scene.render_studio.hdri_pins) else None
+            return ('PIN', self.pin) if self.pin < len(scene.studio.hdri_pins) else None
         if self.name:
             obj = bpy.data.objects.get(self.name)
             return ('LIGHT', obj) if obj is not None and obj.type == 'LIGHT' else None
@@ -136,7 +136,7 @@ class RS_OT_light_paint(Operator):
         self.region = next((r for r in area.regions if r.type == 'WINDOW'), None)
         self.rv3d = area.spaces.active.region_3d
         scene = context.scene
-        self.way = scene.render_studio.place_mode if self.mode == 'AUTO' else self.mode
+        self.way = scene.studio.place_mode if self.mode == 'AUTO' else self.mode
         item = self._item(context)
         if self.region is None or (item is None and not self.new):
             return {'PASS_THROUGH'}
@@ -220,8 +220,8 @@ class RS_OT_light_paint(Operator):
         return {'RUNNING_MODAL'}
 
 
-class RS_OT_light_nudge(Operator):
-    bl_idname = "render_studio.light_nudge"
+class STUDIO_OT_light_nudge(Operator):
+    bl_idname = "studio.light_nudge"
     bl_label = "Change the Open Light"
     bl_description = "Size, brightness or distance of the open light, one step"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -248,12 +248,12 @@ def _wheel_keys():
     keys = []
     for what, mods in (('SIZE', {"ctrl": True}), ('POWER', {"shift": True}), ('DISTANCE', {"alt": True})):
         for kind, factor in (('WHEELUPMOUSE', 1.1), ('WHEELDOWNMOUSE', 1 / 1.1)):
-            keys.append((RS_OT_light_nudge.bl_idname, dict(type=kind, value='PRESS', **mods),
+            keys.append((STUDIO_OT_light_nudge.bl_idname, dict(type=kind, value='PRESS', **mods),
                          {"properties": [("what", what), ("factor", factor)]}))
     return tuple(keys)
 
 
-class RS_WT_light_place(WorkSpaceTool):
+class STUDIO_WT_light_place(WorkSpaceTool):
     bl_space_type = 'VIEW_3D'
     bl_context_mode = 'OBJECT'
     bl_idname = TOOL_ID
@@ -265,8 +265,8 @@ class RS_WT_light_place(WorkSpaceTool):
     bl_cursor = 'CROSSHAIR'
     bl_widget = None
     bl_keymap = (
-        (RS_OT_light_paint.bl_idname, {"type": 'LEFTMOUSE', "value": 'PRESS'}, None),
-        (RS_OT_light_paint.bl_idname, {"type": 'LEFTMOUSE', "value": 'PRESS', "ctrl": True},
+        (STUDIO_OT_light_paint.bl_idname, {"type": 'LEFTMOUSE', "value": 'PRESS'}, None),
+        (STUDIO_OT_light_paint.bl_idname, {"type": 'LEFTMOUSE', "value": 'PRESS', "ctrl": True},
          {"properties": [("new", True)]}),
     ) + _wheel_keys()
 
@@ -275,7 +275,7 @@ class RS_WT_light_place(WorkSpaceTool):
         item = light_items.active_item(scene)
         layout.label(text=light_items.name_of(scene, item) if item else "Open a light in the Environment tab",
                      icon='LIGHT')
-        layout.prop(scene.render_studio, "place_mode", text="")
+        layout.prop(scene.studio, "place_mode", text="")
 
 
 def _current_tool(context):
@@ -319,8 +319,8 @@ def restore_tool(context):
         print("ID Toolkit: place tool:", exc)
 
 
-class RS_OT_place_mode(Operator):
-    bl_idname = "render_studio.place_mode"
+class STUDIO_OT_place_mode(Operator):
+    bl_idname = "studio.place_mode"
     bl_label = "Place on the Product"
     bl_description = "How a click on the product places the open light"
     bl_options = {'INTERNAL'}
@@ -333,27 +333,27 @@ class RS_OT_place_mode(Operator):
             ". Then click or drag on the product; Ctrl + click makes a new light. Click again to switch placing off"
 
     def execute(self, context):
-        rs = context.scene.render_studio
+        rs = context.scene.studio
         wm = context.window_manager
         if tool_active(context) and rs.place_mode == self.mode:
             restore_tool(context)
-            wm.render_studio_place_off = True       # stays off until a way is picked again
+            wm.studio_place_off = True       # stays off until a way is picked again
         else:
             rs.place_mode = self.mode
-            wm.render_studio_place_off = False
+            wm.studio_place_off = False
             activate_tool(context)
         return {'FINISHED'}
 
 
-class RS_OT_sky_time(Operator):
-    bl_idname = "render_studio.sky_time"
+class STUDIO_OT_sky_time(Operator):
+    bl_idname = "studio.sky_time"
     bl_label = "Time of Day"
     bl_options = {'UNDO', 'INTERNAL'}
 
     hours: FloatProperty(options={'HIDDEN', 'SKIP_SAVE'})
 
     def execute(self, context):
-        context.scene.render_studio.sky_time = self.hours
+        context.scene.studio.sky_time = self.hours
         return {'FINISHED'}
 
 
@@ -362,7 +362,7 @@ SKY_TIMES = (("Sunrise", 6.4), ("Morning", 9.0), ("Noon", 12.0), ("Golden", 17.2
 
 def draw_place_row(layout, context):
     """Click on the product: [Reflection] [Light] [Rim] / [Shade] [Shadow]. The pressed one is active."""
-    rs = context.scene.render_studio
+    rs = context.scene.studio
     on = tool_active(context)
     # [🖱] [Reflection] [Light] [Rim] / [Shade] [Shadow]: the mouse says "click on the product"
     split = layout.split(factor=0.12, align=True)
@@ -372,12 +372,12 @@ def draw_place_row(layout, context):
     icon.label(text="", icon='MOUSE_LMB')
     grid = split.grid_flow(row_major=True, columns=3, even_columns=True, align=True)
     for mode, label, _d in MODES:
-        grid.operator(RS_OT_place_mode.bl_idname, text=label, depress=on and rs.place_mode == mode).mode = mode
+        grid.operator(STUDIO_OT_place_mode.bl_idname, text=label, depress=on and rs.place_mode == mode).mode = mode
 
 
 def draw_studio(box, scene):
     """Studio World: its ambient light. Its lights are in the Lights list."""
-    rs = scene.render_studio
+    rs = scene.studio
     row = box.row(align=True)
     row.prop(rs, "studio_ambient", slider=True)
     sub = row.row(align=True)
@@ -386,11 +386,11 @@ def draw_studio(box, scene):
 
 
 def draw_sky(box, scene):
-    rs = scene.render_studio
+    rs = scene.studio
     box.prop(rs, "sky_time", slider=True)
     grid = box.grid_flow(row_major=True, columns=3, even_columns=True, align=True)
     for label, hours in SKY_TIMES:
-        grid.operator(RS_OT_sky_time.bl_idname, text=label, depress=abs(rs.sky_time - hours) < 0.05).hours = hours
+        grid.operator(STUDIO_OT_sky_time.bl_idname, text=label, depress=abs(rs.sky_time - hours) < 0.05).hours = hours
     box.prop(rs, "sky_north")
     if world_modes.atmosphere_available() and scene.world is not None \
             and getattr(scene.world, "psa_general_settings", None) and scene.world.psa_general_settings.enabled:
@@ -406,14 +406,14 @@ def draw_sky(box, scene):
         sub.label(text="Clouds and stars: with Physical Starlight & Atmosphere", icon='INFO')
 
 
-classes = (RS_OT_light_paint, RS_OT_light_nudge, RS_OT_place_mode, RS_OT_sky_time)
+classes = (STUDIO_OT_light_paint, STUDIO_OT_light_nudge, STUDIO_OT_place_mode, STUDIO_OT_sky_time)
 
 
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     try:
-        bpy.utils.register_tool(RS_WT_light_place, after={"builtin.cursor"}, separator=True)
+        bpy.utils.register_tool(STUDIO_WT_light_place, after={"builtin.cursor"}, separator=True)
     except Exception as exc:
         print("ID Toolkit: place tool:", exc)
 
@@ -421,7 +421,7 @@ def register():
 def unregister():
     world_modes.unregister()
     try:
-        bpy.utils.unregister_tool(RS_WT_light_place)
+        bpy.utils.unregister_tool(STUDIO_WT_light_place)
     except Exception as exc:
         print("ID Toolkit: place tool:", exc)
     for cls in reversed(classes):

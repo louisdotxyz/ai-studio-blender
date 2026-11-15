@@ -16,15 +16,15 @@ from .runner import RUN
 def chosen(context):
     """The camera names checked in the popover (default: the active camera)."""
     scene = context.scene
-    names = [n for n in context.window_manager.render_studio_chat_cams.split("\n") if n]
+    names = [n for n in context.window_manager.studio_chat_cams.split("\n") if n]
     names = [n for n in names if scene.objects.get(n) is not None]
     if not names and scene.camera is not None:
         names = [scene.camera.name]
     return names
 
 
-class RS_OT_chat_camera(Operator):
-    bl_idname = "render_studio.chat_camera"
+class STUDIO_OT_chat_camera(Operator):
+    bl_idname = "studio.chat_camera"
     bl_label = "Camera to Render"
     bl_description = "Render this camera too (click again: not)"
     bl_options = {'INTERNAL'}
@@ -41,12 +41,12 @@ class RS_OT_chat_camera(Operator):
             names.remove(self.name)
         else:
             names.append(self.name)
-        wm.render_studio_chat_cams = "\n".join(names) or "\n"
+        wm.studio_chat_cams = "\n".join(names) or "\n"
         return {'FINISHED'}
 
 
-class RS_OT_chat_render(Operator):
-    bl_idname = "render_studio.chat_render"
+class STUDIO_OT_chat_render(Operator):
+    bl_idname = "studio.chat_render"
     bl_label = "Render"
     bl_description = ("Render the checked cameras with the quality and still/film chosen here; size and format "
                       "from the Render tab. Several cameras go into one numbered folder (Batch_01 …)")
@@ -57,27 +57,27 @@ class RS_OT_chat_render(Operator):
             self.report({'WARNING'}, "Check at least one camera")
             return {'CANCELLED'}
         batch = ""
-        if len(names) > 1 and context.scene.render_studio.mode == 'STILL':
+        if len(names) > 1 and context.scene.studio.mode == 'STILL':
             from . import core, runner
             root = runner.settings_from_prefs()[0]
-            name = context.scene.render_studio.output_name
+            name = context.scene.studio.output_name
             batch = core.next_batch(root, name)
-            quality = context.scene.render_studio.quality
+            quality = context.scene.studio.quality
             project = core.project_name(name=name)
             try:   # made now, so a second click right after gets the next number
                 os.makedirs(os.path.join(core.quality_dir(root, project, quality), batch), exist_ok=True)
             except OSError:
                 pass
         for name in names:
-            bpy.ops.render_studio.add(camera=name, batch=batch)
-        if not RUN.busy and any(i.camera for i in context.scene.render_studio.items):
-            bpy.ops.render_studio.render_queue()
+            bpy.ops.studio.add(camera=name, batch=batch)
+        if not RUN.busy and any(i.camera for i in context.scene.studio.items):
+            bpy.ops.studio.render_queue()
         self.report({'INFO'}, ("Rendering %d cameras into %s" % (len(names), batch)) if batch else
                     "Rendering %s" % names[0] if len(names) == 1 else "Rendering %d cameras" % len(names))
         return {'FINISHED'}
 
 
-class RS_PT_chat_render(Panel):
+class STUDIO_PT_chat_render(Panel):
     """The cameras to render, picked in a small menu (stays open for several clicks)."""
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'HEADER'
@@ -90,7 +90,7 @@ class RS_PT_chat_render(Panel):
         names = chosen(context)
         col = layout.column(align=True)
         for obj in cams:
-            col.operator(RS_OT_chat_camera.bl_idname, text=obj.name, depress=obj.name in names,
+            col.operator(STUDIO_OT_chat_camera.bl_idname, text=obj.name, depress=obj.name in names,
                          icon='CHECKBOX_HLT' if obj.name in names else 'CHECKBOX_DEHLT').name = obj.name
         if not cams:
             col.label(text="No camera in the scene", icon='INFO')
@@ -108,17 +108,17 @@ def draw_inline(layout, context):
     """One row in the chat: [cameras ▾][All] [high|low] [still|film] [Render (n)].
     Size and format come from the Render tab; progress and comparing are there too."""
     scene = context.scene
-    rq = scene.render_studio
+    rq = scene.studio
     cams = cameras.scene_cameras(scene)
     names = chosen(context)
     row = layout.row(align=False)
     row.scale_y = 1.2
     left = row.row(align=True)
-    left.popover(RS_PT_chat_render.__name__, text=_camera_text(names, cams), icon='CAMERA_DATA')
+    left.popover(STUDIO_PT_chat_render.__name__, text=_camera_text(names, cams), icon='CAMERA_DATA')
     if len(cams) > 1:
         every = left.row(align=True)
         every.ui_units_x = 1.6
-        every.operator(RS_OT_chat_camera.bl_idname, text="All",
+        every.operator(STUDIO_OT_chat_camera.bl_idname, text="All",
                        depress=set(names) >= {o.name for o in cams}).name = "*"
     mid = row.row(align=True)
     mid.prop_enum(rq, "quality", 'HIGH', text="", icon='SHADING_RENDERED')
@@ -126,23 +126,28 @@ def draw_inline(layout, context):
     mid = row.row(align=True)
     mid.prop_enum(rq, "mode", 'STILL', text="", icon='IMAGE_DATA')
     mid.prop_enum(rq, "mode", 'ANIM', text="", icon='RENDER_ANIMATION')
+    if rq.mode == 'ANIM':   # a film: its frames and in how many parts (each part also as a video)
+        film_row = layout.row(align=True)
+        film_row.prop(scene, "frame_start", text="From")
+        film_row.prop(scene, "frame_end", text="To")
+        film_row.prop(rq, "film_parts", text="Parts")
     right = row.row(align=True)
     right.ui_units_x = 5.5
     right.enabled = bool(names)       # while one renders: more go into the queue (progress above the chat)
-    right.operator(RS_OT_chat_render.bl_idname, text="Render (%d)" % len(names) if len(names) > 1 else "Render",
+    right.operator(STUDIO_OT_chat_render.bl_idname, text="Render (%d)" % len(names) if len(names) > 1 else "Render",
                    icon='RENDER_STILL' if rq.mode == 'STILL' else 'RENDER_ANIMATION')
 
 
-classes = (RS_OT_chat_camera, RS_OT_chat_render, RS_PT_chat_render)
+classes = (STUDIO_OT_chat_camera, STUDIO_OT_chat_render, STUDIO_PT_chat_render)
 
 
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
-    bpy.types.WindowManager.render_studio_chat_cams = StringProperty(options={'SKIP_SAVE'})
+    bpy.types.WindowManager.studio_chat_cams = StringProperty(options={'SKIP_SAVE'})
 
 
 def unregister():
-    del bpy.types.WindowManager.render_studio_chat_cams
+    del bpy.types.WindowManager.studio_chat_cams
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

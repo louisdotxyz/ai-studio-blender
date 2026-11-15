@@ -54,8 +54,8 @@ def merge(data):
     return counts
 
 
-class RS_OT_presets_io(Operator):
-    bl_idname = "render_studio.presets_io"
+class STUDIO_OT_presets_io(Operator):
+    bl_idname = "studio.presets_io"
     bl_label = "All Presets"
     bl_description = "Export all your presets (scenes, lights, materials) into one file, or import such a file"
     bl_options = {'INTERNAL'}
@@ -90,11 +90,11 @@ class RS_OT_presets_io(Operator):
 def draw(layout):
     row = layout.row(align=True)
     row.label(text="All Presets", icon='PRESET')
-    row.operator(RS_OT_presets_io.bl_idname, text="Export", icon='EXPORT').action = "EXPORT"
-    row.operator(RS_OT_presets_io.bl_idname, text="Import", icon='IMPORT').action = "IMPORT"
+    row.operator(STUDIO_OT_presets_io.bl_idname, text="Export", icon='EXPORT').action = "EXPORT"
+    row.operator(STUDIO_OT_presets_io.bl_idname, text="Import", icon='IMPORT').action = "IMPORT"
 
 
-classes = (RS_OT_presets_io,)
+classes = (STUDIO_OT_presets_io,)
 
 
 def register():

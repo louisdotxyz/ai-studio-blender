@@ -17,7 +17,7 @@ from .ui_common import MATERIAL_TAB_ORDER, _SidebarPanel, _unpin, section, studi
 
 # Objects linked with the eyedropper form a group (same id in GROUP_KEY): Duplicate gives the
 # whole group the copy, Unlink takes one object out of its group.
-GROUP_KEY = "render_studio_material_group"
+GROUP_KEY = "studio_material_group"
 
 
 def material_group(context, obj, material):
@@ -31,8 +31,8 @@ def material_group(context, obj, material):
     return sorted(group, key=lambda o: o.name)
 
 
-class RS_OT_material_duplicate(Operator):
-    bl_idname = "render_studio.material_duplicate"
+class STUDIO_OT_material_duplicate(Operator):
+    bl_idname = "studio.material_duplicate"
     bl_label = "Duplicate Material"
     bl_description = ("A copy of this material for this object and the objects linked with it "
                       "(eyedropper group, otherwise the selected objects)")
@@ -49,8 +49,8 @@ class RS_OT_material_duplicate(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_material_unlink(Operator):
-    bl_idname = "render_studio.material_unlink"
+class STUDIO_OT_material_unlink(Operator):
+    bl_idname = "studio.material_unlink"
     bl_label = "Unlink Material"
     bl_description = ("Take this object out of its group: it gets its own copy of the material, "
                       "changes no longer affect the others")
@@ -71,8 +71,8 @@ class RS_OT_material_unlink(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_open_shading(Operator):
-    bl_idname = "render_studio.open_shading"
+class STUDIO_OT_open_shading(Operator):
+    bl_idname = "studio.open_shading"
     bl_label = "Open in Shading"
     bl_description = "Switch to the Shading workspace to edit the material nodes in depth"
     bl_options = {'INTERNAL'}
@@ -87,8 +87,8 @@ class RS_OT_open_shading(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_material_slot(Operator):
-    bl_idname = "render_studio.material_slot"
+class STUDIO_OT_material_slot(Operator):
+    bl_idname = "studio.material_slot"
     bl_label = "Material Slot"
     bl_description = "Edit this material of the object"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -103,8 +103,8 @@ class RS_OT_material_slot(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_material_preset(Operator):
-    bl_idname = "render_studio.material_preset"
+class STUDIO_OT_material_preset(Operator):
+    bl_idname = "studio.material_preset"
     bl_label = "Material Preset"
     bl_options = {'UNDO', 'INTERNAL'}
 
@@ -125,8 +125,8 @@ class RS_OT_material_preset(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_material_preset_save(Operator):
-    bl_idname = "render_studio.material_preset_save"
+class STUDIO_OT_material_preset_save(Operator):
+    bl_idname = "studio.material_preset_save"
     bl_label = "Save Material Preset"
     bl_description = "Save the settings of this Principled BSDF as a preset (available in every blend file)"
     bl_options = {'INTERNAL'}
@@ -150,8 +150,8 @@ class RS_OT_material_preset_save(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_material_preset_delete(Operator):
-    bl_idname = "render_studio.material_preset_delete"
+class STUDIO_OT_material_preset_delete(Operator):
+    bl_idname = "studio.material_preset_delete"
     bl_label = "Delete Material Preset"
     bl_description = "Delete this saved preset (materials keep their settings)"
     bl_options = {'INTERNAL'}
@@ -163,8 +163,8 @@ class RS_OT_material_preset_delete(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_material_viewport(Operator):
-    bl_idname = "render_studio.material_viewport"
+class STUDIO_OT_material_viewport(Operator):
+    bl_idname = "studio.material_viewport"
     bl_label = "Material Preview"
     bl_description = "Switch the 3D viewport to Material Preview shading"
     bl_options = {'INTERNAL'}
@@ -176,8 +176,8 @@ class RS_OT_material_viewport(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_material_presets_io(Operator):
-    bl_idname = "render_studio.material_presets_io"
+class STUDIO_OT_material_presets_io(Operator):
+    bl_idname = "studio.material_presets_io"
     bl_label = "Material Presets"
     bl_description = "Export your material presets to a .json file, or import presets from one"
     bl_options = {'INTERNAL'}
@@ -219,7 +219,7 @@ class RS_OT_material_presets_io(Operator):
         return {'FINISHED'}
 
 
-class RS_PT_material_settings(Panel):
+class STUDIO_PT_material_settings(Panel):
     """Gear menu in the Material tab: shown values, preview, preset library."""
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'HEADER'
@@ -242,19 +242,19 @@ class RS_PT_material_settings(Panel):
         mat = obj.active_material if obj is not None else None
         if mat is not None:
             box.prop(mat, "preview_render_type", text="Shape")
-        box.operator(RS_OT_material_viewport.bl_idname, icon='SHADING_TEXTURE')
+        box.operator(STUDIO_OT_material_viewport.bl_idname, icon='SHADING_TEXTURE')
 
         box = layout.box()
         box.label(text="Preset Library", icon='PRESET')
         box.prop(p, "material_preset_folder", text="")
         row = box.row(align=True)
-        row.operator(RS_OT_material_presets_io.bl_idname, text="Import", icon='IMPORT').action = "IMPORT"
-        row.operator(RS_OT_material_presets_io.bl_idname, text="Export", icon='EXPORT').action = "EXPORT"
-        row.operator(RS_OT_material_presets_io.bl_idname, text="", icon='FILE_FOLDER').action = "OPEN"
+        row.operator(STUDIO_OT_material_presets_io.bl_idname, text="Import", icon='IMPORT').action = "IMPORT"
+        row.operator(STUDIO_OT_material_presets_io.bl_idname, text="Export", icon='EXPORT').action = "EXPORT"
+        row.operator(STUDIO_OT_material_presets_io.bl_idname, text="", icon='FILE_FOLDER').action = "OPEN"
 
 
-class RS_OT_material_kind(Operator):
-    bl_idname = "render_studio.material_kind"
+class STUDIO_OT_material_kind(Operator):
+    bl_idname = "studio.material_kind"
     bl_label = "Material Kind"
     bl_description = ("What this material is. Sets what the kind fixes (a metal is metallic, glass lets light "
                       "through) and shows only the controls that fit")
@@ -287,7 +287,7 @@ def _draw_kind_controls(box, material, node):
     """[Kind ▾], then the same few controls for every material, only the ones the kind has."""
     kind = material_kind(material)
     row = box.row(align=True)
-    row.operator_menu_enum(RS_OT_material_kind.bl_idname, "kind", text=kind, icon='MATERIAL')
+    row.operator_menu_enum(STUDIO_OT_material_kind.bl_idname, "kind", text=kind, icon='MATERIAL')
     col = box.column(align=True)
     for name, label in matkinds.CONTROLS.get(kind, matkinds.CONTROLS["Other"]):
         socket = node.inputs.get(name)
@@ -349,13 +349,13 @@ def draw_wear(layout, material):
     has = matstructures.has_wear(material)
     box, head, is_open = section(layout, "wear", "Wear", 'MOD_NOISE', default_open=has)
     if not has:
-        head.operator(RS_OT_material_wear.bl_idname, text="Add", icon='ADD')
+        head.operator(STUDIO_OT_material_wear.bl_idname, text="Add", icon='ADD')
         if is_open:
             sub = box.row()
             sub.active = False
             sub.label(text="Scratches, fingerprints and dust, procedural", icon='INFO')
         return
-    head.operator(RS_OT_material_wear.bl_idname, text="", icon='X').remove = True
+    head.operator(STUDIO_OT_material_wear.bl_idname, text="", icon='X').remove = True
     if not is_open:
         return
     node = material.node_tree.nodes[matstructures.NODE_WEAR]
@@ -387,8 +387,8 @@ def draw_wear(layout, material):
         _value_row(col, bump.inputs["Strength"], "Depth")
 
 
-class RS_OT_material_structure(Operator):
-    bl_idname = "render_studio.material_structure"
+class STUDIO_OT_material_structure(Operator):
+    bl_idname = "studio.material_structure"
     bl_label = "New Structure"
     bl_description = "A new procedural material to go on from, for the selected objects"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -410,8 +410,8 @@ class RS_OT_material_structure(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_material_wear(Operator):
-    bl_idname = "render_studio.material_wear"
+class STUDIO_OT_material_wear(Operator):
+    bl_idname = "studio.material_wear"
     bl_label = "Wear"
     bl_description = ("Scratches, fingerprints and dust over this material, each with its own amount "
                       "(procedural; what the material had stays)")
@@ -436,36 +436,36 @@ class RS_OT_material_wear(Operator):
         return {'FINISHED'}
 
 
-class RS_MT_material_new(Menu):
+class STUDIO_MT_material_new(Menu):
     """The "+" of the material library: a new material, empty or from a preset."""
-    bl_idname = "RS_MT_material_new"
+    bl_idname = "STUDIO_MT_material_new"
     bl_label = "New Material"
 
     def draw(self, context):
         layout = self.layout
-        layout.operator(RS_OT_material_new.bl_idname, text="Empty", icon='MATERIAL').preset = ""
+        layout.operator(STUDIO_OT_material_new.bl_idname, text="Empty", icon='MATERIAL').preset = ""
         layout.separator()
         layout.label(text="Structures (procedural)")
         for kind, name, _text in matstructures.ITEMS:
-            layout.operator(RS_OT_material_structure.bl_idname, text=name, icon='NODE_MATERIAL').kind = kind
+            layout.operator(STUDIO_OT_material_structure.bl_idname, text=name, icon='NODE_MATERIAL').kind = kind
         layout.separator()
         layout.label(text="Simple")
         for name in matpresets.BUILTIN:
-            layout.operator(RS_OT_material_new.bl_idname, text=name, icon='BLANK1').preset = name
+            layout.operator(STUDIO_OT_material_new.bl_idname, text=name, icon='BLANK1').preset = name
         saved = sorted(matpresets.saved())
         if saved:
             layout.separator()
             for name in saved:
-                layout.operator(RS_OT_material_new.bl_idname, text=name, icon='USER').preset = name
+                layout.operator(STUDIO_OT_material_new.bl_idname, text=name, icon='USER').preset = name
         layout.separator()
-        layout.operator(RS_OT_material_preset_save.bl_idname, text="Save Current as Preset…", icon='ADD')
+        layout.operator(STUDIO_OT_material_preset_save.bl_idname, text="Save Current as Preset…", icon='ADD')
         if saved:
-            layout.menu(RS_MT_material_presets_delete.bl_idname, icon='TRASH')
+            layout.menu(STUDIO_MT_material_presets_delete.bl_idname, icon='TRASH')
 
 
-class RS_MT_material_more(Menu):
+class STUDIO_MT_material_more(Menu):
     """⋯ next to the material's name: what is needed less often."""
-    bl_idname = "RS_MT_material_more"
+    bl_idname = "STUDIO_MT_material_more"
     bl_label = "Material"
 
     def draw(self, context):
@@ -474,22 +474,22 @@ class RS_MT_material_more(Menu):
         material = current_material(context)
         has_slot = obj is not None and hasattr(obj.data, "materials")
         if has_slot:
-            layout.operator(RS_OT_material_duplicate.bl_idname, text="Own Copy for This Object", icon='DUPLICATE')
+            layout.operator(STUDIO_OT_material_duplicate.bl_idname, text="Own Copy for This Object", icon='DUPLICATE')
         if material is not None:
-            layout.operator(RS_OT_material_variant.bl_idname, text="New Variant", icon='COLOR')
+            layout.operator(STUDIO_OT_material_variant.bl_idname, text="New Variant", icon='COLOR')
         if has_slot and material is not None and material.users > 1:
-            layout.operator(RS_OT_material_unlink.bl_idname, text="Unlink from the Others", icon='UNLINKED')
-        layout.operator(RS_OT_pick_from_object.bl_idname, text="Pick Color from Object",
+            layout.operator(STUDIO_OT_material_unlink.bl_idname, text="Unlink from the Others", icon='UNLINKED')
+        layout.operator(STUDIO_OT_pick_from_object.bl_idname, text="Pick Color from Object",
                         icon='EYEDROPPER').mode = 'COLOR'
         layout.separator()
-        layout.menu(RS_MT_material_new.bl_idname, icon='ADD')
+        layout.menu(STUDIO_MT_material_new.bl_idname, icon='ADD')
         if material is not None:
-            layout.operator(RS_OT_material_to_base.bl_idname, icon='EXPORT')
-        layout.operator(RS_OT_open_shading.bl_idname, text="Shader Editor", icon='NODE_MATERIAL')
+            layout.operator(STUDIO_OT_material_to_base.bl_idname, icon='EXPORT')
+        layout.operator(STUDIO_OT_open_shading.bl_idname, text="Shader Editor", icon='NODE_MATERIAL')
 
 
-class RS_OT_material_new(Operator):
-    bl_idname = "render_studio.material_new"
+class STUDIO_OT_material_new(Operator):
+    bl_idname = "studio.material_new"
     bl_label = "New Material"
     bl_description = "A new material for the selected objects"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -516,10 +516,10 @@ class RS_OT_material_new(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_pick_from_object(Operator):
+class STUDIO_OT_pick_from_object(Operator):
     """Eyedropper: click an object in the viewport. Material: the selected objects get the
     material of the face you clicked. Color: only its color goes into the active material."""
-    bl_idname = "render_studio.pick_from_object"
+    bl_idname = "studio.pick_from_object"
     bl_label = "Pick from Object"
     bl_options = {'UNDO', 'INTERNAL'}
 
@@ -667,8 +667,8 @@ def _copy_color(source, target):
         target.diffuse_color = source.diffuse_color
 
 
-class RS_OT_material_to_base(Operator):
-    bl_idname = "render_studio.material_to_base"
+class STUDIO_OT_material_to_base(Operator):
+    bl_idname = "studio.material_to_base"
     bl_label = "Save to Library"
     bl_description = ("Save the material into your library, so every project can use it "
                       "(replaces one of the same name)")
@@ -705,8 +705,8 @@ class RS_OT_material_to_base(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_material_group_toggle(Operator):
-    bl_idname = "render_studio.material_group_toggle"
+class STUDIO_OT_material_group_toggle(Operator):
+    bl_idname = "studio.material_group_toggle"
     bl_label = "Show / Hide"
     bl_description = "Show or hide the materials of this group"
     bl_options = {'INTERNAL'}
@@ -715,25 +715,25 @@ class RS_OT_material_group_toggle(Operator):
 
     def execute(self, context):
         wm = context.window_manager
-        names = set(filter(None, wm.render_studio_mat_open.split("\n")))
+        names = set(filter(None, wm.studio_mat_open.split("\n")))
         names.symmetric_difference_update({self.name})
-        wm.render_studio_mat_open = "\n".join(sorted(names))
+        wm.studio_mat_open = "\n".join(sorted(names))
         return {'FINISHED'}
 
 
-class RS_MT_material_presets_delete(Menu):
-    bl_idname = "RS_MT_material_presets_delete"
+class STUDIO_MT_material_presets_delete(Menu):
+    bl_idname = "STUDIO_MT_material_presets_delete"
     bl_label = "Delete Preset"
 
     def draw(self, context):
         for name in sorted(matpresets.saved()):
-            self.layout.operator(RS_OT_material_preset_delete.bl_idname, text=name, icon='X').name = name
+            self.layout.operator(STUDIO_OT_material_preset_delete.bl_idname, text=name, icon='X').name = name
 
 
-class RS_OT_material_open(Operator):
+class STUDIO_OT_material_open(Operator):
     """A library material: click opens it to change it; then click an object in the viewport to give it
     the material (the face's slot). Esc, right-click or a click anywhere else: only open."""
-    bl_idname = "render_studio.material_open"
+    bl_idname = "studio.material_open"
     bl_label = "Open Material"
     bl_options = {'UNDO', 'INTERNAL'}
 
@@ -752,7 +752,7 @@ class RS_OT_material_open(Operator):
         if material is None:
             return {'CANCELLED'}
         if event.ctrl or event.oskey:
-            return bpy.ops.render_studio.material_select(name=material.name)
+            return bpy.ops.studio.material_select(name=material.name)
         open_material(context, material)
         if context.window is None:
             return {'FINISHED'}
@@ -792,8 +792,8 @@ class RS_OT_material_open(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_material_assign(Operator):
-    bl_idname = "render_studio.material_assign"
+class STUDIO_OT_material_assign(Operator):
+    bl_idname = "studio.material_assign"
     bl_label = "Assign Material"
     bl_options = {'UNDO', 'INTERNAL'}
 
@@ -819,7 +819,7 @@ class RS_OT_material_assign(Operator):
         if material is None:
             return {'CANCELLED'}
         if self.select:
-            return bpy.ops.render_studio.material_select(name=material.name)
+            return bpy.ops.studio.material_select(name=material.name)
         obj = context.active_object
         old = current_material(context)
         bare = obj is not None and obj.select_get() and hasattr(obj.data, "materials") and obj.active_material is None
@@ -1013,8 +1013,8 @@ def variant_name(material):
     return "%s V%d" % (base, n)
 
 
-class RS_OT_material_variant(Operator):
-    bl_idname = "render_studio.material_variant"
+class STUDIO_OT_material_variant(Operator):
+    bl_idname = "studio.material_variant"
     bl_label = "Color Variant"
     bl_description = ("A copy of the current material to try another color: every object with it switches "
                       "to the copy, the original stays in the library")
@@ -1037,8 +1037,8 @@ class RS_OT_material_variant(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_material_select(Operator):
-    bl_idname = "render_studio.material_select"
+class STUDIO_OT_material_select(Operator):
+    bl_idname = "studio.material_select"
     bl_label = "Select Objects"
     bl_description = "Select the objects that use this material and make it the current one"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -1069,8 +1069,8 @@ class RS_OT_material_select(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_material_favorite(Operator):
-    bl_idname = "render_studio.material_favorite"
+class STUDIO_OT_material_favorite(Operator):
+    bl_idname = "studio.material_favorite"
     bl_label = "Favorite"
     bl_description = "Add to or remove from the favorites at the top of the library (in every project)"
     bl_options = {'INTERNAL'}
@@ -1083,8 +1083,8 @@ class RS_OT_material_favorite(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_material_rename(Operator):
-    bl_idname = "render_studio.material_rename"
+class STUDIO_OT_material_rename(Operator):
+    bl_idname = "studio.material_rename"
     bl_label = "Rename Material"
     bl_description = "Rename this material (\"Part | Material\" puts it into the group \"Part\")"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -1112,8 +1112,8 @@ class RS_OT_material_rename(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_material_delete(Operator):
-    bl_idname = "render_studio.material_delete"
+class STUDIO_OT_material_delete(Operator):
+    bl_idname = "studio.material_delete"
     bl_label = "Delete Material"
     bl_description = "Remove this material from the file"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -1138,8 +1138,8 @@ class RS_OT_material_delete(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_material_clean_unused(Operator):
-    bl_idname = "render_studio.material_clean_unused"
+class STUDIO_OT_material_clean_unused(Operator):
+    bl_idname = "studio.material_clean_unused"
     bl_label = "Remove Unused"
     bl_description = "Remove the project materials no object uses (base materials and favorites stay)"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -1163,26 +1163,26 @@ class RS_OT_material_clean_unused(Operator):
 def draw_tile_menu(self, context):
     """Right-click on a library tile: the material's own entries in Blender's button menu."""
     op = getattr(context, "button_operator", None)
-    if op is None or op.bl_rna.identifier not in {"RENDER_STUDIO_OT_material_assign", "RENDER_STUDIO_OT_material_open"}:
+    if op is None or op.bl_rna.identifier not in {"STUDIO_OT_material_assign", "STUDIO_OT_material_open"}:
         return
     material = bpy.data.materials.get(op.name)
     if material is None:
         return
     layout = self.layout
     layout.separator()
-    give = layout.operator(RS_OT_material_assign.bl_idname, text="Give to Selected Objects", icon='MATERIAL')
+    give = layout.operator(STUDIO_OT_material_assign.bl_idname, text="Give to Selected Objects", icon='MATERIAL')
     give.name, give.only_selected = material.name, True
-    layout.operator(RS_OT_material_assign.bl_idname, text="Replace the Current Material Everywhere",
+    layout.operator(STUDIO_OT_material_assign.bl_idname, text="Replace the Current Material Everywhere",
                     icon='FILE_REFRESH').name = material.name
-    layout.operator(RS_OT_material_select.bl_idname, icon='RESTRICT_SELECT_OFF').name = material.name
+    layout.operator(STUDIO_OT_material_select.bl_idname, icon='RESTRICT_SELECT_OFF').name = material.name
     fav = material.name in favorites()
-    layout.operator(RS_OT_material_favorite.bl_idname, icon='SOLO_ON' if fav else 'SOLO_OFF',
+    layout.operator(STUDIO_OT_material_favorite.bl_idname, icon='SOLO_ON' if fav else 'SOLO_OFF',
                     text="Remove from Favorites" if fav else "Add to Favorites").name = material.name
-    layout.operator(RS_OT_material_rename.bl_idname, text="Rename…", icon='GREASEPENCIL').name = material.name
+    layout.operator(STUDIO_OT_material_rename.bl_idname, text="Rename…", icon='GREASEPENCIL').name = material.name
     if base_library_file():
-        layout.operator(RS_OT_material_to_base.bl_idname, icon='EXPORT').name = material.name
+        layout.operator(STUDIO_OT_material_to_base.bl_idname, icon='EXPORT').name = material.name
     if not material.get(BASE_KEY):
-        layout.operator(RS_OT_material_delete.bl_idname, text="Delete…", icon='TRASH').name = material.name
+        layout.operator(STUDIO_OT_material_delete.bl_idname, text="Delete…", icon='TRASH').name = material.name
 
 
 def _library_materials():
@@ -1197,7 +1197,7 @@ PROJECT_GROUP = "Project"
 # "Base Materials.blend" in one of your asset libraries; tools/make_base_materials.py makes one).
 # Copied into the file when the group is opened; the copies nobody uses are not saved with the file.
 BASE_FILE = "Base Materials.blend"
-BASE_KEY = "render_studio_base"
+BASE_KEY = "studio_base"
 
 
 def base_library_file():
@@ -1295,8 +1295,8 @@ def library_kinds(source='PROJECT'):
     return [kind for kind in KINDS if kind in found]
 
 
-class RS_OT_material_kind_filter(Operator):
-    bl_idname = "render_studio.material_kind_filter"
+class STUDIO_OT_material_kind_filter(Operator):
+    bl_idname = "studio.material_kind_filter"
     bl_label = "Show Kind"
     bl_description = "Show only the materials of this kind (click again: all kinds)"
     bl_options = {'INTERNAL'}
@@ -1305,22 +1305,22 @@ class RS_OT_material_kind_filter(Operator):
 
     def execute(self, context):
         wm = context.window_manager
-        wm.render_studio_mat_kind = "" if self.kind in {wm.render_studio_mat_kind, "-"} else self.kind
+        wm.studio_mat_kind = "" if self.kind in {wm.studio_mat_kind, "-"} else self.kind
         return {'FINISHED'}
 
 
-class RS_MT_material_kind_filter(Menu):
-    bl_idname = "RS_MT_material_kind_filter"
+class STUDIO_MT_material_kind_filter(Menu):
+    bl_idname = "STUDIO_MT_material_kind_filter"
     bl_label = "Kind"
 
     def draw(self, context):
         layout = self.layout
         wm = context.window_manager
-        layout.operator(RS_OT_material_kind_filter.bl_idname, text="All",
-                        icon='CHECKMARK' if not wm.render_studio_mat_kind else 'BLANK1').kind = wm.render_studio_mat_kind or "-"
-        for name in library_kinds(wm.render_studio_mat_source):
-            layout.operator(RS_OT_material_kind_filter.bl_idname, text=name,
-                            icon='CHECKMARK' if name == wm.render_studio_mat_kind else 'BLANK1').kind = name
+        layout.operator(STUDIO_OT_material_kind_filter.bl_idname, text="All",
+                        icon='CHECKMARK' if not wm.studio_mat_kind else 'BLANK1').kind = wm.studio_mat_kind or "-"
+        for name in library_kinds(wm.studio_mat_source):
+            layout.operator(STUDIO_OT_material_kind_filter.bl_idname, text=name,
+                            icon='CHECKMARK' if name == wm.studio_mat_kind else 'BLANK1').kind = name
 
 
 def _library_groups(search="", source='PROJECT', kind=""):
@@ -1354,7 +1354,7 @@ LIBRARY_COLUMNS = 3
 LIBRARY_ICON_SCALE = 4.4
 
 
-class RS_PT_material(_SidebarPanel, Panel):
+class STUDIO_PT_material(_SidebarPanel, Panel):
     """The Material tab: 1. preview and the active material, 2. quick settings,
     3. library (every material of the file) with the presets."""
     studio_tab = 'MATERIAL'
@@ -1371,9 +1371,9 @@ class RS_PT_material(_SidebarPanel, Panel):
         material = current_material(context)
         # the same head in every tab: [new ▾] [A] [B] [−] [+ variant] [settings]
         from . import variants_ab
-        head, _props = tab_head(layout, RS_MT_material_new.bl_idname, "New Material", icon='MATERIAL')
+        head, _props = tab_head(layout, STUDIO_MT_material_new.bl_idname, "New Material", icon='MATERIAL')
         variants_ab.draw(head, context.scene, 'MATERIAL')
-        head.popover(RS_PT_material_settings.__name__, text="", icon='PREFERENCES')
+        head.popover(STUDIO_PT_material_settings.__name__, text="", icon='PREFERENCES')
         box = layout.box()
 
         # 1. The material: [pick ▾][name][n×][eyedropper][⋯][gear], its preview, the slots
@@ -1391,15 +1391,15 @@ class RS_PT_material(_SidebarPanel, Panel):
                 users.label(text="%d×" % material.users)
         elif not has_slot:
             row.label(text="Click a material or an object", icon='INFO')
-        row.operator(RS_OT_pick_from_object.bl_idname, text="", icon='EYEDROPPER').mode = 'MATERIAL'
-        row.menu(RS_MT_material_more.bl_idname, text="", icon='THREE_DOTS')
+        row.operator(STUDIO_OT_pick_from_object.bl_idname, text="", icon='EYEDROPPER').mode = 'MATERIAL'
+        row.menu(STUDIO_MT_material_more.bl_idname, text="", icon='THREE_DOTS')
         if has_slot and material is not None and material != obj.active_material:
             # opened from the library, not on the selected object: give it to it, or click an object
             hint = box.row(align=True)
             sub = hint.row(align=True)
             sub.active = False
             sub.label(text="Not on %s" % obj.name, icon='INFO', translate=False)
-            give = hint.operator(RS_OT_material_assign.bl_idname, text="Give to It", icon='MATERIAL')
+            give = hint.operator(STUDIO_OT_material_assign.bl_idname, text="Give to It", icon='MATERIAL')
             give.name, give.only_selected = material.name, True
         if material is not None and (p is None or p.mat_preview):
             box.template_icon(icon_value=layout.icon(material),
@@ -1407,7 +1407,7 @@ class RS_PT_material(_SidebarPanel, Panel):
         if has_slot and len(obj.material_slots) > 1:
             grid = box.grid_flow(row_major=True, columns=2, even_columns=True, align=True)
             for i, slot in enumerate(obj.material_slots):
-                grid.operator(RS_OT_material_slot.bl_idname, text=slot.material.name if slot.material else "(empty)",
+                grid.operator(STUDIO_OT_material_slot.bl_idname, text=slot.material.name if slot.material else "(empty)",
                               depress=(i == obj.active_material_index)).index = i
 
         # 2. Its values, right under it; its wear in a section of its own
@@ -1454,22 +1454,22 @@ class RS_PT_material(_SidebarPanel, Panel):
         if not is_open:
             return
         row = box.row(align=True)
-        row.prop(wm, "render_studio_mat_source", expand=True)
-        source = wm.render_studio_mat_source
+        row.prop(wm, "studio_mat_source", expand=True)
+        source = wm.studio_mat_source
         row = box.row(align=True)
-        row.prop(wm, "render_studio_mat_search", text="", icon='VIEWZOOM')
+        row.prop(wm, "studio_mat_search", text="", icon='VIEWZOOM')
         kinds_here = library_kinds(source)
         if len(kinds_here) > 1:     # filter by kind: a dropdown with only the kinds this source has
             sub = row.row(align=True)
             sub.ui_units_x = 4.5
-            current = wm.render_studio_mat_kind if wm.render_studio_mat_kind in kinds_here else ""
-            sub.menu(RS_MT_material_kind_filter.bl_idname, text=current or "All", icon='FILTER')
+            current = wm.studio_mat_kind if wm.studio_mat_kind in kinds_here else ""
+            sub.menu(STUDIO_MT_material_kind_filter.bl_idname, text=current or "All", icon='FILTER')
         unused = len(unused_materials()) if source == 'PROJECT' else 0
         if unused:
-            row.operator(RS_OT_material_clean_unused.bl_idname, text=str(unused), icon='TRASH')
-        search = wm.render_studio_mat_search
+            row.operator(STUDIO_OT_material_clean_unused.bl_idname, text=str(unused), icon='TRASH')
+        search = wm.studio_mat_search
         kinds = library_kinds(source)
-        kind = wm.render_studio_mat_kind if wm.render_studio_mat_kind in kinds else ""
+        kind = wm.studio_mat_kind if wm.studio_mat_kind in kinds else ""
         _ensure_base_library()
         from .. import setup_flow
         if setup_flow.running() and setup_flow.flow["step"] == "materials":
@@ -1485,7 +1485,7 @@ class RS_PT_material(_SidebarPanel, Panel):
             return
         users = material_users()
         favs = favorites()
-        closed = set(wm.render_studio_mat_open.split("\n"))
+        closed = set(wm.studio_mat_open.split("\n"))
         tiles = p is None or p.mat_library_view == 'TILES'
         for group, items in groups:
             is_open = bool(search) or bool(kind) or group not in closed
@@ -1493,7 +1493,7 @@ class RS_PT_material(_SidebarPanel, Panel):
             left = head.row(align=True)
             left.alignment = 'LEFT'
             left.emboss = 'NONE'
-            left.operator(RS_OT_material_group_toggle.bl_idname, text=tr(group),
+            left.operator(STUDIO_OT_material_group_toggle.bl_idname, text=tr(group),
                           icon='DOWNARROW_HLT' if is_open else 'RIGHTARROW').name = group
             right = head.row(align=True)
             right.alignment = 'RIGHT'
@@ -1511,12 +1511,12 @@ class RS_PT_material(_SidebarPanel, Panel):
                     pic.template_icon(icon_value=layout.icon(mat), scale=LIBRARY_ICON_SCALE)
                     name = cell.row(align=True)
                     name.scale_y = 0.75
-                    name.operator(RS_OT_material_open.bl_idname,
+                    name.operator(STUDIO_OT_material_open.bl_idname,
                                   text="%d× %s" % (count, short) if count else short,
                                   depress=(mat == material), emboss=(mat == material)).name = mat.name
                     heart = name.row(align=True)
                     heart.active = mat.name in favs
-                    heart.operator(RS_OT_material_favorite.bl_idname, text="", emboss=False,
+                    heart.operator(STUDIO_OT_material_favorite.bl_idname, text="", emboss=False,
                                    icon='FUND' if mat.name in favs else 'HEART').name = mat.name
             else:
                 col = box.column(align=True)
@@ -1524,7 +1524,7 @@ class RS_PT_material(_SidebarPanel, Panel):
                     count = len(users.get(mat, ()))
                     line = col.row(align=True)
                     line.active = bool(count) or mat == material or bool(mat.get(BASE_KEY))
-                    line.operator(RS_OT_material_open.bl_idname, text=mat.name.replace(" | ", " · "),
+                    line.operator(STUDIO_OT_material_open.bl_idname, text=mat.name.replace(" | ", " · "),
                                   icon_value=layout.icon(mat), depress=(mat == material)).name = mat.name
                     info = line.row(align=True)
                     info.ui_units_x = 1.6

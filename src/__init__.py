@@ -3,7 +3,7 @@
 
 Unofficial community add-on, not affiliated with or endorsed by Anthropic.
 Two sidebar tabs: "Claude" (the chat) and "Studio" (cameras, light, materials,
-render queue – formerly the stand-alone "Render Studio" extension).
+render queue – formerly the stand-alone "AI Studio" extension).
 
 Architecture:
 - ``claude_cli``   : runs the local ``claude`` CLI (stream-json) in a thread.
@@ -17,7 +17,7 @@ Architecture:
 - ``lmstudio``     : local models through LM Studio (Claude Code with ANTHROPIC_BASE_URL).
 - ``autosave``     : regular backups and saves right before risky moments.
 - ``attachments``, ``skills``, ``memory``, ``lessons``: the matching features.
-- ``studio``       : Render Studio (sub-package); its ``claude_tools`` offers the
+- ``studio``       : AI Studio (sub-package); its ``claude_tools`` offers the
                      studio_* tools to the chat.
 - ``i18n``         : German translation of the UI.
 """

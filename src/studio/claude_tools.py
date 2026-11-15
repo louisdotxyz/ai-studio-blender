@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Render Studio's tools for the "Claude Assistant" chat.
+"""AI Studio's tools for the "Claude Assistant" chat.
 
 Claude Assistant reads ``get_tools()`` of every module named ``claude_tools``
 before each message and offers the tools to the model (cloud or local). The
@@ -103,7 +103,7 @@ def _camera(args):
     scene.camera = cam
     text = f"Camera '{cam.name}' created and made active"
     if args.get("add_to_queue"):
-        bpy.ops.render_studio.add()
+        bpy.ops.studio.add()
         text += " and added to the render queue"
     return text + "."
 
@@ -111,7 +111,7 @@ def _camera(args):
 def _queue(args):
     from .ui_common import active_camera, ensure_uids
     scene = bpy.context.scene
-    rq = scene.render_studio
+    rq = scene.studio
     action = str(args.get("action") or "status").lower()
     if action == "add":
         name = args.get("camera")
@@ -122,7 +122,7 @@ def _queue(args):
             rq.quality = args["quality"]
         scene.camera = cam
         ensure_uids(rq)
-        bpy.ops.render_studio.add()
+        bpy.ops.studio.add()
         return f"Added {cam.name} ({rq.quality}) to the queue; it renders automatically if enabled."
     if action == "start":
         if runner.RUN.busy:
@@ -216,26 +216,26 @@ def get_tools():
     # comes and goes with a skill would be missing ("No such tool"). studio_cad_job checks the
     # CAD skill itself and says when it is off.
     return [
-        {"name": "studio_context", "label": "Render Studio: looked at the setup",
-         "description": "Render Studio: get the setup format and the current scene (subject size, camera, "
+        {"name": "studio_context", "label": "AI Studio: looked at the setup",
+         "description": "AI Studio: get the setup format and the current scene (subject size, camera, "
                         "lights, World) before creating a light setup, an HDRI or an environment.",
          "inputSchema": {"type": "object", "properties": {
              "kind": {"type": "string", "enum": ["light", "hdri", "environment"]}},
              "required": ["kind"]},
          "handler": _context},
-        {"name": "studio_light_setup", "label": "Render Studio: light setup",
-         "description": "Render Studio: apply a studio light setup around the subject (replaces the previous "
+        {"name": "studio_light_setup", "label": "AI Studio: light setup",
+         "description": "AI Studio: apply a studio light setup around the subject (replaces the previous "
                         "setup, keeps the user's own lights, saves it as a preset). Use the same name to "
                         "change it. Do not create lights by hand.",
          "inputSchema": {"type": "object", "properties": {"setup": _SETUP}, "required": ["setup"]},
          "handler": _light_setup},
-        {"name": "studio_hdri_setup", "label": "Render Studio: generated HDRI",
-         "description": "Render Studio: generate an HDRI environment (sky, sun, softboxes) and use it as "
+        {"name": "studio_hdri_setup", "label": "AI Studio: generated HDRI",
+         "description": "AI Studio: generate an HDRI environment (sky, sun, softboxes) and use it as "
                         "the World.",
          "inputSchema": {"type": "object", "properties": {"setup": _SETUP}, "required": ["setup"]},
          "handler": _hdri_setup},
-        {"name": "studio_environment_bake", "label": "Render Studio: baked environment",
-         "description": "Render Studio: bake a modelled room (the objects marked obj['as_env'] = True; "
+        {"name": "studio_environment_bake", "label": "AI Studio: baked environment",
+         "description": "AI Studio: bake a modelled room (the objects marked obj['as_env'] = True; "
                         "they render even when hidden) "
                         "into a 32-bit HDRI and use it as the World. Test: resolution 1024, samples 32; "
                         "final: 4096 / 256. Save a backup copy of the file first.",
@@ -247,7 +247,7 @@ def get_tools():
              "resolution": {"type": "integer"}, "samples": {"type": "integer"}},
              "required": ["name"]},
          "handler": _environment_bake},
-        {"name": "studio_section", "label": "Render Studio: section",
+        {"name": "studio_section", "label": "AI Studio: section",
          "description": "Cut objects (e.g. a 3D scan and the CAD part) with a plane and measure the cut: "
                         "width/height of each contour in mm, and how far the others lie from the first "
                         "(mean/max mm). Shows the contours as edge objects (temp collection, keep=true keeps them).",
@@ -259,8 +259,8 @@ def get_tools():
              "keep": {"type": "boolean"}},
              "required": ["objects"]},
          "handler": _section},
-        {"name": "studio_base_material", "label": "Render Studio: base materials",
-         "description": "Render Studio's base material library (generic materials shared by all projects, "
+        {"name": "studio_base_material", "label": "AI Studio: base materials",
+         "description": "AI Studio's base material library (generic materials shared by all projects, "
                         "the base group in the Material tab): 'list' them, 'save' a material of this file "
                         "into it (replaces the one of the same name – change the copy here first, then save), "
                         "or 'remove' one (ask the user first). Only when the user asks to change the base "
@@ -271,8 +271,8 @@ def get_tools():
              "name": {"type": "string", "description": "Name in the library (default: the base name)"}},
              "required": ["action"]},
          "handler": _base_material},
-        {"name": "studio_camera", "label": "Render Studio: camera",
-         "description": "Render Studio: create a camera. 'from_view' saves the user's current viewport view; "
+        {"name": "studio_camera", "label": "AI Studio: camera",
+         "description": "AI Studio: create a camera. 'from_view' saves the user's current viewport view; "
                         "'place' puts a camera around the subject like the lights (horizontal degrees, 0 = "
                         "where the active camera is, negative = left; vertical degrees above the subject; "
                         "distance in subject radii, typical 3-6; focal_length mm). Optionally add it to the "
@@ -285,7 +285,7 @@ def get_tools():
              "add_to_queue": {"type": "boolean"}},
              "required": ["action"]},
          "handler": _camera},
-        {"name": "studio_cad_import", "label": "Render Studio: CAD import",
+        {"name": "studio_cad_import", "label": "AI Studio: CAD import",
          "description": "Import a CAD export (GLB/glTF incl. Onshape's, STEP, OBJ, STL …) with its sidecar "
                         "<name>.cad.json and take it over from the old version in the scene: part ids, base "
                         "materials for new parts, materials/collections/modifiers/settings of old parts kept, "
@@ -300,7 +300,7 @@ def get_tools():
              "details": {"type": "boolean", "description": "Also the full report as JSON"}},
              "required": ["path"]},
          "handler": _cad_import},
-        {"name": "studio_cad_check", "label": "Render Studio: CAD check images",
+        {"name": "studio_cad_check", "label": "AI Studio: CAD check images",
          "description": "Check images of the CAD parts (default: the last CAD import) from fixed views "
                         "(Iso, Front, Right, Top), rendered in the background; answers with the image paths "
                         "when they are done.",
@@ -309,7 +309,7 @@ def get_tools():
              "views": {"type": "array", "items": {"type": "string", "enum": ["Iso", "Front", "Right", "Top"]}},
              "size": {"type": "integer"}, "samples": {"type": "integer"}}},
          "handler": _cad_check},
-        {"name": "studio_cad_feedback", "label": "Render Studio: CAD feedback",
+        {"name": "studio_cad_feedback", "label": "AI Studio: CAD feedback",
          "description": "Feedback for the CAD side: with 'problem', note an open point (collision, size, "
                         "a look that needs a geometry change, a change to make) in CAD-Feedback.md next to "
                         "the part's CAD export ('image': a check image or render it refers to). Without "
@@ -321,7 +321,7 @@ def get_tools():
              "image": {"type": "string", "description": "PNG/JPEG it refers to (optional)"},
              "folder": {"type": "string", "description": "Folder of the CAD export, if no part is given"}}},
          "handler": _cad_feedback},
-        {"name": "studio_cad_job", "label": "Render Studio: CAD job",
+        {"name": "studio_cad_job", "label": "AI Studio: CAD job",
          "description": "CAD skill: send a change to the CAD side as a job for a Claude chat that works on the CAD "
                         "model (e.g. Onshape in the Claude app). Saved in ~/.config/ai-studio/jobs; a new chat "
                         "opens with the job, a known chat gets a notification and takes it with blender_jobs. "
@@ -337,8 +337,8 @@ def get_tools():
              "target": {"type": "string", "enum": ["origin", "new"]},
              "image": {"type": "string", "description": "PNG/JPEG that shows it (optional)"}}},
          "handler": _cad_job},
-        {"name": "studio_render_queue", "label": "Render Studio: render queue",
-         "description": "Render Studio's render queue: 'status' (entries, cameras, progress), 'add' a camera "
+        {"name": "studio_render_queue", "label": "AI Studio: render queue",
+         "description": "AI Studio's render queue: 'status' (entries, cameras, progress), 'add' a camera "
                         "(LOW = quick test, HIGH = final), 'start', 'wait' (answers when everything is "
                         "rendered – use it instead of asking for the status again and again) or 'cancel'. "
                         "Renders are saved to the output folder.",

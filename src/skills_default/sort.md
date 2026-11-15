@@ -8,11 +8,12 @@ Tidy up the scene without changing geometry, materials or settings. Answer brief
    meshes/materials with ".001" duplicates, unapplied scale, orphan data (users == 0), empty collections.
 2. Protect, never rename or move:
    - materials and nodes named in the text "Varianten.json" (targets "Material/Node"): renaming breaks the variants,
-   - backup collections (name contains "backup"/"Backup") and their content, room objects (obj["as_env"], older "ENV | …" rooms), the archive and temp collections,
-     the camera and light collections (Camera, Light; older AS_camera, AS_lights, RS_Cameras, RS_Lights), objects with
-     "render_studio_temp_camera".
+   - backup collections (name contains "backup"/"Backup") and their content, room objects (obj["as_env"], older "ENV | …" rooms),
+     the six collections Camera, Set, Light, Object, Archiv, TEMP (the add-on renames older ones itself), objects with
+     "studio_temp_camera".
 3. Rename after the project scheme "<Group> | <Part>" (e.g. "Cabinet | Lid | Top 01");
-   move objects into fitting existing collections, never invent a new hierarchy.
+   move objects into the fitting one of the six collections (the product into Object, room/floor/props into Set),
+   never invent a new top-level hierarchy.
 4. Scale: apply only after ask_user, and never on objects whose mesh is shared (mesh.users > 1,
    e.g. feet, casters) or that are mirrored (a negative scale axis): list those instead.
 5. Remove (orphans, empty collections) only after ask_user; unwanted objects go into the archive with

@@ -180,7 +180,7 @@ def save_hdr(pixels, path):
     import numpy as np
 
     height, width = pixels.shape[:2]
-    img = bpy.data.images.new("_render_studio_hdri", width, height, float_buffer=True, alpha=False)
+    img = bpy.data.images.new("_studio_hdri", width, height, float_buffer=True, alpha=False)
     try:
         img.pixels.foreach_set(np.ascontiguousarray(pixels).ravel())
         img.filepath_raw = path

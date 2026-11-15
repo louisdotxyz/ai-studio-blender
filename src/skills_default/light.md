@@ -5,7 +5,7 @@ icon: LIGHT
 studio_tab: LIGHT
 chat: yes
 ---
-Light setup with Render Studio's tools. Answer in 1-2 sentences.
+Light setup with AI Studio's tools. Answer in 1-2 sentences.
 1. studio_context(kind="light") -> setup format, subject size, camera, current lights.
 2. studio_light_setup(setup={...}) replaces the previous setup and saves it as a preset; the same name
    overwrites. Do not create lights by hand for a normal setup.
@@ -13,7 +13,7 @@ Light setup with Render Studio's tools. Answer in 1-2 sentences.
    area lights ~1-2x the subject size; never pure white, 4500-6500 K. Keep the World unless asked.
 3. Changes ("warmer", "softer", "more rim"): call studio_light_setup again with the changed setup.
 Know:
-- Render Studio names its lights itself (A_key_01, A_fill_01, A_rim_01 … in the collection Light; A/P/S/D =
+- AI Studio names its lights itself (A_key_01, A_fill_01, A_rim_01 … in the collection Light; A/P/S/D =
   area/point/spot/sun): refer to them by those names, not by the names you asked for.
 - Light per part (light linking): only when the wish needs it. One light per part, no drivers, constraints or
   helper empties. Link with object.light_linking.receiver_collection to a flat collection that holds the
@@ -41,5 +41,5 @@ Know:
   api.flag(light, "FLAG" | "BLINDS" | "WINDOW" | "DAPPLE" | "BRANCHES" | "WATER" | "CLOUDS", speed=1, scale=1)
   (None removes it; leaves, tree, water and clouds move when the animation plays, speed=0 keeps them still; a
   small light gives sharper gobo shadows); api.only_product(light, True);
-  haze: scene.render_studio.haze_density (0-0.2). Background: scene.render_studio.background_mode.
+  haze: scene.studio.haze_density (0-0.2). Background: scene.studio.background_mode.
 - Check: render_preview (max_size 600).

@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Camera collection, hiding cameras in the viewport and the movement lock.
 
-- New cameras (the "+" in the camera bar) go into the camera collection, new lights
-  into the light collection (names in Preferences › Studio, default Camera and
-  Light). Collections with older names (AS_camera, AS_lights, AS_archiv, AS_set, RS_Cameras,
-  RS_Lights, also "AS_camera | Packshot") are renamed when a file is opened.
+- Every scene has the same six collections, always these names: Camera, Set, Light, Object
+  (the product), Archiv (replaced objects, hidden) and TEMP (Claude's helpers, emptied after each
+  answer). Collections with older names (AS_camera, AS_lights, AS_archiv, AS_set, RS_Cameras,
+  Archive, temp, also "AS_camera | Packshot") are renamed when a file is opened.
 - Names (Preferences › Studio › Name Scheme): cameras P_/O_ (perspective/orthographic) and
   lights A_/P_/S_/D_ (area/point/spot/sun), then what they show or do, then the number:
   "P_side_01", "O_front_01", "A_key_01".
@@ -19,34 +19,48 @@
 
 import bpy
 
-# Names of earlier versions, renamed to the collection names set in the preferences.
-OLD_CAMERAS = ("Render Studio Cameras", "RS_Cameras", "AS_camera")
-OLD_LIGHTS = ("Render Studio Lights", "RS_Lights", "AS_lights")
-OLD_ARCHIVES = ("AS_archiv",)
-OLD_SETS = ("AS_set",)
-SET_COLLECTION = "Set"
-
-
-def _pref(key, default):
-    from . import runner
-    p = runner.prefs()
-    return (getattr(p, key, "") or "").strip() or default if p is not None else default
+# The six collections of every scene (fixed names, 3.0)
+CAMERA, SET, LIGHT, OBJECT, ARCHIVE, TEMP = "Camera", "Set", "Light", "Object", "Archiv", "TEMP"
+COLLECTIONS = (CAMERA, SET, LIGHT, OBJECT, ARCHIVE, TEMP)
+SET_COLLECTION = SET
+# Names of earlier versions (and of the old collection settings), renamed to the fixed ones.
+OLD_CAMERAS = ("Render Studio Cameras", "RS_Cameras", "AS_camera", "Cameras")
+OLD_LIGHTS = ("Render Studio Lights", "RS_Lights", "AS_lights", "Lights")
+OLD_ARCHIVES = ("AS_archiv", "Archive", "archive", "archiv")
+OLD_SETS = ("AS_set", "set")
+OLD_OBJECTS = ("AS_object", "AS_objects", "Objects")
+OLD_TEMPS = ("temp", "Temp", "AS_temp")
+_SETTINGS = {CAMERA: "camera_collection", LIGHT: "light_collection", ARCHIVE: "archive_collection",
+             TEMP: "temp_collection"}
 
 
 def camera_collection_name():
-    return _pref("camera_collection", "Camera")
+    return CAMERA
 
 
 def light_collection_name():
-    return _pref("light_collection", "Light")
+    return LIGHT
 
 
 def archive_collection_name():
-    return _pref("archive_collection", "Archive")
+    return ARCHIVE
 
 
 def temp_collection_name():
-    return _pref("temp_collection", "temp")
+    return TEMP
+
+
+def object_collection_name():
+    return OBJECT
+
+
+def _old_setting(new):
+    """A collection name someone set in the preferences of an earlier version ("" if none)."""
+    from . import runner
+    p = runner.prefs()
+    key = _SETTINGS.get(new)
+    value = (getattr(p, key, "") or "").strip() if p is not None and key else ""
+    return value.split("{")[0].strip() if value != new else ""
 
 
 def active_camera(scene):
@@ -60,17 +74,17 @@ def active_camera(scene):
 
 def scene_cameras(scene):
     """The cameras of the scene, without the temporary render copies of the queue."""
-    return sorted((o for o in scene.objects if o.type == 'CAMERA' and "render_studio_temp_camera" not in o),
+    return sorted((o for o in scene.objects if o.type == 'CAMERA' and "studio_temp_camera" not in o),
                   key=lambda o: o.name.lower())
 
 
 def rename_old_collections():
     """Renames the collections of older versions (AS_camera, RS_Cameras …, also "AS_camera |
     Packshot") to the names set in the preferences, unless one of that name exists already."""
-    pairs = [(old, new) for olds, new in ((OLD_CAMERAS, camera_collection_name()),
-                                          (OLD_LIGHTS, light_collection_name()),
-                                          (OLD_ARCHIVES, archive_collection_name()),
-                                          (OLD_SETS, SET_COLLECTION)) for old in olds if old != new]
+    groups = ((OLD_CAMERAS, CAMERA), (OLD_LIGHTS, LIGHT), (OLD_ARCHIVES, ARCHIVE), (OLD_SETS, SET),
+              (OLD_OBJECTS, OBJECT), (OLD_TEMPS, TEMP))
+    pairs = [(old, new) for olds, new in groups
+             for old in tuple(olds) + ((_old_setting(new),) if _old_setting(new) else ()) if old != new]
     for coll in list(bpy.data.collections):
         if coll.library is not None:
             continue
@@ -94,7 +108,12 @@ def named_collection(scene, name):
 
 
 def camera_collection(scene):
-    return named_collection(scene, camera_collection_name())
+    return named_collection(scene, CAMERA)
+
+
+def object_collection(scene):
+    """Where the product goes (CAD imports)."""
+    return named_collection(scene, OBJECT)
 
 
 def _layer_collection(layer, coll):
@@ -133,7 +152,7 @@ def set_cameras_visible(scene, visible):
 
 def hide_by_default(scene):
     """Once per scene: hide all cameras."""
-    rs = scene.render_studio
+    rs = scene.studio
     if rs.cameras_hidden_once:
         return
     rs.cameras_hidden_once = True
@@ -145,7 +164,7 @@ BLENDER_SAMPLES = 4096   # Cycles' own default: far more than a denoised product
 
 def default_samples(scene):
     """Once per scene: Blender's 4096 Cycles samples become the add-on's default (512)."""
-    rs = scene.render_studio
+    rs = scene.studio
     if rs.samples_set_once:
         return
     rs.samples_set_once = True
@@ -158,15 +177,19 @@ def default_samples(scene):
 
 @bpy.app.handlers.persistent
 def _on_load_post(*_args):
-    from . import runner
+    from . import migrate, runner
+    try:
+        migrate.run()   # files from before 3.0: render_studio… → studio…
+    except Exception as ex:
+        print("AI Studio: settings from before 3.0:", ex)
     try:
         rename_old_collections()
     except Exception as ex:
-        print("Render Studio: collections:", ex)
+        print("AI Studio: collections:", ex)
     try:
         runner.remove_temp_cameras()
     except Exception as ex:
-        print("Render Studio: temporary cameras:", ex)
+        print("AI Studio: temporary cameras:", ex)
     try:
         renamed = tidy_names()
         if renamed:
@@ -177,15 +200,15 @@ def _on_load_post(*_args):
         try:
             hide_by_default(scene)
         except Exception as ex:
-            print("Render Studio: could not hide the cameras:", ex)
+            print("AI Studio: could not hide the cameras:", ex)
         try:
             default_samples(scene)
         except Exception as ex:
-            print("Render Studio: samples:", ex)
+            print("AI Studio: samples:", ex)
     try:
         apply_min_clipping()
     except Exception as ex:
-        print("Render Studio: clipping:", ex)
+        print("AI Studio: clipping:", ex)
 
 
 def scheme_on():
@@ -195,8 +218,7 @@ def scheme_on():
 
 
 def _prefixes():
-    return ((camera_collection_name(), light_collection_name(), "AS", "RS")
-            + OLD_CAMERAS + OLD_LIGHTS)
+    return (CAMERA, LIGHT, "AS", "RS") + OLD_CAMERAS + OLD_LIGHTS
 
 
 def letter_of(obj, data_type=None):
@@ -269,7 +291,7 @@ def tidy_names():
     names of older versions and Blender's ".001" are fixed. Returns {old: new}."""
     from ..naming import scheme_names, tidy
     objects = [o for o in bpy.data.objects if o.type in {'CAMERA', 'LIGHT'} and o.library is None
-               and "render_studio_temp_camera" not in o and o.data is not None]
+               and "studio_temp_camera" not in o and o.data is not None]
     if scheme_on():
         # a camera whose name says nothing ("Camera", "View") is named after where it looks from
         names = scheme_names([(o.name, letter_of(o), view_role(o.matrix_world) if o.type == 'CAMERA'
@@ -307,7 +329,7 @@ def set_locked(camera, locked):
     camera.lock_rotation_w = locked
 
 
-# Getters/setters for the scene properties (RS_Settings) ---------------------
+# Getters/setters for the scene properties (STUDIO_Settings) ---------------------
 
 def get_show(settings):
     scene = settings.id_data
@@ -401,8 +423,8 @@ def camera_from_view(scene, space, view_layer, name=""):
     rv3d = space.region_3d
     from .runner import RUN
     user_cam = RUN.original("camera", scene.camera)
-    if user_cam is not None and user_cam.get("render_studio_temp_camera"):
-        user_cam = bpy.data.objects.get(user_cam["render_studio_temp_camera"])
+    if user_cam is not None and user_cam.get("studio_temp_camera"):
+        user_cam = bpy.data.objects.get(user_cam["studio_temp_camera"])
     if rv3d.view_perspective == 'CAMERA' and user_cam is not None and user_cam.type == 'CAMERA':
         src = user_cam   # already looking through a camera: copy it (never the render's copy)
         cam = _new_camera(scene, view_layer, name)
@@ -426,7 +448,7 @@ def camera_around(scene, view_layer, name, horizontal, vertical, distance, focal
     the active camera is), distance in subject radii, looking at the subject."""
     import math
     from . import lights
-    center, radius = lights.subject(scene, scene.render_studio.light_orbit_target)
+    center, radius = lights.subject(scene, scene.studio.light_orbit_target)
     front = lights.front_angle(scene, center)
     cam = _new_camera(scene, view_layer, name)
     cam.data.lens = max(1.0, float(focal_length))
@@ -459,7 +481,7 @@ def camera_preset(scene, view_layer, key):
     if preset is None:
         raise ValueError("View must be one of %s" % ", ".join(p[0] for p in VIEW_PRESETS))
     _key, name, around, height, ortho, lens, room = preset
-    center, radius = lights.subject(scene, scene.render_studio.orbit_target)
+    center, radius = lights.subject(scene, scene.studio.orbit_target)
     cam = _new_camera(scene, view_layer, name)
     cam.data.lens = lens
     if ortho:
@@ -511,7 +533,7 @@ def _end_moves():
 def watch(scene):
     """Called after depsgraph updates: notice the scene camera starting to move."""
     cam = scene.camera
-    if cam is None or cam.type != 'CAMERA' or _restoring[0] or cam.get("render_studio_temp_camera"):
+    if cam is None or cam.type != 'CAMERA' or _restoring[0] or cam.get("studio_temp_camera"):
         return
     from .runner import RUN, render_job_running
     if RUN.preparing or render_job_running():
@@ -576,7 +598,7 @@ def _on_depsgraph(scene, _depsgraph):
     try:
         watch(scene)
     except Exception as ex:
-        print("Render Studio: camera history:", ex)
+        print("AI Studio: camera history:", ex)
 
 
 def register_history():

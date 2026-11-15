@@ -9,7 +9,7 @@ import time
 
 import bpy
 
-# scene.render_studio property → (label, min, max): the values are -100 … 100 (exposure in stops)
+# scene.studio property → (label, min, max): the values are -100 … 100 (exposure in stops)
 KEYS = ("edit_exposure", "edit_contrast", "edit_highlights", "edit_shadows",
         "edit_temperature", "edit_tint", "edit_vibrance", "edit_saturation")
 LIGHT = KEYS[:4]
@@ -20,7 +20,7 @@ _state = {"want": None, "counter": 0}
 
 
 def values(scene):
-    rs = scene.render_studio
+    rs = scene.studio
     return {key: float(getattr(rs, key)) for key in KEYS}
 
 

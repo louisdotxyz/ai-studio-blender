@@ -89,7 +89,7 @@ def draw_atmosphere(box, scene):
     """Atmosphere row in the World box (only with PSA)."""
     row = box.row(align=True)
     on = atmosphere_on(scene)
-    row.operator(RS_OT_atmosphere.bl_idname, text="Atmosphere", icon='OUTLINER_DATA_LIGHTPROBE', depress=on)
+    row.operator(STUDIO_OT_atmosphere.bl_idname, text="Atmosphere", icon='OUTLINER_DATA_LIGHTPROBE', depress=on)
     if not on:
         return
     settings = scene.world.psa_atmosphere_settings
@@ -99,8 +99,8 @@ def draw_atmosphere(box, scene):
             col.prop(settings, prop, text=label)
 
 
-class RS_OT_atmosphere(Operator):
-    bl_idname = "render_studio.atmosphere"
+class STUDIO_OT_atmosphere(Operator):
+    bl_idname = "studio.atmosphere"
     bl_label = "Atmosphere"
     bl_description = ("Physical sky with sun, haze and clouds on the World (Physical Starlight & Atmosphere). "
                       "Click again to take it off")
@@ -124,8 +124,8 @@ class RS_OT_atmosphere(Operator):
 
 # ---------------------------------------------------------------- Light Wrangler
 
-class RS_OT_place_light(Operator):
-    bl_idname = "render_studio.place_light"
+class STUDIO_OT_place_light(Operator):
+    bl_idname = "studio.place_light"
     bl_label = "Place Light"
     bl_description = "Place this light by dragging on the product (Light Wrangler). Esc or right-click ends it"
     bl_options = {'INTERNAL'}
@@ -154,8 +154,8 @@ class RS_OT_place_light(Operator):
 
 # ---------------------------------------------------------------- the list in the Light tab
 
-class RS_OT_addon_off(Operator):
-    bl_idname = "render_studio.addon_off"
+class STUDIO_OT_addon_off(Operator):
+    bl_idname = "studio.addon_off"
     bl_label = "Turn Off Add-on"
     bl_description = ("Turn this add-on off: the Light tab does the same. It stays installed; turn it on again in "
                       "Edit › Preferences › Add-ons")
@@ -189,14 +189,14 @@ def draw_list(layout):
         row = col.row(align=True)
         row.label(text=item["label"], icon='CHECKMARK' if item["kind"] == "use" else 'INFO', translate=False)
         if item["kind"] == "covered":
-            op = row.operator(RS_OT_addon_off.bl_idname, text="", icon='CANCEL')
+            op = row.operator(STUDIO_OT_addon_off.bl_idname, text="", icon='CANCEL')
             op.module, op.label = item["module"], item["label"]
         sub = col.row()
         sub.active = False
         sub.label(text=(tr("Covered: ") if item["kind"] == "covered" else "") + tr(item["text"]), translate=False)
 
 
-classes = (RS_OT_atmosphere, RS_OT_place_light, RS_OT_addon_off)
+classes = (STUDIO_OT_atmosphere, STUDIO_OT_place_light, STUDIO_OT_addon_off)
 
 
 def register():

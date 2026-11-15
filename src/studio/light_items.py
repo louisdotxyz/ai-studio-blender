@@ -20,12 +20,12 @@ MAX_PINS = 16
 
 
 def pins_shown(scene):
-    return scene.render_studio.world_mode == 'STUDIO'
+    return scene.studio.world_mode == 'STUDIO'
 
 
 def all_items(scene):
     """The lights of the scene, then the lights of the studio World."""
-    rs = scene.render_studio
+    rs = scene.studio
     found = [('LIGHT', obj) for obj in lights.scene_lights(scene)]
     if pins_shown(scene):
         found += [('PIN', i) for i in range(len(rs.hdri_pins))]
@@ -33,7 +33,7 @@ def all_items(scene):
 
 
 def active_item(scene):
-    rs = scene.render_studio
+    rs = scene.studio
     if rs.active_light is not None and rs.active_light.name in scene.objects:
         return ('LIGHT', rs.active_light)
     if pins_shown(scene) and 0 <= rs.hdri_pin_index < len(rs.hdri_pins):
@@ -43,7 +43,7 @@ def active_item(scene):
 
 def select(scene, item):
     """Makes this light the open one (None: none)."""
-    rs = scene.render_studio
+    rs = scene.studio
     if item is None:
         rs.active_light = None
         rs.hdri_pin_index = -1
@@ -56,7 +56,7 @@ def select(scene, item):
 
 
 def pin_of(scene, item):
-    pins = scene.render_studio.hdri_pins
+    pins = scene.studio.hdri_pins
     return pins[item[1]] if item is not None and item[0] == 'PIN' and 0 <= item[1] < len(pins) else None
 
 
@@ -78,12 +78,12 @@ def is_on(scene, item):
 
 def center_of(scene, light=None):
     """The point the lights are arranged around (the light's own target, otherwise the setup's)."""
-    rs = scene.render_studio
+    rs = scene.studio
     target = lights.light_target(light, rs) if light is not None else rs.light_orbit_target
     if target is not None and target == light:
         target = None
     if target is not None and light is not None:
-        return orbit.target_center(target, light.render_studio_light.lift)
+        return orbit.target_center(target, light.studio_light.lift)
     return lights.subject(scene, target)[0]
 
 
@@ -281,7 +281,7 @@ def set_pin_kelvin(pin, value):
 # ------------------------------------------------------------------ new, copy, mirror, remove
 
 def add_pin(scene, name=""):
-    rs = scene.render_studio
+    rs = scene.studio
     if rs.world_mode != 'STUDIO':
         rs.world_mode = 'STUDIO'        # fills in the three default lights when there are none
     if len(rs.hdri_pins) >= MAX_PINS:
@@ -298,13 +298,13 @@ def add_like(scene, item):
     """A new light of the same kind as `item` (a scene light when there is none). Returns the new item."""
     if item is not None and item[0] == 'PIN':
         return ('PIN', add_pin(scene))
-    obj = lights.add_light(scene, scene.render_studio.light_orbit_target)
+    obj = lights.add_light(scene, scene.studio.light_orbit_target)
     select(scene, ('LIGHT', obj))
     return ('LIGHT', obj)
 
 
 def duplicate(scene, item):
-    rs = scene.render_studio
+    rs = scene.studio
     if item[0] == 'PIN':
         if len(rs.hdri_pins) >= MAX_PINS:
             raise ValueError("At most %d lights in the studio World" % MAX_PINS)
@@ -338,7 +338,7 @@ def mirror(scene, item, copy=False):
 
 
 def remove(scene, item):
-    rs = scene.render_studio
+    rs = scene.studio
     if item[0] == 'PIN':
         if 0 <= item[1] < len(rs.hdri_pins):
             rs.hdri_pins.remove(item[1])

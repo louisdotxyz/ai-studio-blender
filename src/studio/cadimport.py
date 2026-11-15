@@ -305,7 +305,7 @@ def check_folder():
     """<name>_renders/cad-check next to the .blend file (or the output folder)."""
     from . import core, runner
     root = runner.settings_from_prefs()[0]
-    rq = bpy.context.scene.render_studio
+    rq = bpy.context.scene.studio
     return os.path.join(core.project_dir(root, core.project_name(None, rq.output_name)), "cad-check")
 
 

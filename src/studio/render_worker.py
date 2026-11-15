@@ -14,7 +14,7 @@ and reads one message per line from stdin (JSON):
      "draft": {"path": "/…/draft_12", "stages": [{"max_size": 480, "samples": 8}, …]} or null}
 
 A job applies the values, renders (first small drafts for the preview if asked), prints
-"RS done <uid>" (or "RS fail <uid> …") and puts the values back. {"quit": true} or the end of
+"W done <uid>" (or "W fail <uid> …") and puts the values back. {"quit": true} or the end of
 stdin ends it. The runner sends a fresh copy when your scene changed (or the camera), so
 between jobs only these values differ: persistent data keeps geometry and textures loaded.
 Not part of the add-on itself: never imported.
@@ -37,7 +37,7 @@ _REMAINING_RE = re.compile(r"Remaining:\s*(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)")
 _T0 = time.monotonic()
 _last = [None]
 _last_status = [None]
-TEMP_NAME = "Render Studio Worker Camera"
+TEMP_NAME = "AI Studio Worker Camera"
 
 
 def _settings():
@@ -60,7 +60,7 @@ def _devices(settings):
             try:
                 cycles.compute_device_type = 'METAL'
             except TypeError:
-                print("RS devices: no Metal, CPU", flush=True)
+                print("W devices: no Metal, CPU", flush=True)
                 return
             cycles.get_devices()
             for device in cycles.devices:
@@ -72,9 +72,9 @@ def _devices(settings):
             for device in cycles.devices:
                 device.use = (device.type, device.name) in wanted
         _GPU[0] = any(d.use and d.type != 'CPU' for d in cycles.devices)
-        print("RS devices:", cycles.compute_device_type, [d.name for d in cycles.devices if d.use], flush=True)
+        print("W devices:", cycles.compute_device_type, [d.name for d in cycles.devices if d.use], flush=True)
     except Exception as ex:
-        print("RS devices failed:", ex, flush=True)
+        print("W devices failed:", ex, flush=True)
 
 
 @bpy.app.handlers.persistent
@@ -90,14 +90,14 @@ def _stats(stats, *_args):
             # moves the bar on in between with it.
             left = _REMAINING_RE.search(stats)
             seconds = (int(left.group(1) or 0) * 3600 + int(left.group(2)) * 60 + float(left.group(3))) if left else None
-            print("RS Sample %s/%s" % match.groups() + (" tile %s/%s" % tiles.groups() if tiles else "")
+            print("W Sample %s/%s" % match.groups() + (" tile %s/%s" % tiles.groups() if tiles else "")
                   + (" left %.1f" % seconds if seconds is not None else ""), flush=True)
         return
     parts = [p.strip() for p in (stats or "").split("|")]
     status = parts[1] if len(parts) > 1 and parts[0].startswith("Mem") else parts[0]
     if status and status != _last_status[0]:
         _last_status[0] = status
-        print("RS Status %s" % status[:80], flush=True)
+        print("W Status %s" % status[:80], flush=True)
 
 
 def _missing_files():
@@ -148,7 +148,7 @@ def _apply(scene, overrides, saved):
             return
         pending = [(p, v) for p, v, _ex in failed]
     for path, _v, ex in failed:
-        print("RS could not set %s: %s" % (path, ex), flush=True)
+        print("W could not set %s: %s" % (path, ex), flush=True)
 
 
 def _restore(saved):
@@ -199,7 +199,7 @@ def _draft(scene, spec, uid):
     """Quick images of the entry for the preview before the real render (Cycles stills): first a
     very small one, then a sharper one for long renders. With persistent data the real render
     reuses what the drafts loaded, so they cost little. Each stage writes <path>_<n>.png and
-    prints "RS draft <uid> <n>"."""
+    prints "W draft <uid> <n>"."""
     render, cycles = scene.render, scene.cycles
     long_side = max(render.resolution_x, render.resolution_y) * render.resolution_percentage / 100
     final = max(cycles.samples, 1)
@@ -216,20 +216,20 @@ def _draft(scene, spec, uid):
                        ["render.image_settings.color_mode", 'RGBA' if render.film_transparent else 'RGB'],
                        ["render.image_settings.color_depth", '8'], ["render.use_file_extension", False],
                        ["render.filepath", path]], saved)
-        print("RS draft-start %s %d" % (uid, n), flush=True)
+        print("W draft-start %s %d" % (uid, n), flush=True)
         try:
             bpy.ops.render.render(write_still=True, scene=scene.name)
         except Exception as ex:
-            print("RS draft failed:", ex, flush=True)
+            print("W draft failed:", ex, flush=True)
         finally:
             _restore(saved)
             _last[0] = _last_status[0] = None
-            print("RS draft %s %d" % (uid, n), flush=True)   # also after a failure: the real render follows
+            print("W draft %s %d" % (uid, n), flush=True)   # also after a failure: the real render follows
 
 
 def run(job):
     uid = job["uid"]
-    print("RS job %s" % uid, flush=True)
+    print("W job %s" % uid, flush=True)
     _last[0] = _last_status[0] = None
     scene = bpy.data.scenes[job.get("scene") or bpy.context.scene.name]
     saved = []
@@ -246,11 +246,11 @@ def run(job):
         animation = bool(job.get("animation"))
         if job.get("draft") and not animation and scene.render.engine == 'CYCLES':
             _draft(scene, job["draft"], uid)
-        print("RS start", scene.camera.name if scene.camera else None, scene.render.filepath, flush=True)
+        print("W start", scene.camera.name if scene.camera else None, scene.render.filepath, flush=True)
         bpy.ops.render.render(animation=animation, write_still=not animation, scene=scene.name)
-        print("RS done %s" % uid, flush=True)
+        print("W done %s" % uid, flush=True)
     except Exception:
-        print("RS fail %s %s" % (uid, traceback.format_exc(limit=3).replace("\n", " | ")), flush=True)
+        print("W fail %s %s" % (uid, traceback.format_exc(limit=3).replace("\n", " | ")), flush=True)
     finally:
         _restore(saved)
 
@@ -264,7 +264,7 @@ def _prepare_file():
             scene.render.use_persistent_data = True   # keep geometry/textures between jobs
     missing = _missing_files()
     if missing:
-        print("RS missing files:", missing[:5], flush=True)
+        print("W missing files:", missing[:5], flush=True)
 
 
 def _warm_up(settings):
@@ -282,7 +282,7 @@ def _warm_up(settings):
         scene.render.use_compositing = False
         bpy.ops.render.render(write_still=False)
     except Exception as ex:
-        print("RS warm-up failed:", ex, flush=True)
+        print("W warm-up failed:", ex, flush=True)
 
 
 def _load(message):
@@ -292,7 +292,7 @@ def _load(message):
     except OSError:
         pass
     _prepare_file()
-    print("RS loaded %.1f s" % (time.monotonic() - _T0), flush=True)
+    print("W loaded %.1f s" % (time.monotonic() - _T0), flush=True)
 
 
 def main():
@@ -303,7 +303,7 @@ def main():
     else:
         _warm_up(settings)
     bpy.app.handlers.render_stats.append(_stats)
-    print("RS ready %.1f s" % (time.monotonic() - _T0), flush=True)
+    print("W ready %.1f s" % (time.monotonic() - _T0), flush=True)
     while True:
         line = sys.stdin.readline()   # blocks until the runner sends the next job
         if not line:
@@ -318,10 +318,10 @@ def main():
             try:
                 _load(job)
             except Exception:
-                print("RS load failed %s" % traceback.format_exc(limit=3).replace("\n", " | "), flush=True)
+                print("W load failed %s" % traceback.format_exc(limit=3).replace("\n", " | "), flush=True)
             continue
         run(job)
-    print("RS bye", flush=True)
+    print("W bye", flush=True)
 
 
 main()

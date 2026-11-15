@@ -15,7 +15,7 @@ import bpy
 
 
 def has_own_format(obj):
-    return obj is not None and obj.type == 'CAMERA' and obj.render_studio_camera.use_resolution
+    return obj is not None and obj.type == 'CAMERA' and obj.studio_camera.use_resolution
 
 
 def scene_resolution(scene):
@@ -30,7 +30,7 @@ def set_scene_resolution(scene, resolution):
 
 
 def camera_resolution(obj):
-    settings = obj.render_studio_camera
+    settings = obj.studio_camera
     return (settings.resolution_x, settings.resolution_y)
 
 
@@ -38,7 +38,7 @@ def base_resolution(scene):
     """Resolution for cameras without their own resolution."""
     if not has_own_format(scene.camera):
         return scene_resolution(scene)
-    rq = scene.render_studio
+    rq = scene.studio
     if rq.base_resolution_x and rq.base_resolution_y:
         return (rq.base_resolution_x, rq.base_resolution_y)
     return scene_resolution(scene)
@@ -52,12 +52,12 @@ def effective_resolution(scene, obj):
 
 
 def remember_base(scene, resolution):
-    rq = scene.render_studio
+    rq = scene.studio
     rq.base_resolution_x, rq.base_resolution_y = resolution
 
 
 def sync_scene(scene):
-    rq = scene.render_studio
+    rq = scene.studio
     cam = scene.camera
     if cam != rq.last_camera:
         # Camera switched. If the old one had no resolution of its own, the
@@ -71,7 +71,7 @@ def sync_scene(scene):
             set_scene_resolution(scene, (rq.base_resolution_x, rq.base_resolution_y))
     elif has_own_format(cam) and camera_resolution(cam) != scene_resolution(scene):
         # Resolution was changed elsewhere (Image panel, Output properties).
-        settings = cam.render_studio_camera
+        settings = cam.studio_camera
         settings.resolution_x, settings.resolution_y = scene_resolution(scene)
 
 
@@ -231,7 +231,7 @@ def _fit_now():
     try:
         fit_camera_views()
     except Exception as ex:
-        print("Render Studio: fitting the camera frame failed:", ex)
+        print("AI Studio: fitting the camera frame failed:", ex)
     return None
 
 
@@ -272,7 +272,7 @@ def on_depsgraph_update(scene, _depsgraph=None):
         from . import background
         background.sync(scene)   # e.g. another World or view transform: update the color
     except Exception as ex:  # nie den Depsgraph-Update blockieren
-        print("Render Studio: Format-Sync fehlgeschlagen:", ex)
+        print("AI Studio: Format-Sync fehlgeschlagen:", ex)
 
 
 # Update callbacks of the camera properties ----------------------------------
@@ -288,7 +288,7 @@ def on_use_resolution(settings, context):
         else:
             settings.resolution_x, settings.resolution_y = base_resolution(scene)
     elif scene.camera == obj:
-        rq = scene.render_studio
+        rq = scene.studio
         if rq.base_resolution_x and rq.base_resolution_y:
             set_scene_resolution(scene, (rq.base_resolution_x, rq.base_resolution_y))
 
@@ -329,7 +329,7 @@ def _center_timer():
     try:
         center_camera_frames()
     except Exception as ex:
-        print("Render Studio: centering the camera frame:", ex)
+        print("AI Studio: centering the camera frame:", ex)
     return 0.25
 
 

@@ -128,9 +128,9 @@ ctx = Ctx()
 classes = [c for c in list(bpy.types.Panel.__subclasses__()) + list(bpy.types.Menu.__subclasses__())
            if c.__module__.startswith(PKG)]
 wm = bpy.context.window_manager
-tabs = [i.identifier for i in wm.bl_rna.properties["render_studio_tab"].enum_items]
+tabs = [i.identifier for i in wm.bl_rna.properties["studio_tab"].enum_items]
 for tab in tabs:          # every Studio sub-tab
-    wm.render_studio_tab = tab
+    wm.studio_tab = tab
     for cls in classes:
         run(cls, ctx)
 scene = bpy.context.scene
@@ -140,12 +140,12 @@ for engine in ("CYCLES", "BLENDER_EEVEE"):   # engine-specific parts of the outp
     except TypeError:
         continue
     for mode in ('NORMAL', 'TRANSPARENT'):
-        scene.render_studio.background_mode = mode
+        scene.studio.background_mode = mode
         for fmt in ('PNG', 'JPEG', 'TIFF', 'EXR'):
-            scene.render_studio.still_format = fmt
+            scene.studio.still_format = fmt
             for anim in ('PNG_SEQ', 'MP4', 'PRORES'):
-                scene.render_studio.anim_format = anim
-                run(bpy.types.RS_PT_output, ctx)
+                scene.studio.anim_format = anim
+                run(bpy.types.STUDIO_PT_output, ctx)
 # gear menus with and without an active object / material
 # chat with messages, tool steps (expanded and not), a render, and a version timeline
 core = sys.modules[PKG + ".core"]
@@ -160,10 +160,10 @@ core.messages[:] = [
     {"role": "assistant", "text": "Kamera steht frontal.\nVersion: Kamera"},
 ]
 core._take_version_word()
-wm.render_studio_tab = 'RENDER'
+wm.studio_tab = 'RENDER'
 for cls in [bpy.types.CLAUDE_PT_chat, bpy.types.CLAUDE_PT_settings]:
     run(cls, ctx)
-for popover in ("RS_PT_frame", "RS_PT_light_settings", "RS_PT_material_settings", "RS_PT_output"):
+for popover in ("STUDIO_PT_frame", "STUDIO_PT_light_settings", "STUDIO_PT_material_settings", "STUDIO_PT_output"):
     run(getattr(bpy.types, popover), ctx)
 for view in ('COMPACT', 'FULL'):
     bpy.context.preferences.addons[PKG].preferences.studio.mat_view = view
@@ -172,8 +172,8 @@ for view in ('COMPACT', 'FULL'):
         bpy.context.view_layer.objects.active = cube
         if cube.active_material is None:
             cube.data.materials.append(bpy.data.materials.new("Test"))
-        wm.render_studio_tab = 'MATERIAL'
-        run(bpy.types.RS_PT_material, ctx)
+        wm.studio_tab = 'MATERIAL'
+        run(bpy.types.STUDIO_PT_material, ctx)
 # library: project / library, tiles / list; environment and render tabs with everything on
 studio_prefs = bpy.context.preferences.addons[PKG].preferences.studio
 structures = sys.modules[PKG + ".studio.matstructures"]
@@ -183,84 +183,84 @@ if cube is not None:
     cube.data.materials.clear()
     cube.data.materials.append(structure_mat)
     studio_prefs.mat_view = 'COMPACT'
-    wm.render_studio_tab = 'MATERIAL'
-    run(bpy.types.RS_PT_material, ctx)
-    run(bpy.types.RS_MT_material_more, ctx)
+    wm.studio_tab = 'MATERIAL'
+    run(bpy.types.STUDIO_PT_material, ctx)
+    run(bpy.types.STUDIO_MT_material_more, ctx)
 sys.modules[PKG + ".studio.tab_material"].toggle_favorite(structure_mat.name)
-wm.render_studio_mat_kind = "Metal"
-run(bpy.types.RS_PT_material, ctx)
-wm.render_studio_mat_kind = ""
-run(bpy.types.RS_MT_material_kind_filter, ctx)
-wm.render_studio_tab = 'FINISH'
-run(bpy.types.RS_PT_finish, ctx)
+wm.studio_mat_kind = "Metal"
+run(bpy.types.STUDIO_PT_material, ctx)
+wm.studio_mat_kind = ""
+run(bpy.types.STUDIO_MT_material_kind_filter, ctx)
+wm.studio_tab = 'FINISH'
+run(bpy.types.STUDIO_PT_finish, ctx)
 studio_p = bpy.context.preferences.addons[PKG].preferences.studio
 studio_p.krea_token = "test-token"
-wm.render_studio_krea_refs = "/nonexistent/room.jpg\n/nonexistent/hand.jpg"
-wm.render_studio_krea_hand = True
-wm.render_studio_krea_zoom = 'CLOSER'
-wm.render_studio_krea_zoom = 'WIDER'
-run(bpy.types.RS_PT_finish, ctx)
+wm.studio_krea_refs = "/nonexistent/room.jpg\n/nonexistent/hand.jpg"
+wm.studio_krea_hand = True
+wm.studio_krea_zoom = 'CLOSER'
+wm.studio_krea_zoom = 'WIDER'
+run(bpy.types.STUDIO_PT_finish, ctx)
 studio_p.krea_token = ""
-wm.render_studio_krea_refs = ""
-wm.render_studio_krea_hand = False
-wm.render_studio_krea_zoom = 'KEEP'
-run(bpy.types.RS_PT_finish_settings, ctx)
-run(bpy.types.RS_MT_look_presets, ctx)
-run(bpy.types.RS_PT_chat_render, ctx)
-run(bpy.types.RS_MT_edit_presets, ctx)
-bpy.context.scene.render_studio.edit_exposure = 0.5
-run(bpy.types.RS_PT_finish, ctx)
-bpy.context.scene.render_studio.edit_exposure = 0.0
-run(bpy.types.RS_MT_aspect, ctx)
-run(bpy.types.RS_MT_formats, ctx)
-wm.render_studio_tab = 'MATERIAL'
+wm.studio_krea_refs = ""
+wm.studio_krea_hand = False
+wm.studio_krea_zoom = 'KEEP'
+run(bpy.types.STUDIO_PT_finish_settings, ctx)
+run(bpy.types.STUDIO_MT_look_presets, ctx)
+run(bpy.types.STUDIO_PT_chat_render, ctx)
+run(bpy.types.STUDIO_MT_edit_presets, ctx)
+bpy.context.scene.studio.edit_exposure = 0.5
+run(bpy.types.STUDIO_PT_finish, ctx)
+bpy.context.scene.studio.edit_exposure = 0.0
+run(bpy.types.STUDIO_MT_aspect, ctx)
+run(bpy.types.STUDIO_MT_formats, ctx)
+wm.studio_tab = 'MATERIAL'
 for source in ('PROJECT', 'LIBRARY', 'FAVORITES'):
     for lib_view in ('TILES', 'LIST'):
-        wm.render_studio_mat_source = source
+        wm.studio_mat_source = source
         studio_prefs.mat_library_view = lib_view
-        wm.render_studio_tab = 'MATERIAL'
-        run(bpy.types.RS_PT_material, ctx)
+        wm.studio_tab = 'MATERIAL'
+        run(bpy.types.STUDIO_PT_material, ctx)
 sys.modules[PKG + ".studio.tab_material"].toggle_favorite(structure_mat.name)
-scene_rs = bpy.context.scene.render_studio
+scene_rs = bpy.context.scene.studio
 scene_rs.floor_mode = 'COVE'
 scene_rs.haze_density = 0.02
 scene_rs.background_mode = 'COLOR'
-bpy.ops.render_studio.shot_add()
+bpy.ops.studio.shot_add()
 for world_mode in ('STUDIO', 'SKY', 'IMAGE'):
     scene_rs.world_mode = world_mode
     if world_mode == 'STUDIO':
         scene_rs.hdri_pin_index = 0
-    wm.render_studio_tab = 'LIGHT'
-    run(bpy.types.RS_PT_lighting, ctx)
+    wm.studio_tab = 'LIGHT'
+    run(bpy.types.STUDIO_PT_lighting, ctx)
 # an open scene light with everything under "More", a moving gobo and looks; then an open studio World light
 light_obj = sys.modules[PKG + ".studio.lights"].add_light(bpy.context.scene, None)
 sys.modules[PKG + ".studio.light_items"].select(bpy.context.scene, ('LIGHT', light_obj))
 sys.modules[PKG + ".studio.environment"].add_flag(bpy.context.scene, light_obj, 'BRANCHES')
-wm.render_studio_sections = "light_more"
-bpy.ops.render_studio.look_add()
+wm.studio_sections = "light_more"
+bpy.ops.studio.look_add()
 for world_mode in ('STUDIO', 'IMAGE'):
     scene_rs.world_mode = world_mode
-    run(bpy.types.RS_PT_lighting, ctx)
+    run(bpy.types.STUDIO_PT_lighting, ctx)
 scene_rs.world_mode = 'STUDIO'
 sys.modules[PKG + ".studio.light_items"].select(bpy.context.scene, ('PIN', 0))
-run(bpy.types.RS_PT_lighting, ctx)
-run(bpy.types.RS_PT_light_settings, ctx)
+run(bpy.types.STUDIO_PT_lighting, ctx)
+run(bpy.types.STUDIO_PT_light_settings, ctx)
 scene_rs.light_looks.clear()
 scene_rs.light_look_index = -1
 sys.modules[PKG + ".studio.light_items"].remove(bpy.context.scene, ('LIGHT', light_obj))
 scene_rs.world_mode = 'IMAGE'
-wm.render_studio_sections = ""
+wm.studio_sections = ""
 for _once in (0,):
-    for tab, panel in (('RENDER', "RS_PT_camera"), ('LIGHT', "RS_PT_lighting"), ('QUEUE', "RS_PT_render_queue")):
-        wm.render_studio_tab = tab
+    for tab, panel in (('RENDER', "STUDIO_PT_camera"), ('LIGHT', "STUDIO_PT_lighting"), ('QUEUE', "STUDIO_PT_render_queue")):
+        wm.studio_tab = tab
         if hasattr(bpy.types, panel):
             run(getattr(bpy.types, panel), ctx)
-    run(bpy.types.RS_PT_tabs, ctx)
-wm.render_studio_sections = "lights\nworld\nbackdrop\nlibrary"   # every section closed
-for tab, panel in (('LIGHT', "RS_PT_lighting"), ('MATERIAL', "RS_PT_material")):
-    wm.render_studio_tab = tab
+    run(bpy.types.STUDIO_PT_tabs, ctx)
+wm.studio_sections = "lights\nworld\nbackdrop\nlibrary"   # every section closed
+for tab, panel in (('LIGHT', "STUDIO_PT_lighting"), ('MATERIAL', "STUDIO_PT_material")):
+    wm.studio_tab = tab
     run(getattr(bpy.types, panel), ctx)
-wm.render_studio_sections = ""
+wm.studio_sections = ""
 scene_rs.floor_mode = 'NONE'
 scene_rs.haze_density = 0.0
 scene_rs.background_mode = 'NORMAL'

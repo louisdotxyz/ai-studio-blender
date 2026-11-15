@@ -24,7 +24,7 @@ from . import background, environment, runner
 def render_problems(scene):
     """[(text, icon)] that would spoil a render, most important first."""
     problems = []
-    rq = scene.render_studio
+    rq = scene.studio
     if not any(it.camera for it in rq.items) and scene.camera is None:
         problems.append(("No camera to render", 'CAMERA_DATA'))
     missing = sorted({img.name for img in bpy.data.images
@@ -61,15 +61,15 @@ def draw_check(layout, scene):
 
 # ------------------------------------------------------------------ shots
 
-class RS_OT_shot_add(Operator):
-    bl_idname = "render_studio.shot_add"
+class STUDIO_OT_shot_add(Operator):
+    bl_idname = "studio.shot_add"
     bl_label = "Add Shot"
     bl_description = "A new shot from the active camera and the current scene preset"
     bl_options = {'UNDO', 'INTERNAL'}
 
     def execute(self, context):
         scene = context.scene
-        rq = scene.render_studio
+        rq = scene.studio
         from .ui_common import active_camera
         cam = active_camera(scene)
         shot = rq.shots.add()
@@ -79,22 +79,22 @@ class RS_OT_shot_add(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_shot_remove(Operator):
-    bl_idname = "render_studio.shot_remove"
+class STUDIO_OT_shot_remove(Operator):
+    bl_idname = "studio.shot_remove"
     bl_label = "Remove Shot"
     bl_options = {'UNDO', 'INTERNAL'}
 
     index: IntProperty(options={'HIDDEN', 'SKIP_SAVE'})
 
     def execute(self, context):
-        rq = context.scene.render_studio
+        rq = context.scene.studio
         if 0 <= self.index < len(rq.shots):
             rq.shots.remove(self.index)
         return {'FINISHED'}
 
 
-class RS_OT_shot_preset(Operator):
-    bl_idname = "render_studio.shot_preset"
+class STUDIO_OT_shot_preset(Operator):
+    bl_idname = "studio.shot_preset"
     bl_label = "Scene Preset of the Shot"
     bl_options = {'UNDO', 'INTERNAL'}
 
@@ -102,29 +102,29 @@ class RS_OT_shot_preset(Operator):
     name: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
 
     def execute(self, context):
-        rq = context.scene.render_studio
+        rq = context.scene.studio
         if 0 <= self.index < len(rq.shots):
             rq.shots[self.index].scene_preset = self.name
         return {'FINISHED'}
 
 
-class RS_MT_shot_presets(Menu):
-    bl_idname = "RS_MT_shot_presets"
+class STUDIO_MT_shot_presets(Menu):
+    bl_idname = "STUDIO_MT_shot_presets"
     bl_label = "Scene Preset"
 
     def draw(self, context):
         layout = self.layout
-        index = context.window_manager.render_studio_shot_menu
-        op = layout.operator(RS_OT_shot_preset.bl_idname, text="As it is now", icon='BLANK1')
+        index = context.window_manager.studio_shot_menu
+        op = layout.operator(STUDIO_OT_shot_preset.bl_idname, text="As it is now", icon='BLANK1')
         op.index, op.name = index, ""
         for name in list(environment.BUILTIN_SCENES) + sorted(environment.saved_scenes()):
-            op = layout.operator(RS_OT_shot_preset.bl_idname, text=name, icon='SCENE_DATA')
+            op = layout.operator(STUDIO_OT_shot_preset.bl_idname, text=name, icon='SCENE_DATA')
             op.index, op.name = index, name
 
 
-class RS_OT_shot_menu(Operator):
+class STUDIO_OT_shot_menu(Operator):
     """Opens the preset menu for one shot (menus cannot carry the shot's index themselves)."""
-    bl_idname = "render_studio.shot_menu"
+    bl_idname = "studio.shot_menu"
     bl_label = "Scene Preset"
     bl_description = "Pick the scene preset of this shot (empty: the scene as it is)"
     bl_options = {'INTERNAL'}
@@ -132,8 +132,8 @@ class RS_OT_shot_menu(Operator):
     index: IntProperty(options={'HIDDEN', 'SKIP_SAVE'})
 
     def invoke(self, context, _event):
-        context.window_manager.render_studio_shot_menu = self.index
-        bpy.ops.wm.call_menu(name=RS_MT_shot_presets.bl_idname)
+        context.window_manager.studio_shot_menu = self.index
+        bpy.ops.wm.call_menu(name=STUDIO_MT_shot_presets.bl_idname)
         return {'FINISHED'}
 
 
@@ -151,7 +151,7 @@ def _next_shot():
         runner.tag_redraw()
         return None
     index = _run["todo"].pop(0)
-    rq = scene.render_studio
+    rq = scene.studio
     if not (0 <= index < len(rq.shots)):
         return 0.1
     shot = rq.shots[index]
@@ -163,7 +163,7 @@ def _next_shot():
         runner.RUN.set_scene_camera(scene, shot.camera)
         from .ui_common import ensure_uids
         ensure_uids(rq)
-        bpy.ops.render_studio.add(quality=shot.quality)
+        bpy.ops.studio.add(quality=shot.quality)
         if shot.variant:
             rq.items[-1].variant = shot.variant
         if not RUN.busy:
@@ -175,7 +175,7 @@ def _next_shot():
 
 
 def render_shots(scene, indices=None):
-    rq = scene.render_studio
+    rq = scene.studio
     _run["todo"] = list(indices if indices is not None else range(len(rq.shots)))
     if not _run["todo"]:
         return False
@@ -189,23 +189,23 @@ def shots_running():
     return _run["busy"]
 
 
-class RS_OT_render_shots(Operator):
-    bl_idname = "render_studio.render_shots"
+class STUDIO_OT_render_shots(Operator):
+    bl_idname = "studio.render_shots"
     bl_label = "Render Shots"
     bl_description = ("Render every shot one after another: its scene preset is applied to the scene, then its "
                       "camera with its variant is rendered")
 
     @classmethod
     def poll(cls, context):
-        return len(context.scene.render_studio.shots) > 0 and not _run["busy"]
+        return len(context.scene.studio.shots) > 0 and not _run["busy"]
 
     def execute(self, context):
         render_shots(context.scene)
         return {'FINISHED'}
 
 
-class RS_OT_shots_stop(Operator):
-    bl_idname = "render_studio.shots_stop"
+class STUDIO_OT_shots_stop(Operator):
+    bl_idname = "studio.shots_stop"
     bl_label = "Stop Shots"
     bl_description = "No further shots (the one rendering now finishes)"
     bl_options = {'INTERNAL'}
@@ -216,11 +216,11 @@ class RS_OT_shots_stop(Operator):
 
 
 def draw_shots(layout, scene):
-    rq = scene.render_studio
+    rq = scene.studio
     box = layout.box()
     row = box.row()
     row.label(text="Shots", icon='SEQUENCE')
-    row.operator(RS_OT_shot_add.bl_idname, text="", icon='ADD', emboss=False)
+    row.operator(STUDIO_OT_shot_add.bl_idname, text="", icon='ADD', emboss=False)
     if not rq.shots:
         sub = box.row()
         sub.active = False
@@ -231,8 +231,8 @@ def draw_shots(layout, scene):
         row = col.row(align=True)
         row.prop(shot, "name", text="")
         row.prop(shot, "camera", text="", icon='CAMERA_DATA')
-        row.operator(RS_OT_shot_menu.bl_idname, text=shot.scene_preset or "Scene", icon='SCENE_DATA').index = i
-        row.operator(RS_OT_shot_remove.bl_idname, text="", icon='X').index = i
+        row.operator(STUDIO_OT_shot_menu.bl_idname, text=shot.scene_preset or "Scene", icon='SCENE_DATA').index = i
+        row.operator(STUDIO_OT_shot_remove.bl_idname, text="", icon='X').index = i
         row = col.row(align=True)
         row.prop(shot, "variant", text="", icon='COLOR', placeholder="Variant")
         row.prop(shot, "quality", expand=True)
@@ -240,9 +240,9 @@ def draw_shots(layout, scene):
     row = box.row(align=True)
     if _run["busy"]:
         row.label(text="%d shots to go" % len(_run["todo"]), icon='TIME')
-        row.operator(RS_OT_shots_stop.bl_idname, text="", icon='X')
+        row.operator(STUDIO_OT_shots_stop.bl_idname, text="", icon='X')
     else:
-        row.operator(RS_OT_render_shots.bl_idname, icon='RENDER_ANIMATION')
+        row.operator(STUDIO_OT_render_shots.bl_idname, icon='RENDER_ANIMATION')
 
 
 # ------------------------------------------------------------------ results: compare
@@ -299,8 +299,8 @@ def _split_compare(names, tries=[0]):
     return 0.1
 
 
-class RS_OT_compare_renders(Operator):
-    bl_idname = "render_studio.compare_renders"
+class STUDIO_OT_compare_renders(Operator):
+    bl_idname = "studio.compare_renders"
     bl_label = "Compare"
     bl_description = ("A and B (else this render and the one before it) side by side in a Blender window; zoom and "
                       "move each side on its own")
@@ -337,23 +337,23 @@ def draw_results(layout):
     text = "Compare A · B" if a and b else "Compare with A" if a or b else "Compare with the One Before"
     row = layout.row(align=True)
     row.scale_y = 1.2
-    row.operator(RS_OT_compare_renders.bl_idname, text=text, icon='IMAGE_REFERENCE')
+    row.operator(STUDIO_OT_compare_renders.bl_idname, text=text, icon='IMAGE_REFERENCE')
 
 
-classes = (RS_OT_shot_add, RS_OT_shot_remove, RS_OT_shot_preset, RS_MT_shot_presets, RS_OT_shot_menu,
-           RS_OT_render_shots, RS_OT_shots_stop, RS_OT_compare_renders)
+classes = (STUDIO_OT_shot_add, STUDIO_OT_shot_remove, STUDIO_OT_shot_preset, STUDIO_MT_shot_presets, STUDIO_OT_shot_menu,
+           STUDIO_OT_render_shots, STUDIO_OT_shots_stop, STUDIO_OT_compare_renders)
 
 
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
-    bpy.types.WindowManager.render_studio_shot_menu = IntProperty(options={'SKIP_SAVE'})
+    bpy.types.WindowManager.studio_shot_menu = IntProperty(options={'SKIP_SAVE'})
 
 
 def unregister():
     if bpy.app.timers.is_registered(_next_shot):
         bpy.app.timers.unregister(_next_shot)
-    del bpy.types.WindowManager.render_studio_shot_menu
+    del bpy.types.WindowManager.studio_shot_menu
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
 

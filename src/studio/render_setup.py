@@ -155,8 +155,8 @@ def undo(scene):
     return True
 
 
-class RS_OT_product_setup(bpy.types.Operator):
-    bl_idname = "render_studio.product_setup"
+class STUDIO_OT_product_setup(bpy.types.Operator):
+    bl_idname = "studio.product_setup"
     bl_label = "Set Up for Product Renders"
     bl_description = ("Sets Blender up for product images in one go: Cycles on the graphics chip, samples for "
                       "preview and final image, no noise, natural colors (AgX), millimeters, enough light "
@@ -172,8 +172,8 @@ class RS_OT_product_setup(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class RS_OT_product_setup_undo(bpy.types.Operator):
-    bl_idname = "render_studio.product_setup_undo"
+class STUDIO_OT_product_setup_undo(bpy.types.Operator):
+    bl_idname = "studio.product_setup_undo"
     bl_label = "Undo Product Render Setup"
     bl_description = "Puts the render settings back to how they were before 'Set Up for Product Renders'"
     bl_options = {'UNDO'}
@@ -195,10 +195,10 @@ def draw(layout, scene):
         sub = row.row(align=True)
         sub.active = False
         sub.label(text="Set up for product renders", icon='CHECKMARK')
-        row.operator(RS_OT_product_setup_undo.bl_idname, text="", icon='LOOP_BACK')
+        row.operator(STUDIO_OT_product_setup_undo.bl_idname, text="", icon='LOOP_BACK')
     else:
         row.scale_y = 1.2
-        row.operator(RS_OT_product_setup.bl_idname, icon='RESTRICT_RENDER_OFF')
+        row.operator(STUDIO_OT_product_setup.bl_idname, icon='RESTRICT_RENDER_OFF')
 
 
-classes = (RS_OT_product_setup, RS_OT_product_setup_undo)
+classes = (STUDIO_OT_product_setup, STUDIO_OT_product_setup_undo)

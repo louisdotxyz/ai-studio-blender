@@ -63,8 +63,8 @@ def setup():
     win, area, _region = view()
     with override():
         scene = bpy.context.scene
-        rs = scene.render_studio
-        bpy.context.window_manager.render_studio_tab = 'LIGHT'
+        rs = scene.studio
+        bpy.context.window_manager.studio_tab = 'LIGHT'
         rs.world_mode = 'STUDIO'
         for obj in mod("studio.lights").scene_lights(scene):
             bpy.data.objects.remove(obj)
@@ -127,7 +127,7 @@ def new_light():
     # a studio World light opened: its settings in the panel
     with override():
         mod("studio.light_items").select(scene, ('PIN', 0))
-        bpy.context.window_manager.render_studio_sections = "light_more"
+        bpy.context.window_manager.studio_sections = "light_more"
     for area in view()[0].screen.areas:
         area.tag_redraw()
 
@@ -170,7 +170,7 @@ def tool_on():
     _win, area, region = view()
     with override():
         scene = bpy.context.scene
-        scene.render_studio.place_mode = 'ILLUMINATION'
+        scene.studio.place_mode = 'ILLUMINATION'
         check("place tool: becomes the active tool", paint.activate_tool(bpy.context) and paint.tool_active(bpy.context))
         rv3d = area.spaces.active.region_3d
         cube = bpy.data.objects.get("Cube") or next(o for o in scene.objects if o.type == 'MESH')
@@ -188,7 +188,7 @@ def tool_hover():
 def camera_tab():
     shot("5_panel_light.png")
     with override():
-        bpy.context.window_manager.render_studio_tab = 'RENDER'
+        bpy.context.window_manager.studio_tab = 'RENDER'
     for area in view()[0].screen.areas:
         area.tag_redraw()
 
@@ -205,7 +205,7 @@ def camera_shot():
         mod("studio.matstructures").add_wear(mat, fingerprints=0.4)
         cube.data.materials.clear()
         cube.data.materials.append(mat)
-        bpy.context.window_manager.render_studio_tab = 'MATERIAL'
+        bpy.context.window_manager.studio_tab = 'MATERIAL'
     for area in view()[0].screen.areas:
         area.tag_redraw()
 
@@ -213,7 +213,7 @@ def camera_shot():
 def material_shot():
     shot("7_panel_material.png")
     with override():
-        bpy.context.window_manager.render_studio_tab = 'FINISH'
+        bpy.context.window_manager.studio_tab = 'FINISH'
     for area in view()[0].screen.areas:
         area.tag_redraw()
 

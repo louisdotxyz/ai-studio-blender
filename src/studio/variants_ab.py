@@ -102,7 +102,7 @@ def _apply_camera(scene, state):
 
 
 def _capture_render(scene):
-    rq = scene.render_studio
+    rq = scene.studio
     state = {key: getattr(rq, key) for key in RENDER_KEYS if hasattr(rq, key)}
     state["long_side"] = scene.get("id_render_long", 0)
     state["percentage"] = scene.render.resolution_percentage
@@ -110,7 +110,7 @@ def _capture_render(scene):
 
 
 def _apply_render(scene, state):
-    rq = scene.render_studio
+    rq = scene.studio
     for key in RENDER_KEYS:
         if key in state and hasattr(rq, key):
             try:
@@ -187,8 +187,8 @@ def remove(scene, kind):
 
 # ------------------------------------------------------------------ UI
 
-class RS_OT_variant_switch(Operator):
-    bl_idname = "render_studio.variant_switch"
+class STUDIO_OT_variant_switch(Operator):
+    bl_idname = "studio.variant_switch"
     bl_label = "Variant"
     bl_description = "Open this variant (the open one keeps what you changed)"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -205,8 +205,8 @@ class RS_OT_variant_switch(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_variant_add(Operator):
-    bl_idname = "render_studio.variant_add"
+class STUDIO_OT_variant_add(Operator):
+    bl_idname = "studio.variant_add"
     bl_label = "New Variant"
     bl_description = "Compare: a new variant (B, C …) as a copy of what is there now; switch with the letters"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -218,8 +218,8 @@ class RS_OT_variant_add(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_variant_remove(Operator):
-    bl_idname = "render_studio.variant_remove"
+class STUDIO_OT_variant_remove(Operator):
+    bl_idname = "studio.variant_remove"
     bl_label = "Remove Variant"
     bl_description = "Remove the open variant (with one left, the letters go away)"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -238,14 +238,14 @@ def draw(row, scene, kind):
     for index, name in enumerate(items):
         sub = row.row(align=True)
         sub.ui_units_x = 1.4
-        op = sub.operator(RS_OT_variant_switch.bl_idname, text=name, depress=index == current)
+        op = sub.operator(STUDIO_OT_variant_switch.bl_idname, text=name, depress=index == current)
         op.kind, op.index = kind, index
     if items:
-        row.operator(RS_OT_variant_remove.bl_idname, text="", icon='REMOVE').kind = kind
-    row.operator(RS_OT_variant_add.bl_idname, text="", icon='ADD').kind = kind
+        row.operator(STUDIO_OT_variant_remove.bl_idname, text="", icon='REMOVE').kind = kind
+    row.operator(STUDIO_OT_variant_add.bl_idname, text="", icon='ADD').kind = kind
 
 
-classes = (RS_OT_variant_switch, RS_OT_variant_add, RS_OT_variant_remove)
+classes = (STUDIO_OT_variant_switch, STUDIO_OT_variant_add, STUDIO_OT_variant_remove)
 
 
 def register():

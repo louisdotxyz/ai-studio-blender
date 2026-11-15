@@ -34,7 +34,7 @@ def saved_looks():
 
 
 def capture_look(scene):
-    rq, view = scene.render_studio, scene.view_settings
+    rq, view = scene.studio, scene.view_settings
     data = {key: getattr(rq, key) for key in LOOK_KEYS}
     data["exposure"] = view.exposure
     if hasattr(view, "use_white_balance"):
@@ -44,7 +44,7 @@ def capture_look(scene):
 
 
 def apply_look(scene, data):
-    rq, view = scene.render_studio, scene.view_settings
+    rq, view = scene.studio, scene.view_settings
     for key in LOOK_KEYS:
         if key in data:
             setattr(rq, key, data[key])
@@ -57,8 +57,8 @@ def apply_look(scene, data):
             view.white_balance_tint = data.get("tint", 0.0)
 
 
-class RS_OT_look_saved(Operator):
-    bl_idname = "render_studio.look_saved"
+class STUDIO_OT_look_saved(Operator):
+    bl_idname = "studio.look_saved"
     bl_label = "Saved Look"
     bl_description = "Apply this saved look"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -79,8 +79,8 @@ class RS_OT_look_saved(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_look_save(Operator):
-    bl_idname = "render_studio.look_save"
+class STUDIO_OT_look_save(Operator):
+    bl_idname = "studio.look_save"
     bl_label = "Save Look"
     bl_description = "Save the look as it is now (for every project)"
 
@@ -99,26 +99,26 @@ class RS_OT_look_save(Operator):
         return {'FINISHED'}
 
 
-class RS_MT_look_presets(Menu):
-    bl_idname = "RS_MT_look_presets"
+class STUDIO_MT_look_presets(Menu):
+    bl_idname = "STUDIO_MT_look_presets"
     bl_label = "Looks"
 
     def draw(self, context):
         layout = self.layout
         for name in look.PRESETS:
-            layout.operator(look.RS_OT_look_preset.bl_idname, text=name).name = name
+            layout.operator(look.STUDIO_OT_look_preset.bl_idname, text=name).name = name
         saved = sorted(saved_looks())
         if saved:
             layout.separator()
             for name in saved:
-                layout.operator(RS_OT_look_saved.bl_idname, text=name, translate=False, icon='USER').name = name
+                layout.operator(STUDIO_OT_look_saved.bl_idname, text=name, translate=False, icon='USER').name = name
             layout.separator()
             for name in saved:
-                op = layout.operator(RS_OT_look_saved.bl_idname, text="Delete %s" % name, icon='TRASH')
+                op = layout.operator(STUDIO_OT_look_saved.bl_idname, text="Delete %s" % name, icon='TRASH')
                 op.name, op.delete = name, True
         layout.separator()
-        layout.operator(RS_OT_look_save.bl_idname, text="Save Look…", icon='ADD')
-        layout.operator(look.RS_OT_look_reset.bl_idname, icon='LOOP_BACK')
+        layout.operator(STUDIO_OT_look_save.bl_idname, text="Save Look…", icon='ADD')
+        layout.operator(look.STUDIO_OT_look_reset.bl_idname, icon='LOOP_BACK')
 
 
 # ------------------------------------------------------------------ live preview in the viewport
@@ -128,8 +128,8 @@ def _shading(context):
     return space.shading if space is not None and space.type == 'VIEW_3D' else None
 
 
-class RS_OT_look_live(Operator):
-    bl_idname = "render_studio.look_live"
+class STUDIO_OT_look_live(Operator):
+    bl_idname = "studio.look_live"
     bl_label = "Look in the Viewport"
     bl_description = ("Show the look in the viewport (Blender's viewport compositor, in the camera view): "
                       "exposure and white balance are always visible in Rendered view")
@@ -168,22 +168,22 @@ def _write_edits(data):
         json.dump(data, f, indent=1)
 
 
-class RS_OT_edit_reset(Operator):
-    bl_idname = "render_studio.edit_reset"
+class STUDIO_OT_edit_reset(Operator):
+    bl_idname = "studio.edit_reset"
     bl_label = "Reset Adjustments"
     bl_description = "All adjustments back to 0: the preview shows the render as it is"
     bl_options = {'UNDO', 'INTERNAL'}
 
     def execute(self, context):
-        rs = context.scene.render_studio
+        rs = context.scene.studio
         for key in image_edit.KEYS:
             rs.property_unset(key)
         image_edit.changed()
         return {'FINISHED'}
 
 
-class RS_OT_edit_saved(Operator):
-    bl_idname = "render_studio.edit_saved"
+class STUDIO_OT_edit_saved(Operator):
+    bl_idname = "studio.edit_saved"
     bl_label = "Saved Adjustments"
     bl_description = "Use these saved adjustments"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -199,14 +199,14 @@ class RS_OT_edit_saved(Operator):
             return {'FINISHED'}
         if self.name not in edits:
             return {'CANCELLED'}
-        rs = context.scene.render_studio
+        rs = context.scene.studio
         for key in image_edit.KEYS:
             setattr(rs, key, float(edits[self.name].get(key, 0.0)))
         return {'FINISHED'}
 
 
-class RS_OT_edit_save_preset(Operator):
-    bl_idname = "render_studio.edit_save_preset"
+class STUDIO_OT_edit_save_preset(Operator):
+    bl_idname = "studio.edit_save_preset"
     bl_label = "Save Adjustments"
     bl_description = "Save the adjustments as they are now (for every project)"
 
@@ -224,30 +224,30 @@ class RS_OT_edit_save_preset(Operator):
         return {'FINISHED'}
 
 
-class RS_MT_edit_presets(Menu):
-    bl_idname = "RS_MT_edit_presets"
+class STUDIO_MT_edit_presets(Menu):
+    bl_idname = "STUDIO_MT_edit_presets"
     bl_label = "Adjustments"
 
     def draw(self, context):
         layout = self.layout
         saved = sorted(saved_edits())
         for name in saved:
-            layout.operator(RS_OT_edit_saved.bl_idname, text=name, translate=False, icon='USER').name = name
+            layout.operator(STUDIO_OT_edit_saved.bl_idname, text=name, translate=False, icon='USER').name = name
         if saved:
             layout.separator()
             for name in saved:
-                op = layout.operator(RS_OT_edit_saved.bl_idname, text="Delete %s" % name, icon='TRASH')
+                op = layout.operator(STUDIO_OT_edit_saved.bl_idname, text="Delete %s" % name, icon='TRASH')
                 op.name, op.delete = name, True
             layout.separator()
         else:
             sub = layout.row()
             sub.active = False
             sub.label(text="No saved adjustments yet (+)")
-        layout.operator(RS_OT_edit_reset.bl_idname, icon='LOOP_BACK')
+        layout.operator(STUDIO_OT_edit_reset.bl_idname, icon='LOOP_BACK')
 
 
-class RS_OT_edit_export(Operator):
-    bl_idname = "render_studio.edit_export"
+class STUDIO_OT_edit_export(Operator):
+    bl_idname = "studio.edit_export"
     bl_label = "Save Image"
     bl_description = ("Save the render with these adjustments as a new file next to it (…_edit_01.png), at full "
                       "size; the render stays as it is")
@@ -265,8 +265,8 @@ class RS_OT_edit_export(Operator):
 
 # ------------------------------------------------------------------ Krea
 
-class RS_OT_krea_product(Operator):
-    bl_idname = "render_studio.krea_product"
+class STUDIO_OT_krea_product(Operator):
+    bl_idname = "studio.krea_product"
     bl_label = "Product = Selection"
     bl_description = ("Remember the selected objects as the product: Krea gets their true size and the mask keeps "
                       "exactly them. Nothing selected: forget it (everything visible counts again)")
@@ -284,20 +284,20 @@ class RS_OT_krea_product(Operator):
 def references(wm=None):
     """The pictures added for Krea (files), in order."""
     wm = wm or bpy.context.window_manager
-    return krea._refs(wm.render_studio_krea_refs)
+    return krea._refs(wm.studio_krea_refs)
 
 
 def wish(wm, prompt=None):
     """What Krea should do: the sentences of the pressed toggles, then the typed text."""
-    parts = [text for key, _label, text, _p in krea.SCENE if getattr(wm, "render_studio_krea_" + key)]
-    typed = (wm.render_studio_krea_prompt if prompt is None else prompt).strip()
+    parts = [text for key, _label, text, _p in krea.SCENE if getattr(wm, "studio_krea_" + key)]
+    typed = (wm.studio_krea_prompt if prompt is None else prompt).strip()
     if typed:
         parts.append(typed.rstrip(".") + ".")
     return " ".join(parts)
 
 
-class RS_OT_krea_frame(Operator):
-    bl_idname = "render_studio.krea_frame"
+class STUDIO_OT_krea_frame(Operator):
+    bl_idname = "studio.krea_frame"
     bl_label = "Camera for Krea"
     bl_description = "Click again for the same as the render"
     bl_options = {'INTERNAL'}
@@ -307,13 +307,13 @@ class RS_OT_krea_frame(Operator):
 
     def execute(self, context):
         wm = context.window_manager
-        prop = "render_studio_krea_" + self.target
+        prop = "studio_krea_" + self.target
         setattr(wm, prop, 'KEEP' if getattr(wm, prop) == self.value else self.value)
         return {'FINISHED'}
 
 
-class RS_OT_krea_reference(Operator):
-    bl_idname = "render_studio.krea_reference"
+class STUDIO_OT_krea_reference(Operator):
+    bl_idname = "studio.krea_reference"
     bl_label = "Add Pictures"
     bl_description = ("Pictures for Krea: a room or place (with \"Room\" the product goes into it), a hand pose, "
                       "props, a style")
@@ -342,7 +342,7 @@ class RS_OT_krea_reference(Operator):
                 path = os.path.join(self.directory, f.name)
                 if f.name and os.path.isfile(path) and path not in refs:
                     refs.append(path)
-        wm.render_studio_krea_refs = "\n".join(refs[:krea.MAX_REFERENCES])
+        wm.studio_krea_refs = "\n".join(refs[:krea.MAX_REFERENCES])
         return {'FINISHED'}
 
 
@@ -352,11 +352,11 @@ def _choices(prompt, model, environment, zoom, view, protect):
     wm = bpy.context.window_manager
     refs = references(wm) if environment is None else krea._refs(environment)
     refs = [bpy.path.abspath(r) if not r.startswith("http") else r for r in refs]
-    zoom = krea.zoom_key(zoom or wm.render_studio_krea_zoom)
-    view = krea.view_key(view or wm.render_studio_krea_view)
-    protect = wm.render_studio_krea_protect if protect is None else bool(protect)
-    room = wm.render_studio_krea_room or environment is not None   # pictures handed over: a place
-    used = krea.pick_model((model or wm.render_studio_krea_model).upper(), bool(refs) and room, zoom, view)
+    zoom = krea.zoom_key(zoom or wm.studio_krea_zoom)
+    view = krea.view_key(view or wm.studio_krea_view)
+    protect = wm.studio_krea_protect if protect is None else bool(protect)
+    room = wm.studio_krea_room or environment is not None   # pictures handed over: a place
+    used = krea.pick_model((model or wm.studio_krea_model).upper(), bool(refs) and room, zoom, view)
     source = current_image(bpy.context.scene)
     if not source or not os.path.isfile(source):
         raise ValueError("Render an image first")
@@ -372,7 +372,7 @@ def _scale_and_mask(scene, source, width, height, used, zoom, view, protect):
     the mask."""
     info = krea_scene.product_scale(scene, krea_scene.render_camera(scene, source), width, height)
     scale = ""
-    if bpy.context.window_manager.render_studio_krea_scale:
+    if bpy.context.window_manager.studio_krea_scale:
         scale = krea_scene.scale_text(info, width, height, framing_kept=zoom == 'KEEP' and view == 'KEEP')
     mask = ""
     if used == 'PRECISE' and protect and info:
@@ -417,8 +417,8 @@ def prepare(scene, prompt, upload_url, model=None, environment=None, zoom=None, 
             "scale": scale, "size": [width, height], "keeps_product": bool(mask)}
 
 
-class RS_OT_krea_refine(Operator):
-    bl_idname = "render_studio.krea_refine"
+class STUDIO_OT_krea_refine(Operator):
+    bl_idname = "studio.krea_refine"
     bl_label = "Refine with Krea"
     bl_description = ("Send the image shown above to Krea as it is written (without Claude, with the API token). "
                       "The result is saved next to it (…_krea_01.png) at exactly its size")
@@ -438,8 +438,8 @@ class RS_OT_krea_refine(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_krea_claude(Operator):
-    bl_idname = "render_studio.krea_claude"
+class STUDIO_OT_krea_claude(Operator):
+    bl_idname = "studio.krea_claude"
     bl_label = "Send"
     bl_description = ("Claude looks at the render and your pictures, writes the prompt for Krea from your wish and "
                       "the pressed buttons, with the product's true size, shows the price and makes it with your Krea "
@@ -457,7 +457,7 @@ class RS_OT_krea_claude(Operator):
             return {'CANCELLED'}
         text_wish = wish(wm)
         refs = references(wm)
-        if not text_wish and not refs and wm.render_studio_krea_zoom == 'KEEP' and wm.render_studio_krea_view == 'KEEP':
+        if not text_wish and not refs and wm.studio_krea_zoom == 'KEEP' and wm.studio_krea_view == 'KEEP':
             self.report({'WARNING'}, "Write what should change, or press a button above")
             return {'CANCELLED'}
         from .. import core
@@ -472,16 +472,16 @@ class RS_OT_krea_claude(Operator):
             if info:
                 lines.append("Product: %s cm (true size%s), %d × %d px render" % (
                     " × ".join("%g" % v for v in info["size_cm"]),
-                    ", keep it" if wm.render_studio_krea_scale else ", size may change", width, height))
+                    ", keep it" if wm.studio_krea_scale else ", size may change", width, height))
         except (OSError, ValueError):
             pass
-        lines.append("Keep the product untouched (mask): %s" % ("yes" if wm.render_studio_krea_protect else "no"))
+        lines.append("Keep the product untouched (mask): %s" % ("yes" if wm.studio_krea_protect else "no"))
         for path in refs:
-            lines.append("Picture (%s): %s" % ("the place" if wm.render_studio_krea_room else "reference", path))
-        if wm.render_studio_krea_zoom != 'KEEP' or wm.render_studio_krea_view != 'KEEP':
-            lines.append("Camera: framing %s, height %s" % (wm.render_studio_krea_zoom, wm.render_studio_krea_view))
-        if wm.render_studio_krea_model != 'AUTO':
-            lines.append("Model: %s" % wm.render_studio_krea_model)
+            lines.append("Picture (%s): %s" % ("the place" if wm.studio_krea_room else "reference", path))
+        if wm.studio_krea_zoom != 'KEEP' or wm.studio_krea_view != 'KEEP':
+            lines.append("Camera: framing %s, height %s" % (wm.studio_krea_zoom, wm.studio_krea_view))
+        if wm.studio_krea_model != 'AUTO':
+            lines.append("Model: %s" % wm.studio_krea_model)
         try:
             core.add_attachment(source)
             for path in refs:
@@ -489,7 +489,7 @@ class RS_OT_krea_claude(Operator):
         except Exception as exc:
             print("ID Toolkit: Krea attachment:", exc)
         text = "\n".join(lines)
-        wm.render_studio_krea_prompt = ""
+        wm.studio_krea_prompt = ""
         if core.is_busy():
             # a run that is going cannot get the connector any more: a new chat after it
             names = [s["name"] for s in core.skills.list_skills(core.workdir()) if s.get("studio_tab") == 'FINISH']
@@ -503,8 +503,8 @@ class RS_OT_krea_claude(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_krea_usage(Operator):
-    bl_idname = "render_studio.krea_usage"
+class STUDIO_OT_krea_usage(Operator):
+    bl_idname = "studio.krea_usage"
     bl_label = "Krea Balance"
     bl_description = "Open your Krea API balance and usage (Krea shows it only on its website)"
     bl_options = {'INTERNAL'}
@@ -514,8 +514,8 @@ class RS_OT_krea_usage(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_krea_token(Operator):
-    bl_idname = "render_studio.krea_token"
+class STUDIO_OT_krea_token(Operator):
+    bl_idname = "studio.krea_token"
     bl_label = "Get a Krea API Token"
     bl_description = "Open krea.ai to create an API token (the API has its own balance, from $5)"
     bl_options = {'INTERNAL'}
@@ -553,14 +553,14 @@ def _draw_image(layout, context):
     index = images.index(path) if path in images else 0
     older = head.row(align=True)
     older.enabled = index < len(images) - 1
-    older.operator(tab_queue.RS_OT_preview_step.bl_idname, text="", icon='TRIA_LEFT').direction = 1
+    older.operator(tab_queue.STUDIO_OT_preview_step.bl_idname, text="", icon='TRIA_LEFT').direction = 1
     name = head.row(align=True)
     name.alignment = 'CENTER'
     name.label(text=os.path.basename(path), translate=False)
     newer = head.row(align=True)
     newer.enabled = index > 0
-    newer.operator(tab_queue.RS_OT_preview_step.bl_idname, text="", icon='TRIA_RIGHT').direction = -1
-    head.operator(tab_queue.RS_OT_show_render.bl_idname, text="", icon='ZOOM_IN')
+    newer.operator(tab_queue.STUDIO_OT_preview_step.bl_idname, text="", icon='TRIA_RIGHT').direction = -1
+    head.operator(tab_queue.STUDIO_OT_show_render.bl_idname, text="", icon='ZOOM_IN')
     scale = max(6.0, min(18.0, context.region.width / (20 * (context.preferences.system.ui_scale or 1.0)) - 2.5))
     if image is not None:
         box.template_icon(icon_value=layout.icon(image), scale=scale)
@@ -633,33 +633,33 @@ def _draw_krea(layout, context, path):
     col = box.column(align=True)
     row = _labeled(col, "Scene")
     for key, label, _text, _protect in krea.SCENE:
-        row.prop(wm, "render_studio_krea_" + key, text=label, toggle=True)
+        row.prop(wm, "studio_krea_" + key, text=label, toggle=True)
     row = _labeled(col, "Camera")
     for target, value, label in (("zoom", 'CLOSER', "Closer"), ("zoom", 'WIDER', "Wider"),
                                  ("view", 'HIGHER', "Higher"), ("view", 'LOWER', "Lower")):
-        op = row.operator(RS_OT_krea_frame.bl_idname, text=label,
-                          depress=getattr(wm, "render_studio_krea_" + target) == value)
+        op = row.operator(STUDIO_OT_krea_frame.bl_idname, text=label,
+                          depress=getattr(wm, "studio_krea_" + target) == value)
         op.target, op.value = target, value
     box.separator(factor=0.3)
     col = box.column(align=True)
     row = _labeled(col, "Product")
-    row.prop(wm, "render_studio_krea_scale", text="Size", toggle=True,
-             icon='LOCKED' if wm.render_studio_krea_scale else 'UNLOCKED')
-    row.prop(wm, "render_studio_krea_protect", text="Keep", toggle=True, icon='MOD_MASK')
-    row.operator(RS_OT_krea_product.bl_idname, text="", icon='RESTRICT_SELECT_OFF',
+    row.prop(wm, "studio_krea_scale", text="Size", toggle=True,
+             icon='LOCKED' if wm.studio_krea_scale else 'UNLOCKED')
+    row.prop(wm, "studio_krea_protect", text="Keep", toggle=True, icon='MOD_MASK')
+    row.operator(STUDIO_OT_krea_product.bl_idname, text="", icon='RESTRICT_SELECT_OFF',
                  depress=krea_scene.is_marked(context.scene))
     _product_info(col, context, path)
     row = _labeled(box, "Pictures")
-    row.operator(RS_OT_krea_reference.bl_idname, text="Add", icon='ADD')
+    row.operator(STUDIO_OT_krea_reference.bl_idname, text="Add", icon='ADD')
     refs = references(wm)
     if refs:
         pics = box.column(align=True)
         for index, ref in enumerate(refs):
             line = _labeled(pics, "")
             line.label(text=os.path.basename(ref), icon='IMAGE_DATA', translate=False)
-            line.operator(RS_OT_krea_reference.bl_idname, text="", icon='X', emboss=False).remove = index
-    used = krea.pick_model(wm.render_studio_krea_model, bool(refs) and wm.render_studio_krea_room,
-                           wm.render_studio_krea_zoom, wm.render_studio_krea_view)
+            line.operator(STUDIO_OT_krea_reference.bl_idname, text="", icon='X', emboss=False).remove = index
+    used = krea.pick_model(wm.studio_krea_model, bool(refs) and wm.studio_krea_room,
+                           wm.studio_krea_zoom, wm.studio_krea_view)
     names = dict((k, n) for k, _p, n, _d in krea.MODELS)
     box.separator(factor=0.3)
     _cost_lines(box, used, names)
@@ -686,18 +686,18 @@ def _draw_krea(layout, context, path):
     row = box.row(align=True)
     row.scale_y = 1.4
     row.enabled = bool(path)
-    row.prop(wm, "render_studio_krea_prompt", text="", placeholder="What should change?")
-    row.operator(RS_OT_krea_claude.bl_idname, text="", icon='EVENT_RETURN')
+    row.prop(wm, "studio_krea_prompt", text="", placeholder="What should change?")
+    row.operator(STUDIO_OT_krea_claude.bl_idname, text="", icon='EVENT_RETURN')
     if krea.token():
-        row.operator(RS_OT_krea_refine.bl_idname, text="", icon='PLAY')
+        row.operator(STUDIO_OT_krea_refine.bl_idname, text="", icon='PLAY')
 
 
 def _draw_adjust(layout, context, path):
     """Light (exposure, contrast, highlights, shadows) and color (temperature, tint, vibrance, saturation)
     of the finished image; [Save Image] writes …_edit_01.png."""
-    rs = context.scene.render_studio
+    rs = context.scene.studio
     box, head, is_open = section(layout, "adjust", "Adjust Image", 'IMAGE_DATA')
-    head.operator(RS_OT_edit_reset.bl_idname, text="", icon='LOOP_BACK')
+    head.operator(STUDIO_OT_edit_reset.bl_idname, text="", icon='LOOP_BACK')
     if not is_open:
         return
     for title, keys in (("Light", image_edit.LIGHT), ("Color", image_edit.COLOR)):
@@ -710,10 +710,10 @@ def _draw_adjust(layout, context, path):
     row = box.row(align=True)
     row.scale_y = 1.2
     row.enabled = bool(path) and not image_edit.is_neutral(image_edit.values(context.scene))
-    row.operator(RS_OT_edit_export.bl_idname, icon='FILE_TICK')
+    row.operator(STUDIO_OT_edit_export.bl_idname, icon='FILE_TICK')
 
 
-class RS_PT_finish_settings(Panel):
+class STUDIO_PT_finish_settings(Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'HEADER'
     bl_label = "Finish Settings"
@@ -724,7 +724,7 @@ class RS_PT_finish_settings(Panel):
         p = runner.prefs(context)
         box = layout.box()
         box.label(text="Krea", icon='BRUSHES_ALL')
-        box.row(align=True).prop(context.window_manager, "render_studio_krea_model", expand=True)
+        box.row(align=True).prop(context.window_manager, "studio_krea_model", expand=True)
         col = box.column(align=True)
         col.active = False
         col.label(text="Refine with Claude: your Krea plan's credits")
@@ -734,11 +734,11 @@ class RS_PT_finish_settings(Panel):
         if p is not None:
             box.prop(p, "krea_token", text="API Token")
         row = box.row(align=True)
-        row.operator(RS_OT_krea_token.bl_idname, icon='URL')
-        row.operator(RS_OT_krea_usage.bl_idname, icon='FUND')
+        row.operator(STUDIO_OT_krea_token.bl_idname, icon='URL')
+        row.operator(STUDIO_OT_krea_usage.bl_idname, icon='FUND')
 
 
-class RS_PT_finish(_SidebarPanel, Panel):
+class STUDIO_PT_finish(_SidebarPanel, Panel):
     studio_tab = 'FINISH'
     bl_label = "Refine"
     bl_options = {'HIDE_HEADER'}
@@ -747,8 +747,8 @@ class RS_PT_finish(_SidebarPanel, Panel):
     def draw(self, context):
         _unpin(self)
         layout = self.layout
-        tab_head(layout, RS_MT_edit_presets.bl_idname, "Adjustments", RS_OT_edit_save_preset.bl_idname,
-                 RS_PT_finish_settings.__name__, icon='IMAGE_DATA')
+        tab_head(layout, STUDIO_MT_edit_presets.bl_idname, "Adjustments", STUDIO_OT_edit_save_preset.bl_idname,
+                 STUDIO_PT_finish_settings.__name__, icon='IMAGE_DATA')
         path = _draw_image(layout, context)
         _draw_krea(layout, context, path)
         draw_look(layout, context)
@@ -759,44 +759,44 @@ def draw_look(layout, context):
     """The look (compositor: next renders and, with the eye, the viewport): its saved looks and the switch."""
     shading = _shading(context)
     live = shading is not None and getattr(shading, "use_compositor", 'DISABLED') != 'DISABLED'
-    look.draw(layout, context.scene, live=live, menu=RS_MT_look_presets.bl_idname)
+    look.draw(layout, context.scene, live=live, menu=STUDIO_MT_look_presets.bl_idname)
 
 
-classes = (RS_OT_look_saved, RS_OT_look_save, RS_MT_look_presets, RS_OT_look_live, RS_OT_edit_reset,
-           RS_OT_edit_saved, RS_OT_edit_save_preset, RS_MT_edit_presets, RS_OT_edit_export, RS_OT_krea_product,
-           RS_OT_krea_frame, RS_OT_krea_reference,
-           RS_OT_krea_refine, RS_OT_krea_claude,  RS_OT_krea_usage, RS_OT_krea_token,
-           RS_PT_finish_settings, RS_PT_finish)
+classes = (STUDIO_OT_look_saved, STUDIO_OT_look_save, STUDIO_MT_look_presets, STUDIO_OT_look_live, STUDIO_OT_edit_reset,
+           STUDIO_OT_edit_saved, STUDIO_OT_edit_save_preset, STUDIO_MT_edit_presets, STUDIO_OT_edit_export, STUDIO_OT_krea_product,
+           STUDIO_OT_krea_frame, STUDIO_OT_krea_reference,
+           STUDIO_OT_krea_refine, STUDIO_OT_krea_claude,  STUDIO_OT_krea_usage, STUDIO_OT_krea_token,
+           STUDIO_PT_finish_settings, STUDIO_PT_finish)
 
 
 def _scene_toggled(protect):
     """A hand or a person touches the product: "Untouched" goes off (fingers go over it)."""
     def update(wm, _context):
-        if not protect and any(getattr(wm, "render_studio_krea_" + k) for k, _l, _t, p in krea.SCENE if not p):
-            wm.render_studio_krea_protect = False
+        if not protect and any(getattr(wm, "studio_krea_" + k) for k, _l, _t, p in krea.SCENE if not p):
+            wm.studio_krea_protect = False
     return update
 
 
 def register():
     wm = bpy.types.WindowManager
-    wm.render_studio_krea_prompt = StringProperty(
+    wm.studio_krea_prompt = StringProperty(
         name="Change", description="What Krea should change in the image (one or two sentences)", options={'SKIP_SAVE'})
-    wm.render_studio_krea_model = EnumProperty(
+    wm.studio_krea_model = EnumProperty(
         name="Model", items=[(k, label, text) for k, _path, label, text in krea.MODELS], default='AUTO',
         options={'SKIP_SAVE'})
-    wm.render_studio_krea_refs = StringProperty(
+    wm.studio_krea_refs = StringProperty(
         name="Pictures", description="Pictures for Krea, one path per line", options={'SKIP_SAVE'})
-    wm.render_studio_krea_scale = BoolProperty(
+    wm.studio_krea_scale = BoolProperty(
         name="Lock Size", default=True, options={'SKIP_SAVE'},
         description="Tell Krea the product's true size from Blender, so added hands and things are to scale")
     for key, label, text, protect in krea.SCENE:
-        setattr(wm, "render_studio_krea_" + key, BoolProperty(
+        setattr(wm, "studio_krea_" + key, BoolProperty(
             name=label, description=text, default=False, options={'SKIP_SAVE'},
             update=_scene_toggled(protect)))
-    wm.render_studio_krea_zoom = EnumProperty(name="Framing", items=krea.ZOOMS, default='KEEP', options={'SKIP_SAVE'})
-    wm.render_studio_krea_view = EnumProperty(name="Height", items=krea.VIEWS, default='KEEP',
+    wm.studio_krea_zoom = EnumProperty(name="Framing", items=krea.ZOOMS, default='KEEP', options={'SKIP_SAVE'})
+    wm.studio_krea_view = EnumProperty(name="Height", items=krea.VIEWS, default='KEEP',
                                               options={'SKIP_SAVE'})
-    wm.render_studio_krea_protect = BoolProperty(
+    wm.studio_krea_protect = BoolProperty(
         name="Keep Product Untouched", default=True, options={'SKIP_SAVE'},
         description=("Precise only: a mask from Blender keeps the product exactly as rendered; Krea changes only "
                      "the rest. Off for a hand whose fingers go over the product"))
@@ -809,12 +809,12 @@ def unregister():
         bpy.app.timers.unregister(krea._finish)
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
-    del bpy.types.WindowManager.render_studio_krea_prompt
-    del bpy.types.WindowManager.render_studio_krea_model
-    del bpy.types.WindowManager.render_studio_krea_refs
-    del bpy.types.WindowManager.render_studio_krea_scale
+    del bpy.types.WindowManager.studio_krea_prompt
+    del bpy.types.WindowManager.studio_krea_model
+    del bpy.types.WindowManager.studio_krea_refs
+    del bpy.types.WindowManager.studio_krea_scale
     for key, _label, _text, _protect in krea.SCENE:
-        delattr(bpy.types.WindowManager, "render_studio_krea_" + key)
-    del bpy.types.WindowManager.render_studio_krea_zoom
-    del bpy.types.WindowManager.render_studio_krea_view
-    del bpy.types.WindowManager.render_studio_krea_protect
+        delattr(bpy.types.WindowManager, "studio_krea_" + key)
+    del bpy.types.WindowManager.studio_krea_zoom
+    del bpy.types.WindowManager.studio_krea_view
+    del bpy.types.WindowManager.studio_krea_protect

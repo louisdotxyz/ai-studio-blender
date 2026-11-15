@@ -143,8 +143,8 @@ def take_over_with_sidecar():
           and (new_front.matrix_world.translation - Vector((0, -0.02, 0.05))).length < 1e-4,
           new_front.matrix_world.translation)
     check("property and visibility kept", new_front.get("finish") == "matt" and not new_front.visible_shadow)
-    archive = bpy.data.collections.get("Archive")
-    v2 = bpy.data.collections.get("Archive V2")
+    archive = bpy.data.collections.get("Archiv")
+    v2 = bpy.data.collections.get("Archiv V2")
     check("old parts archived by version", housing.name in v2.objects and front.name in archive.objects
           and archive.hide_render, [c.name for c in bpy.data.collections])
     check("new part: placeholder material named after the CAD", clip.active_material
@@ -169,7 +169,7 @@ def take_over_with_sidecar():
     report = cadimport.cad_import(path)
     bpy.context.view_layer.update()
     newest = next(o for o in bpy.data.objects if o.get("cad_id") == "Leuchte | Front" and o.get("cad_version") == "V4")
-    v3 = bpy.data.collections.get("Archive V3")
+    v3 = bpy.data.collections.get("Archiv V3")
     check("V3 archived, modifier still there", v3 and new_front.name in v3.objects and newest.modifiers
           and newest.active_material == mat, report)
     check("old part without partner reported", clip.name in report["old_without_partner"], report)
@@ -202,7 +202,7 @@ def comments_box():
               and ("image: %s" % image) in cadfiles.open_feedback(folder)[0], cadfiles.open_feedback(folder))
         check("no Onshape keys or sync any more", not hasattr(cadimport, "sync_feedback"))
         check("no CAD box, no import buttons", not hasattr(cadswap, "draw_chat")
-              and not hasattr(cadswap, "RS_OT_cad_import"))
+              and not hasattr(cadswap, "STUDIO_OT_cad_import"))
     finally:
         bpy.data.objects.remove(part)
 

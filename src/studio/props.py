@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Settings of Render Studio: scene, camera, light and queue entry properties and the preferences."""
+"""Settings of AI Studio: scene, camera, light and queue entry properties and the preferences."""
 
 import math
 
@@ -165,7 +165,7 @@ def _color_pick_update(settings, context):
     dst = _color_input(target_obj.active_material) if target_obj is not None else None
     if src is not None and dst is not None and target_obj != source:
         if src.is_linked:
-            print("Render Studio: the picked color comes from a texture, only its default value is copied")
+            print("AI Studio: the picked color comes from a texture, only its default value is copied")
         if dst.is_linked:
             dst.links[0].from_socket.node.id_data.links.remove(dst.links[0])
         dst.default_value = tuple(src.default_value)
@@ -205,7 +205,7 @@ def _haze_changed(self, context):
     from . import environment
     environment.on_haze(self, context)
 
-class RS_CameraSettings(PropertyGroup):
+class STUDIO_CameraSettings(PropertyGroup):
     short_name: StringProperty(
         name="Name", description="Rename the camera: \"side\" becomes \"P_side_01\" (Preferences › Studio › "
         "Name Scheme)", get=_get_short_name, set=_set_short_name, options=set())
@@ -223,7 +223,7 @@ class RS_CameraSettings(PropertyGroup):
     queue_count: IntProperty(options={'HIDDEN'})   # how often this camera was added to the queue
 
 
-class RS_Item(PropertyGroup):
+class STUDIO_Item(PropertyGroup):
     camera: PointerProperty(type=bpy.types.Object, poll=_is_camera)
     # Unique number so the running queue still recognizes entries after they
     # are moved or removed.
@@ -242,6 +242,10 @@ class RS_Item(PropertyGroup):
     resolution_x: IntProperty(options={'HIDDEN'})
     resolution_y: IntProperty(options={'HIDDEN'})
     percentage: IntProperty(options={'HIDDEN'})
+    # A film: its own frame range (0 / 0 = the scene's) and in how many parts it renders
+    frame_start: IntProperty(options={'HIDDEN'})
+    frame_end: IntProperty(options={'HIDDEN'})
+    parts: IntProperty(default=1, options={'HIDDEN'})
 
 
 def _pin_changed(self, context):
@@ -274,7 +278,7 @@ PLACE_MODES = (
 )
 
 
-class RS_HdriPin(PropertyGroup):
+class STUDIO_HdriPin(PropertyGroup):
     """A light on the studio HDRI (World › Studio): a softbox painted into the environment."""
     name: StringProperty(name="Name", default="Light")
     on: BoolProperty(name="On", default=True, update=_pin_changed)
@@ -300,7 +304,7 @@ class RS_HdriPin(PropertyGroup):
                           get=_item_get("get_pin_kelvin"), set=_item_set("set_pin_kelvin"), options=set())
 
 
-class RS_Look(PropertyGroup):
+class STUDIO_Look(PropertyGroup):
     """A lighting mood of this file (looks.py): its name and everything it holds, as JSON."""
     name: StringProperty(name="Name", default="A")
     data: StringProperty(options={'HIDDEN'})
@@ -316,7 +320,7 @@ def _sky_changed(self, context):
     world_modes.on_sky(context.scene)
 
 
-class RS_Shot(PropertyGroup):
+class STUDIO_Shot(PropertyGroup):
     """A shot (Render tab): camera + scene preset + material variant + quality."""
     name: StringProperty(name="Name", default="Shot")
     camera: PointerProperty(type=bpy.types.Object, poll=_is_camera, name="Camera")
@@ -327,8 +331,8 @@ class RS_Shot(PropertyGroup):
                           default='HIGH')
 
 
-class RS_LightSettings(PropertyGroup):
-    """Per light (Object.render_studio_light): its own target and height."""
+class STUDIO_LightSettings(PropertyGroup):
+    """Per light (Object.studio_light): its own target and height."""
     short_name: StringProperty(
         name="Name", description="Rename the light: \"key\" becomes \"A_key_01\" (Preferences › Studio › "
         "Name Scheme)", get=_get_short_name, set=_set_short_name, options=set())
@@ -361,9 +365,9 @@ def _edit_changed(self, context):
     image_edit.changed()
 
 
-class RS_Settings(PropertyGroup):
-    items: CollectionProperty(type=RS_Item)
-    shots: CollectionProperty(type=RS_Shot)
+class STUDIO_Settings(PropertyGroup):
+    items: CollectionProperty(type=STUDIO_Item)
+    shots: CollectionProperty(type=STUDIO_Shot)
     # Output presets (gear menu in the Queue tab)
     still_format: EnumProperty(
         name="Still Format",
@@ -424,6 +428,10 @@ class RS_Settings(PropertyGroup):
         default='STILL',
         options=set(),
     )
+    film_parts: IntProperty(
+        name="Parts", description="A film renders in this many parts, one after the other (each part also as "
+        "its own video); in its own process, so it goes on when Blender crashes and resumes where it stopped",
+        default=1, min=1, max=24, options=set())
     look_glow: FloatProperty(name="Glow", description="Soft glow around bright parts (compositor)",
                              default=0.0, min=0.0, max=1.0, subtype='FACTOR', options=set(), update=_look_changed)
     look_contrast: FloatProperty(name="Contrast", description="More contrast (compositor)",
@@ -490,12 +498,12 @@ class RS_Settings(PropertyGroup):
                ('STUDIO', "Studio", "A studio environment made of lights you place (like an HDRI light editor)"),
                ('SKY', "Sky", "A sky by time of day: day, golden hour, night")],
         default='IMAGE', options=set(), update=_world_mode_changed)
-    hdri_pins: CollectionProperty(type=RS_HdriPin)
+    hdri_pins: CollectionProperty(type=STUDIO_HdriPin)
     hdri_pin_index: IntProperty(default=-1, options=set())
     place_mode: EnumProperty(name="Place", description="How a click on the product places the open light",
                              items=PLACE_MODES, default='REFLECTION', options=set())
     # Looks: several lighting moods in this file (looks.py)
-    light_looks: CollectionProperty(type=RS_Look)
+    light_looks: CollectionProperty(type=STUDIO_Look)
     light_look_index: IntProperty(default=-1, options=set())
     studio_ambient: FloatProperty(name="Ambient", description="Brightness of the studio around the lights",
                                   default=0.25, min=0.0, soft_max=2.0, options=set(), update=_pin_changed)
@@ -661,7 +669,7 @@ def _frame_update(_self, _context):
     sync.schedule_fit()
 
 
-class RS_Preferences(PropertyGroup):
+class STUDIO_Preferences(PropertyGroup):
     """Studio settings, shown in the extension's preferences (formerly their own add-on)."""
 
     krea_token: StringProperty(
@@ -841,11 +849,9 @@ class RS_Preferences(PropertyGroup):
         box.label(text="Collections and Shortcuts", icon='OUTLINER_COLLECTION')
         col = box.column()
         col.use_property_split = True
-        sub = col.column(heading="Collections")
-        sub.prop(self, "camera_collection")
-        sub.prop(self, "light_collection")
-        sub.prop(self, "archive_collection")
-        sub.prop(self, "temp_collection")
+        info = col.row()
+        info.active = False
+        info.label(text="Every scene: Camera, Set, Light, Object, Archiv, TEMP", icon='OUTLINER_COLLECTION')
         col.separator()
         for idname, _key, _modifiers, props, label in SHORTCUTS:
             kmi = _user_keymap_item(idname, props)
@@ -860,4 +866,4 @@ def _apply_clipping():
     try:
         cameras.apply_min_clipping()
     except Exception as ex:
-        print("Render Studio: clipping:", ex)
+        print("AI Studio: clipping:", ex)

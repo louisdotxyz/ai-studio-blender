@@ -11,8 +11,8 @@ from .ui_common import (RENDER_TAB_ORDER, _SidebarPanel, _look_through, _unpin, 
                         active_camera, studio_tab)
 
 
-class RS_OT_set_camera(Operator):
-    bl_idname = "render_studio.set_camera"
+class STUDIO_OT_set_camera(Operator):
+    bl_idname = "studio.set_camera"
     bl_label = "Switch Camera"
     bl_description = "Makes this camera the active camera and looks through it"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -27,8 +27,8 @@ class RS_OT_set_camera(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_camera_back(Operator):
-    bl_idname = "render_studio.camera_back"
+class STUDIO_OT_camera_back(Operator):
+    bl_idname = "studio.camera_back"
     bl_label = "Camera Back"
     bl_description = ("Put the camera back where it was before it was last moved, also after moving it "
                       "with Lock Camera to View, which Undo does not catch (up to 20 steps)")
@@ -47,8 +47,8 @@ class RS_OT_camera_back(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_duplicate_camera(Operator):
-    bl_idname = "render_studio.duplicate_camera"
+class STUDIO_OT_duplicate_camera(Operator):
+    bl_idname = "studio.duplicate_camera"
     bl_label = "Duplicate Camera"
     bl_description = "Duplicates the active camera into the camera collection (Camera) and makes the copy active"
     bl_options = {'UNDO'}
@@ -84,8 +84,8 @@ class RS_OT_duplicate_camera(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_camera_from_view(Operator):
-    bl_idname = "render_studio.camera_from_view"
+class STUDIO_OT_camera_from_view(Operator):
+    bl_idname = "studio.camera_from_view"
     bl_label = "Camera From View"
     bl_description = ("Saves the current viewport view as a new camera and looks through it. "
                       "Shift+click also adds it to the render queue")
@@ -107,7 +107,7 @@ class RS_OT_camera_from_view(Operator):
         cam = cameras.camera_from_view(scene, context.space_data, context.view_layer)
         _look_through(context, cam)
         if self.add_to_queue:
-            bpy.ops.render_studio.add()
+            bpy.ops.studio.add()
         self.report({'INFO'}, "%s created" % cam.name)
         return {'FINISHED'}
 
@@ -118,8 +118,8 @@ LENS_PRESETS = (24, 35, 50, 85, 135)
 RATIOS = ((1, 1), (4, 5), (3, 4), (2, 3), (9, 16), (5, 4), (4, 3), (3, 2), (16, 9), (21, 9))
 
 
-class RS_OT_set_aspect(Operator):
-    bl_idname = "render_studio.set_aspect"
+class STUDIO_OT_set_aspect(Operator):
+    bl_idname = "studio.set_aspect"
     bl_label = "Aspect Ratio"
     bl_description = "Set the aspect ratio (the short side stays 1080 px at 1x)"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -133,23 +133,23 @@ class RS_OT_set_aspect(Operator):
                                  "landscape" if props.x > props.y else "square")
 
     def execute(self, context):
-        rq = context.scene.render_studio
+        rq = context.scene.studio
         rq.aspect_x = self.x      # the setter sizes the image
         rq.aspect_y = self.y
         return {'FINISHED'}
 
 
-class RS_MT_aspect(Menu):
+class STUDIO_MT_aspect(Menu):
     """Left in the format row: the aspect ratio, and two fields for any other ratio."""
-    bl_idname = "RS_MT_aspect"
+    bl_idname = "STUDIO_MT_aspect"
     bl_label = "Aspect Ratio"
 
     def draw(self, context):
         layout = self.layout
-        rq = context.scene.render_studio
+        rq = context.scene.studio
         current = (rq.aspect_x, rq.aspect_y)
         for x, y in RATIOS:
-            op = layout.operator(RS_OT_set_aspect.bl_idname, text="%d : %d" % (x, y),
+            op = layout.operator(STUDIO_OT_set_aspect.bl_idname, text="%d : %d" % (x, y),
                                  icon='CHECKMARK' if (x, y) == current else 'BLANK1')
             op.x, op.y = x, y
         layout.separator()
@@ -159,23 +159,23 @@ class RS_MT_aspect(Menu):
         row.prop(rq, "aspect_y", text="")
 
 
-class RS_MT_formats(Menu):
+class STUDIO_MT_formats(Menu):
     """Right in the format row: formats by name (Instagram, HD …); they give the aspect ratio."""
-    bl_idname = "RS_MT_formats"
+    bl_idname = "STUDIO_MT_formats"
     bl_label = "Formats"
 
     def draw(self, context):
         layout = self.layout
         render = context.scene.render
-        rq = context.scene.render_studio
+        rq = context.scene.studio
         current = (rq.aspect_x, rq.aspect_y)
         for x, y in RATIOS:
-            op = layout.operator(RS_OT_set_aspect.bl_idname, text="%d : %d" % (x, y),
+            op = layout.operator(STUDIO_OT_set_aspect.bl_idname, text="%d : %d" % (x, y),
                                  icon='CHECKMARK' if (x, y) == current else 'BLANK1')
             op.x, op.y = x, y
         layout.separator()
         for _short, long, w, h in FORMAT_PRESETS:
-            op = layout.operator(RS_OT_set_resolution.bl_idname, text="%s (%d × %d)" % (long, w, h),
+            op = layout.operator(STUDIO_OT_set_resolution.bl_idname, text="%s (%d × %d)" % (long, w, h),
                                  icon='CHECKMARK' if (render.resolution_x, render.resolution_y) == (w, h) else 'BLANK1')
             op.width, op.height = w, h
 
@@ -188,8 +188,8 @@ def format_name(render):
     return next((short for short, _l, w, h in FORMAT_PRESETS if _same_ratio(render, w, h)), "Format")
 
 
-class RS_OT_camera_preset(Operator):
-    bl_idname = "render_studio.camera_preset"
+class STUDIO_OT_camera_preset(Operator):
+    bl_idname = "studio.camera_preset"
     bl_label = "Camera Preset"
     bl_description = "A new camera for this view of the product, and look through it"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -215,9 +215,9 @@ class RS_OT_camera_preset(Operator):
         return {'FINISHED'}
 
 
-class RS_MT_camera_presets(Menu):
+class STUDIO_MT_camera_presets(Menu):
     """The preset menu of the Camera tab: standard views as new cameras, the formats."""
-    bl_idname = "RS_MT_camera_presets"
+    bl_idname = "STUDIO_MT_camera_presets"
     bl_label = "Camera Presets"
 
     def draw(self, context):
@@ -225,17 +225,17 @@ class RS_MT_camera_presets(Menu):
         layout.label(text="Orthographic")
         for key, name, _a, _h, ortho, _lens, _room in cameras.VIEW_PRESETS:
             if ortho:
-                layout.operator(RS_OT_camera_preset.bl_idname, text=name, icon='VIEW_ORTHO').view = key
+                layout.operator(STUDIO_OT_camera_preset.bl_idname, text=name, icon='VIEW_ORTHO').view = key
         layout.separator()
         layout.label(text="Perspective")
         for key, name, _a, _h, ortho, _lens, _room in cameras.VIEW_PRESETS:
             if not ortho:
-                layout.operator(RS_OT_camera_preset.bl_idname, text=name, icon='VIEW_PERSPECTIVE').view = key
-        layout.operator(RS_OT_camera_from_view.bl_idname, text="From the Viewport", icon='VIEW_CAMERA')
+                layout.operator(STUDIO_OT_camera_preset.bl_idname, text=name, icon='VIEW_PERSPECTIVE').view = key
+        layout.operator(STUDIO_OT_camera_from_view.bl_idname, text="From the Viewport", icon='VIEW_CAMERA')
 
 
-class RS_OT_toggle_ortho(Operator):
-    bl_idname = "render_studio.toggle_ortho"
+class STUDIO_OT_toggle_ortho(Operator):
+    bl_idname = "studio.toggle_ortho"
     bl_label = "Orthographic / Perspective"
     bl_description = ("Switch the camera between perspective and orthographic; the framing stays about the "
                       "same (ortho scale from the distance, the distance from the ortho scale)")
@@ -249,7 +249,7 @@ class RS_OT_toggle_ortho(Operator):
     def execute(self, context):
         from . import orbit
         scene = context.scene
-        cam, rq = scene.camera, scene.render_studio
+        cam, rq = scene.camera, scene.studio
         data = cam.data
         sensor = data.sensor_height if data.sensor_fit == 'VERTICAL' else data.sensor_width
         distance = orbit.camera_orbit(rq, cam)[2]
@@ -262,8 +262,8 @@ class RS_OT_toggle_ortho(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_set_lens(Operator):
-    bl_idname = "render_studio.set_lens"
+class STUDIO_OT_set_lens(Operator):
+    bl_idname = "studio.set_lens"
     bl_label = "Set Focal Length"
     bl_description = "Sets the focal length of the active camera"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -280,8 +280,8 @@ class RS_OT_set_lens(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_set_resolution(Operator):
-    bl_idname = "render_studio.set_resolution"
+class STUDIO_OT_set_resolution(Operator):
+    bl_idname = "studio.set_resolution"
     bl_label = "Format"
     bl_description = "Sets the resolution"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -303,8 +303,8 @@ class RS_OT_set_resolution(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_set_scale(Operator):
-    bl_idname = "render_studio.set_scale"
+class STUDIO_OT_set_scale(Operator):
+    bl_idname = "studio.set_scale"
     bl_label = "Scale"
     bl_description = "Renders at 0.5x, 1x, 2x or 4x the resolution"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -316,7 +316,7 @@ class RS_OT_set_scale(Operator):
         return {'FINISHED'}
 
 
-class RS_PT_camera(_SidebarPanel, Panel):
+class STUDIO_PT_camera(_SidebarPanel, Panel):
     """Everything about the camera and the image, in the Render tab. Without a
     header so the tab stays in front (see above). The boxes give the controls a
     solid background over the viewport (Region Overlap)."""
@@ -330,33 +330,33 @@ class RS_PT_camera(_SidebarPanel, Panel):
         layout = self.layout
         scene = context.scene
         # Set Up for Product Renders is in the chat's setup card, the CAD box in the chat (Claude tab)
-        rq = scene.render_studio
+        rq = scene.studio
         render = scene.render
         cam = active_camera(scene)
 
         # The same head as every tab: [presets ▾] [A] [B] [−] [+ variant] [settings]
         from . import variants_ab
-        head, _props = tab_head(layout, RS_MT_camera_presets.bl_idname, "Preset")
+        head, _props = tab_head(layout, STUDIO_MT_camera_presets.bl_idname, "Preset")
         variants_ab.draw(head, scene, 'CAMERA')
-        head.popover(RS_PT_frame.__name__, text="", icon='PREFERENCES')
+        head.popover(STUDIO_PT_frame.__name__, text="", icon='PREFERENCES')
 
         # Camera: name, back, the cameras of the scene, orbit object and lock
         box = layout.box()
         row = box.row(align=True)
         if cam is not None and cam.type == 'CAMERA':
-            row.prop(cam.render_studio_camera, "short_name", text="", icon='CAMERA_DATA')   # rename right here
+            row.prop(cam.studio_camera, "short_name", text="", icon='CAMERA_DATA')   # rename right here
         else:
             row.label(text="Camera", icon='CAMERA_DATA')
         # Moved the camera by accident (e.g. with "Lock Camera to View", which ⌘Z does not undo)?
         steps = len(cameras.history(cam)) if cam is not None else 0
         back = row.row(align=True)
         back.enabled = steps > 0 and not rq.camera_locked
-        back.operator(RS_OT_camera_back.bl_idname, text="", icon='LOOP_BACK')
+        back.operator(STUDIO_OT_camera_back.bl_idname, text="", icon='LOOP_BACK')
         grid = box.grid_flow(row_major=True, columns=3, even_columns=True, align=True)
         for obj in cameras.scene_cameras(scene):
-            grid.operator(RS_OT_set_camera.bl_idname, text=obj.name, depress=(obj == cam)).name = obj.name
+            grid.operator(STUDIO_OT_set_camera.bl_idname, text=obj.name, depress=(obj == cam)).name = obj.name
         if cam is not None and cam.type == 'CAMERA':   # + : a new camera, a copy of this one
-            grid.operator(RS_OT_duplicate_camera.bl_idname, text="", icon='ADD')
+            grid.operator(STUDIO_OT_duplicate_camera.bl_idname, text="", icon='ADD')
         if cam is None or cam.type != 'CAMERA':
             box.label(text="No scene camera")
             return
@@ -377,7 +377,7 @@ class RS_PT_camera(_SidebarPanel, Panel):
             row.prop(rq, "cam_ortho_scale", text="Ortho Scale")
         else:
             row.prop(data, "lens", text="Focal Length")
-        row.operator(RS_OT_toggle_ortho.bl_idname, text="",
+        row.operator(STUDIO_OT_toggle_ortho.bl_idname, text="",
                      icon='VIEW_PERSPECTIVE' if data.type == 'ORTHO' else 'VIEW_ORTHO')
         if space is not None and space.type == 'VIEW_3D':
             sub = row.row(align=True)
@@ -386,11 +386,11 @@ class RS_PT_camera(_SidebarPanel, Panel):
         if data.type == 'PERSP':    # a grid: five equal buttons also in a narrow sidebar
             grid = col.grid_flow(row_major=True, columns=len(LENS_PRESETS), even_columns=True, align=True)
             for mm in LENS_PRESETS:
-                grid.operator(RS_OT_set_lens.bl_idname, text=str(mm),
+                grid.operator(STUDIO_OT_set_lens.bl_idname, text=str(mm),
                               depress=abs(data.lens - mm) < 0.01).lens = mm
         draw_dof(box, cam, space)
         # Format in one row: [3 : 4 ▾] [IG Portrait ▾] [📌 1500 × 2000] (pin: this camera keeps its format)
-        own = cam.render_studio_camera
+        own = cam.studio_camera
         pct = render.resolution_percentage / 100
         row = box.row(align=True)
         ratio = row.row(align=True)          # [3] : [4]  both editable; common ratios in the formats menu
@@ -400,7 +400,7 @@ class RS_PT_camera(_SidebarPanel, Panel):
         colon.alignment = 'CENTER'
         colon.label(text=":")
         ratio.prop(rq, "aspect_y", text="")
-        row.menu(RS_MT_formats.bl_idname, text=format_name(render))
+        row.menu(STUDIO_MT_formats.bl_idname, text=format_name(render))
         row.prop(own, "use_resolution", icon='PINNED' if own.use_resolution else 'UNPINNED', translate=False,
                  text="%d × %d" % (round(render.resolution_x * pct), round(render.resolution_y * pct)))
 
@@ -423,8 +423,8 @@ class RS_PT_camera(_SidebarPanel, Panel):
             env_ui.draw_backdrop(box, context)
 
 
-class RS_OT_fit_frame(Operator):
-    bl_idname = "render_studio.fit_frame"
+class STUDIO_OT_fit_frame(Operator):
+    bl_idname = "studio.fit_frame"
     bl_label = "Fit Now"
     bl_description = "Center and size the camera frame in every viewport that looks through the camera"
 
@@ -433,8 +433,8 @@ class RS_OT_fit_frame(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_reset_frame(Operator):
-    bl_idname = "render_studio.reset_frame"
+class STUDIO_OT_reset_frame(Operator):
+    bl_idname = "studio.reset_frame"
     bl_label = "Reset"
     bl_description = "Back to the default size and position"
 
@@ -447,7 +447,7 @@ class RS_OT_reset_frame(Operator):
         return {'FINISHED'}
 
 
-class RS_PT_frame(Panel):
+class STUDIO_PT_frame(Panel):
     """Gear menu in the Render tab: composition guides, clipping, camera frame."""
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'HEADER'
@@ -477,8 +477,8 @@ class RS_PT_frame(Panel):
         box.prop(p, "min_clipping")
         if cam is not None and cam.type == 'CAMERA' and not p.min_clipping:
             row = box.row(align=True)
-            row.prop(context.scene.render_studio, "cam_clip_start", text="Start")
-            row.prop(context.scene.render_studio, "cam_clip_end", text="End")
+            row.prop(context.scene.studio, "cam_clip_start", text="Start")
+            row.prop(context.scene.studio, "cam_clip_end", text="End")
 
         layout.label(text="Camera Frame", icon='SELECT_SET')
         layout.prop(p, "frame_auto")
@@ -488,8 +488,8 @@ class RS_PT_frame(Panel):
             col.prop(p, "frame_shift_x", slider=True)
             col.prop(p, "frame_shift_y", slider=True)
         row = layout.row(align=True)
-        row.operator(RS_OT_fit_frame.bl_idname, icon='VIEW_CAMERA')
-        row.operator(RS_OT_reset_frame.bl_idname, icon='LOOP_BACK')
+        row.operator(STUDIO_OT_fit_frame.bl_idname, icon='VIEW_CAMERA')
+        row.operator(STUDIO_OT_reset_frame.bl_idname, icon='LOOP_BACK')
 
 
 FSTOPS = (1.4, 2.8, 4, 5.6, 8, 16)
@@ -520,10 +520,10 @@ def draw_dof(layout, cam, space):
     sub = row.row(align=True)
     sub.ui_units_x = 6
     sub.prop(dof, "focus_object", text="", placeholder="Focus")
-    row.operator(RS_OT_dof_focus.bl_idname, text="", icon='PIVOT_CURSOR').target = "ORBIT"
-    row.operator(RS_OT_dof_focus.bl_idname, text="", icon='RESTRICT_SELECT_OFF').target = "ACTIVE"
+    row.operator(STUDIO_OT_dof_focus.bl_idname, text="", icon='PIVOT_CURSOR').target = "ORBIT"
+    row.operator(STUDIO_OT_dof_focus.bl_idname, text="", icon='RESTRICT_SELECT_OFF').target = "ACTIVE"
     if dof.focus_object is None:
-        layout.prop(bpy.context.scene.render_studio, "cam_focus_distance", text="Focus Distance")   # 1 mm steps
+        layout.prop(bpy.context.scene.studio, "cam_focus_distance", text="Focus Distance")   # 1 mm steps
     hint = dof_hint(space)
     if hint:
         row = layout.row()
@@ -531,8 +531,8 @@ def draw_dof(layout, cam, space):
         row.label(text=hint, icon='INFO')
 
 
-class RS_OT_set_fstop(Operator):
-    bl_idname = "render_studio.set_fstop"
+class STUDIO_OT_set_fstop(Operator):
+    bl_idname = "studio.set_fstop"
     bl_label = "Aperture"
     bl_description = "Depth of field with this aperture (small number = shallow focus)"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -548,8 +548,8 @@ class RS_OT_set_fstop(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_dof_focus(Operator):
-    bl_idname = "render_studio.dof_focus"
+class STUDIO_OT_dof_focus(Operator):
+    bl_idname = "studio.dof_focus"
     bl_label = "Focus On"
     bl_description = "Focus on the orbit object or the active object"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -559,7 +559,7 @@ class RS_OT_dof_focus(Operator):
     def execute(self, context):
         scene = context.scene
         cam = active_camera(scene)
-        obj = scene.render_studio.orbit_target if self.target == "ORBIT" else context.active_object
+        obj = scene.studio.orbit_target if self.target == "ORBIT" else context.active_object
         if cam is None or cam.type != 'CAMERA' or obj is None or obj == cam:
             self.report({'WARNING'}, "Pick an object first")
             return {'CANCELLED'}

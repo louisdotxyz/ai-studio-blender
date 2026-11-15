@@ -420,7 +420,7 @@ def execute_python(code, undo_message="Claude", step=None, max_output=6000, chat
     (``live``: for the next call over the Live Connection).
     """
     namespace = _base_namespace()
-    try:   # skill helpers: T (checks), M (photo match), V (variants), api (Render Studio)
+    try:   # skill helpers: T (checks), M (photo match), V (variants), api (AI Studio)
         from . import skilltools
         namespace.update(skilltools.namespace())
     except Exception as exc:

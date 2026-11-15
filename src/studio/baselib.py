@@ -35,7 +35,7 @@ else:
         bpy.data.materials.remove(old)
     new.name = name
     new.use_fake_user = True
-    for key in ("render_studio_base",):
+    for key in ("studio_base",):
         new.pop(key, None)
     new.asset_mark()
     if catalog:

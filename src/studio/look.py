@@ -135,8 +135,8 @@ def on_change(settings, context):
     apply(scene, settings.look_glow, settings.look_contrast, settings.look_vignette, settings.look_saturation)
 
 
-class RS_OT_look_preset(bpy.types.Operator):
-    bl_idname = "render_studio.look_preset"
+class STUDIO_OT_look_preset(bpy.types.Operator):
+    bl_idname = "studio.look_preset"
     bl_label = "Look Preset"
     bl_description = "Set glow, contrast and vignette for the compositor"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -149,20 +149,20 @@ class RS_OT_look_preset(bpy.types.Operator):
         return "Glow %d%%, contrast %d%%, vignette %d%%" % (glow * 100, contrast * 100, vignette * 100)
 
     def execute(self, context):
-        rq = context.scene.render_studio
+        rq = context.scene.studio
         rq.look_glow, rq.look_contrast, rq.look_vignette = PRESETS[self.name]
         return {'FINISHED'}
 
 
-class RS_OT_look_reset(bpy.types.Operator):
-    bl_idname = "render_studio.look_reset"
+class STUDIO_OT_look_reset(bpy.types.Operator):
+    bl_idname = "studio.look_reset"
     bl_label = "Reset Look"
     bl_description = "Exposure, white balance, saturation, glow, contrast and vignette back to neutral"
     bl_options = {'UNDO', 'INTERNAL'}
 
     def execute(self, context):
         scene = context.scene
-        rq = scene.render_studio
+        rq = scene.studio
         view = scene.view_settings
         view.exposure = 0.0
         if hasattr(view, "use_white_balance"):
@@ -176,14 +176,14 @@ def draw(layout, scene, live=None, menu=None):
     """Look: exposure, white balance and saturation first (the basics), then the presets with glow,
     contrast and vignette. live: the viewport shows the look (None: no switch). menu: the saved looks."""
     from .ui_common import section
-    rq = scene.render_studio
+    rq = scene.studio
     view = scene.view_settings
     box, head, is_open = section(layout, "look", "Look", 'NODE_COMPOSITING')
     if menu:
         head.menu(menu, text="", icon='PRESET')
     if live is not None:
-        head.operator("render_studio.look_live", text="", icon='HIDE_OFF' if live else 'HIDE_ON', depress=live)
-    head.operator(RS_OT_look_reset.bl_idname, text="", icon='LOOP_BACK')
+        head.operator("studio.look_live", text="", icon='HIDE_OFF' if live else 'HIDE_ON', depress=live)
+    head.operator(STUDIO_OT_look_reset.bl_idname, text="", icon='LOOP_BACK')
     if not is_open:
         return
     col = box.column(align=True)
@@ -200,7 +200,7 @@ def draw(layout, scene, live=None, menu=None):
     row = box.row(align=True)
     current = (round(rq.look_glow, 2), round(rq.look_contrast, 2), round(rq.look_vignette, 2))
     for name, values in PRESETS.items():
-        row.operator(RS_OT_look_preset.bl_idname, text=name, depress=current == values).name = name
+        row.operator(STUDIO_OT_look_preset.bl_idname, text=name, depress=current == values).name = name
     col = box.column(align=True)
     col.prop(rq, "look_glow", slider=True)
     col.prop(rq, "look_contrast", slider=True)

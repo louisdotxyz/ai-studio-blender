@@ -36,7 +36,7 @@ def _user_resolution(scene, cam):
     """Resolution `cam` renders with, from the user's settings (not the running render's)."""
     if sync.has_own_format(cam):
         return sync.camera_resolution(cam)
-    rq = scene.render_studio
+    rq = scene.studio
     active = RUN.original("camera", scene.camera)
     if sync.has_own_format(active) and rq.base_resolution_x and rq.base_resolution_y:
         return (rq.base_resolution_x, rq.base_resolution_y)
@@ -120,12 +120,12 @@ STUDIO_TABS = (
 
 
 def studio_tab(context):
-    return getattr(context.window_manager, "render_studio_tab", 'RENDER')
+    return getattr(context.window_manager, "studio_tab", 'RENDER')
 
 
 class _SidebarPanel:
-    """All of Render Studio lives in one sidebar tab "Studio"; the switcher on top
-    (RS_PT_tabs) picks which panel is shown."""
+    """All of AI Studio lives in one sidebar tab "Studio"; the switcher on top
+    (STUDIO_PT_tabs) picks which panel is shown."""
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Studio"
@@ -177,7 +177,7 @@ def tab_head(layout, menu, text, save=None, settings=None, icon='PRESET'):
 def section_open(key, default_open=True):
     import bpy
     wm = bpy.context.window_manager
-    toggled = set(filter(None, getattr(wm, "render_studio_sections", "").split("\n")))
+    toggled = set(filter(None, getattr(wm, "studio_sections", "").split("\n")))
     return default_open != (key in toggled)
 
 
@@ -187,7 +187,7 @@ def subsection(layout, key, text, default_open=False):
     row = layout.row(align=True)
     row.alignment = 'LEFT'
     row.emboss = 'NONE'
-    row.operator("render_studio.section_toggle", text=text,
+    row.operator("studio.section_toggle", text=text,
                  icon='DOWNARROW_HLT' if is_open else 'RIGHTARROW').key = key
     return is_open
 
@@ -201,7 +201,7 @@ def section(layout, key, text, icon, default_open=True):
     left = head.row(align=True)
     left.alignment = 'LEFT'
     left.emboss = 'NONE'
-    left.operator("render_studio.section_toggle", text=text,
+    left.operator("studio.section_toggle", text=text,
                   icon='DOWNARROW_HLT' if is_open else 'RIGHTARROW').key = key
     title_icon = left.row(align=True)
     title_icon.label(text="", icon=icon)

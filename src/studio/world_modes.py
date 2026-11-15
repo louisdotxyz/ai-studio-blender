@@ -37,13 +37,13 @@ def _folder():
 
 
 def _file(scene, kind):
-    name = core.safe_name(core.project_name(name=scene.render_studio.output_name) or "Scene")
+    name = core.safe_name(core.project_name(name=scene.studio.output_name) or "Scene")
     return os.path.join(_folder(), "%s %s.hdr" % (name, kind))
 
 
 def _write(scene, spec, kind):
     """Renders the spec into this scene's own file (overwritten every time) and uses it as the World."""
-    rs = scene.render_studio
+    rs = scene.studio
     path = _file(scene, kind)
     hdri_gen.save_hdr(hdri_gen.render_pixels(hdri_gen.parse_world(spec)), path)
     strength = hdri.get_strength(rs) if hdri.current_path(scene) else 1.0
@@ -58,7 +58,7 @@ def _write(scene, spec, kind):
 # ------------------------------------------------------------------ Studio
 
 def ensure_pins(scene):
-    rs = scene.render_studio
+    rs = scene.studio
     if len(rs.hdri_pins):
         return
     for name, h, v, w, hgt, strength, soft, shape in DEFAULT_PINS:
@@ -72,7 +72,7 @@ def ensure_pins(scene):
 
 
 def studio_spec(scene, resolution=LIVE_RESOLUTION):
-    rs = scene.render_studio
+    rs = scene.studio
     color = list(rs.studio_color)
     return {
         "name": "Studio", "resolution": resolution, "strength": rs.studio_ambient,
@@ -90,7 +90,7 @@ def apply_studio(scene, resolution=LIVE_RESOLUTION):
 
 def face_camera(scene):
     """Turn the generated World so its front (pin at 0°) is where the camera is."""
-    rs = scene.render_studio
+    rs = scene.studio
     center, _radius = lights.subject(scene, rs.light_orbit_target)
     hdri.set_rotation(rs, hdri_gen.FRONT - lights.front_angle(scene, center))
 
@@ -98,14 +98,14 @@ def face_camera(scene):
 def pin_direction(scene, pin):
     """World direction a pin shines from (unit vector, from the product towards the light)."""
     from mathutils import Vector
-    a = hdri_gen.FRONT + pin.horizontal - hdri.get_rotation(scene.render_studio)
+    a = hdri_gen.FRONT + pin.horizontal - hdri.get_rotation(scene.studio)
     return Vector((math.cos(pin.vertical) * math.cos(a), math.cos(pin.vertical) * math.sin(a), math.sin(pin.vertical)))
 
 
 def set_pin_direction(scene, pin, direction):
     d = direction.normalized()
     world_angle = math.atan2(d.y, d.x)
-    h = world_angle - hdri_gen.FRONT + hdri.get_rotation(scene.render_studio)
+    h = world_angle - hdri_gen.FRONT + hdri.get_rotation(scene.studio)
     pin.horizontal = (h + math.pi) % (2 * math.pi) - math.pi
     pin.vertical = math.asin(max(-1.0, min(1.0, d.z)))
 
@@ -126,7 +126,7 @@ def _mix(a, b, t):
 
 def sky_spec(scene, resolution=LIVE_RESOLUTION):
     """A simple sky for this time of day (used without the atmosphere add-on)."""
-    rs = scene.render_studio
+    rs = scene.studio
     elevation, azimuth = sun_position(rs.sky_time)
     day = max(0.0, min(1.0, math.degrees(elevation) / 25.0))             # 0 at the horizon, 1 from 25° up
     dusk = max(0.0, min(1.0, (math.degrees(elevation) + 8.0) / 8.0))      # 0 = night, 1 = sun at the horizon
@@ -151,9 +151,9 @@ def atmosphere_available():
 
 
 def apply_sky(scene):
-    """The sky for scene.render_studio.sky_time. Returns "atmosphere" or "generated"."""
+    """The sky for scene.studio.sky_time. Returns "atmosphere" or "generated"."""
     from . import addons
-    rs = scene.render_studio
+    rs = scene.studio
     elevation, azimuth = sun_position(rs.sky_time)
     if atmosphere_available() and scene.world is not None:
         try:
@@ -188,7 +188,7 @@ def _apply_pending():
     if scene is None:
         return None
     try:
-        mode = scene.render_studio.world_mode
+        mode = scene.studio.world_mode
         if mode == 'STUDIO':
             apply_studio(scene)
         elif mode == 'SKY' and sky:
@@ -209,17 +209,17 @@ def _schedule(scene, sky=False):
 
 def on_change(scene):
     """A pin or the ambient changed."""
-    if isinstance(scene, bpy.types.Scene) and scene.render_studio.world_mode == 'STUDIO':
+    if isinstance(scene, bpy.types.Scene) and scene.studio.world_mode == 'STUDIO':
         _schedule(scene)
 
 
 def on_sky(scene):
-    if scene.render_studio.world_mode == 'SKY':
+    if scene.studio.world_mode == 'SKY':
         _schedule(scene, sky=True)
 
 
 def on_mode(scene):
-    rs = scene.render_studio
+    rs = scene.studio
     try:
         if rs.world_mode != 'SKY':
             leave_sky(scene)

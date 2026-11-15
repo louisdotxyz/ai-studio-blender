@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Keeps the Render tab of the sidebar for Render Studio.
+"""Keeps the Render tab of the sidebar for AI Studio.
 
 The Render Raw extension puts its panels (Color Management …) into a sidebar
 tab that is also called "Render". Those panels are moved into their own tab
 "Render Raw" (re-registered with another bl_category, children first) and moved
-back when Render Studio is disabled.
+back when AI Studio is disabled.
 """
 
 import bpy
@@ -63,7 +63,7 @@ def move_render_raw():
     try:
         _reregister(classes, NEW_TAB)
     except Exception as ex:
-        print("Render Studio: could not move the Render Raw panels:", ex)
+        print("AI Studio: could not move the Render Raw panels:", ex)
         return 0
     _moved.extend(c for c in classes if c not in _moved)
     return len(classes)
@@ -76,7 +76,7 @@ def restore():
         if classes:
             _reregister(classes, TAB)
     except Exception as ex:
-        print("Render Studio: could not move the Render Raw panels back:", ex)
+        print("AI Studio: could not move the Render Raw panels back:", ex)
 
 
 def _later():
@@ -90,7 +90,7 @@ def _on_load_post(*_args):
 
 
 def register():
-    # After all add-ons are enabled (Render Raw may come after Render Studio).
+    # After all add-ons are enabled (Render Raw may come after AI Studio).
     bpy.app.timers.register(_later, first_interval=1.0)
     if _on_load_post not in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.append(_on_load_post)

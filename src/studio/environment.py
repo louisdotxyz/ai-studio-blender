@@ -106,7 +106,7 @@ def remove_floor():
 def build_floor(scene):
     """Builds (or rebuilds) the floor or cove under the product, its back wall facing away from the
     camera. NONE removes it."""
-    rs = scene.render_studio
+    rs = scene.studio
     if rs.floor_mode == 'NONE':
         remove_floor()
         return None
@@ -155,7 +155,7 @@ def on_floor_look(settings, context):
     obj = bpy.data.objects.get(FLOOR_NAME)
     if obj is None:
         return
-    rs = context.scene.render_studio
+    rs = context.scene.studio
     if obj.data.materials:
         obj.data.materials[0] = _floor_material(rs)
     obj.is_shadow_catcher = rs.floor_shadow_catcher
@@ -172,7 +172,7 @@ def _world_output(world):
 
 def apply_haze(scene):
     """Volume scatter in the whole World: haze that makes light beams visible. 0 removes it."""
-    rs = scene.render_studio
+    rs = scene.studio
     world = scene.world
     out = _world_output(world)
     if out is None:
@@ -238,14 +238,14 @@ def sun_from_hdri(scene):
     image = _env_image(scene)
     if image is None:
         raise ValueError("The World has no HDRI image")
-    direction, color = brightest_direction(image, hdri.get_rotation(scene.render_studio))
+    direction, color = brightest_direction(image, hdri.get_rotation(scene.studio))
     if direction.z < -0.05:
         raise ValueError("The brightest spot of this HDRI is below the horizon")
     peak = max(color) or 1.0
     name = cameras.scheme_name('LIGHT', 'SUN', "Sun")
     data = bpy.data.lights.new(name, 'SUN')
     data.color = [c / peak for c in color]
-    data.energy = lights.SUN_STRENGTH * max(0.5, min(3.0, scene.render_studio.world_strength))
+    data.energy = lights.SUN_STRENGTH * max(0.5, min(3.0, scene.studio.world_strength))
     data.angle = math.radians(1.5)
     obj = bpy.data.objects.new(name, data)
     lights.light_collection(scene).objects.link(obj)
@@ -458,7 +458,7 @@ def add_flag(scene, light, pattern='FLAG'):
     old = flag_of(light)
     if old is not None:
         remove_flag(light)
-    target = lights.light_target(light, scene.render_studio)
+    target = lights.light_target(light, scene.studio)
     center = target.matrix_world.translation if target is not None and target != light else scene.cursor.location
     distance = max((center - light.matrix_world.translation).length, 0.2)
     size = light.data.size * 1.5 if light.data.type == 'AREA' else distance * 0.4
@@ -617,7 +617,7 @@ def scene_preset(name):
 
 def capture(scene, name):
     """The whole environment as a preset: lights, World, background, floor, haze, look."""
-    rs = scene.render_studio
+    rs = scene.studio
     preset = {"name": name}
     try:
         preset["lights"] = lights.setup_from_scene(scene, rs.light_orbit_target, name)
@@ -648,7 +648,7 @@ def save_scene(scene, name):
     presets[name] = capture(scene, name)
     with open(_scenes_file(), "w", encoding="utf-8") as f:
         json.dump(presets, f, indent=1)
-    scene.render_studio.scene_preset = name
+    scene.studio.scene_preset = name
     return name
 
 
@@ -665,13 +665,13 @@ def apply_scene(scene, name):
     if preset is None:
         raise ValueError("No scene preset %r" % name)
     notes = apply_preset(scene, preset)
-    scene.render_studio.scene_preset = name
+    scene.studio.scene_preset = name
     return notes
 
 
 def apply_preset(scene, preset):
     """Applies preset data (a scene preset or a look, looks.py). Returns notes for the user."""
-    rs = scene.render_studio
+    rs = scene.studio
     notes = []
     spec = preset.get("lights")
     if isinstance(spec, str):

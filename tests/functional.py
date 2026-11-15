@@ -145,7 +145,7 @@ def preview_through_worker():
 @section
 def orbit_and_top_view():
     scene = bpy.context.scene
-    rq, cam = scene.render_studio, scene.camera
+    rq, cam = scene.studio, scene.camera
     rq.orbit_target = None
     scene.cursor.location = (1, 2, 0)
     rq.orbit_vertical = math.radians(90)
@@ -185,12 +185,12 @@ def orbit_and_top_view():
     rq.orbit_side_offset = rq.orbit_up_offset = 0.0
     rq.orbit_horizontal, rq.orbit_vertical, rq.orbit_distance = math.radians(30), math.radians(20), 2.0
     cam.data.type = 'PERSP'
-    bpy.ops.render_studio.toggle_ortho()
+    bpy.ops.studio.toggle_ortho()
     sensor = cam.data.sensor_width
     check("to ortho: the framing stays (scale from the distance)", cam.data.type == 'ORTHO'
           and abs(cam.data.ortho_scale - 2.0 * sensor / cam.data.lens) < 1e-4, cam.data.ortho_scale)
     cam.data.ortho_scale *= 2
-    bpy.ops.render_studio.toggle_ortho()
+    bpy.ops.studio.toggle_ortho()
     check("back to perspective: distance from the ortho scale", cam.data.type == 'PERSP'
           and abs(rq.orbit_distance - 4.0) < 1e-3, rq.orbit_distance)
 
@@ -221,9 +221,9 @@ def material_library():
     kind_items = [m for g, items in lib.items() if g not in (tab.FAVORITES_GROUP, tab.RECENT_GROUP)
                   for m, _s in items]
     check("library view: only base copies", all(m.get(tab.BASE_KEY) for m in kind_items), list(lib))
-    bpy.ops.render_studio.material_new()
+    bpy.ops.studio.material_new()
     check("new plain material", cube.active_material is not None and cube.active_material.name.startswith("Material"))
-    bpy.ops.render_studio.material_assign(name="18DS115 | Gummi")
+    bpy.ops.studio.material_assign(name="18DS115 | Gummi")
     check("assign from library", cube.active_material.name == "18DS115 | Gummi")
     check("recent: the assigned one first", tab.recent()[:1] == ["18DS115 | Gummi"], tab.recent()[:3])
     recent = dict(tab._library_groups()).get(tab.RECENT_GROUP, [])
@@ -234,7 +234,7 @@ def material_library():
 def material_presets():
     cube = bpy.data.objects["Cube"]
     bpy.context.view_layer.objects.active = cube
-    bpy.ops.render_studio.material_new(preset="Chrome")
+    bpy.ops.studio.material_new(preset="Chrome")
     node = mod("studio").matpresets._principled(cube.active_material)
     check("new material from preset", node is not None and node.inputs["Metallic"].default_value == 1.0,
           cube.active_material.name)
@@ -331,7 +331,7 @@ def environment_tab():
     env = mod("studio.environment")
     api = mod("studio.api")
     scene = bpy.context.scene
-    rs = scene.render_studio
+    rs = scene.studio
     cube = bpy.data.objects["Cube"]
     low = min((cube.matrix_world @ Vector(c)).z for c in cube.bound_box)
     obj = api.floor("COVE", color=(0.8, 0.8, 0.8))
@@ -401,7 +401,7 @@ def environment_tab():
 @section
 def light_placing_and_worlds():
     scene = bpy.context.scene
-    rs = scene.render_studio
+    rs = scene.studio
     paint, modes, env = mod("studio.light_paint"), mod("studio.world_modes"), mod("studio.environment")
     view, normal = Vector((0, 1, 0)), Vector((0, -1, 0))
     check("click placing: reflection straight back, light along the normal",
@@ -463,7 +463,7 @@ def light_placing_and_worlds():
 @section
 def light_list_map_looks():
     scene = bpy.context.scene
-    rs = scene.render_studio
+    rs = scene.studio
     items, paint = mod("studio.light_items"), mod("studio.light_paint")
     looks, env, api, lights_mod = mod("studio.looks"), mod("studio.environment"), mod("studio.api"), mod("studio.lights")
     deg = math.degrees
@@ -512,7 +512,7 @@ def light_list_map_looks():
           and abs(deg(items.angles(scene, twin)[0]) + 40) < 0.01)
     items.remove(scene, twin)
     # the same few values for every light
-    own = key.render_studio_light
+    own = key.studio_light
     key.data.shape = 'RECTANGLE'
     key.data.size, key.data.size_y = 1.0, 0.5
     own.size = 2.0
@@ -539,7 +539,7 @@ def light_list_map_looks():
     eye = key.matrix_world.translation
     check("click placing: light, product and shadow spot in one line",
           (spot - eye).normalized().angle((center - eye).normalized()) < 1e-3 and abs((eye - center).length - 2.0) < 1e-4)
-    keys = paint.RS_WT_light_place.bl_keymap
+    keys = paint.STUDIO_WT_light_place.bl_keymap
     check("place tool: click, Ctrl + click (new light) and the wheel", len(keys) == 8
           and keys[0][1] == {"type": 'LEFTMOUSE', "value": 'PRESS'} and keys[1][2]["properties"] == [("new", True)])
     items.select(scene, ('PIN', 0))
@@ -705,7 +705,7 @@ def material_structures():
 @section
 def tabs_unified():
     scene = bpy.context.scene
-    rs = scene.render_studio
+    rs = scene.studio
     kinds, presets, api, tab = mod("studio.matkinds"), mod("studio.matpresets"), mod("studio.api"), mod("studio.tab_material")
     cams, look, lights_mod = mod("studio.cameras"), mod("studio.look"), mod("studio.lights")
     # material kinds: what the kind fixes, and only the controls that fit
@@ -757,7 +757,7 @@ def tabs_unified():
     rs.look_glow = 0.3
     check("look: saturation and glow in one chain", tree.nodes.get(look.GLOW) is not None
           and tree.nodes[look.GLOW].inputs["Image"].links[0].from_node == tree.nodes[look.SATURATION])
-    bpy.ops.render_studio.look_reset()
+    bpy.ops.studio.look_reset()
     tree = bg.compositor_tree(scene)
     check("look reset: nothing of ours left", rs.look_saturation == 1.0 and scene.view_settings.exposure == 0.0
           and (tree is None or not [n for n in tree.nodes if n.name.startswith(look.PREFIX)]))
@@ -930,9 +930,9 @@ def chat_queue_finish_wear():
           and abs(node.inputs["Scratches"].default_value - 0.6) < 1e-6 and abs(node.inputs["Roughness"].default_value - 0.3) < 1e-6)
     bpy.data.materials.remove(mat)
     # format row: the aspect ratio
-    rs = bpy.context.scene.render_studio
+    rs = bpy.context.scene.studio
     keep = (bpy.context.scene.render.resolution_x, bpy.context.scene.render.resolution_y)
-    bpy.ops.render_studio.set_aspect(x=3, y=4)
+    bpy.ops.studio.set_aspect(x=3, y=4)
     check("format: 3 : 4 sets the picture", (rs.aspect_x, rs.aspect_y) == (3, 4)
           and bpy.context.scene.render.resolution_x * 4 == bpy.context.scene.render.resolution_y * 3,
           (bpy.context.scene.render.resolution_x, bpy.context.scene.render.resolution_y))
@@ -944,7 +944,7 @@ def chat_queue_finish_wear():
     rs.look_saturation, rs.look_glow = 1.0, 0.0
     finish.apply_look(bpy.context.scene, data)
     check("finish: a look comes back", abs(rs.look_saturation - 0.7) < 1e-6 and abs(rs.look_glow - 0.2) < 1e-6)
-    bpy.ops.render_studio.look_reset()
+    bpy.ops.studio.look_reset()
 
 
 def _raises(func):
@@ -1060,8 +1060,8 @@ def krea_plan_scale_mask():
     krea.upload_to = lambda url, path, fields=None: uploads.append(path) or "https://assets/%d.png" % len(uploads)
     finish.current_image = lambda _scene: render
     wm = bpy.context.window_manager
-    wm.render_studio_krea_model, wm.render_studio_krea_refs = 'AUTO', ""
-    wm.render_studio_krea_zoom = wm.render_studio_krea_view = 'KEEP'
+    wm.studio_krea_model, wm.studio_krea_refs = 'AUTO', ""
+    wm.studio_krea_zoom = wm.studio_krea_view = 'KEEP'
     try:
         p = finish.prepare(scene, "A hand holds the pod", "https://upload/presigned", protect=True)
         check("krea plan: prepare uploads render and mask", p["model"] == "ideogram/ideogram-4.5-precise"
@@ -1101,7 +1101,7 @@ def krea_plan_scale_mask():
 def finish_image_adjust():
     import numpy as np
     edit = mod("studio.image_edit")
-    rs = bpy.context.scene.render_studio
+    rs = bpy.context.scene.studio
     # dark gray, light gray, gray, a red: one row
     px = np.array([0.1, 0.1, 0.1, 1, 0.9, 0.9, 0.9, 1, 0.5, 0.5, 0.5, 1, 0.8, 0.2, 0.2, 1], dtype=np.float32)
     zero = {k: 0.0 for k in edit.KEYS}
@@ -1142,7 +1142,7 @@ def finish_image_adjust():
     value = saved.pixels[0]
     bpy.data.images.remove(saved)
     check("adjust: the saved image is brighter", value > 0.55, value)
-    bpy.ops.render_studio.edit_reset()
+    bpy.ops.studio.edit_reset()
     check("adjust: reset", edit.is_neutral(edit.values(scene)))
     check("adjust: look, Krea and adjustments in Finish, not in the camera tab",
           "draw_look(layout, context)" in open(mod("studio.tab_finish").__file__).read()
@@ -1185,7 +1185,7 @@ def variants_size_material_open():
         ab.remove(scene, 'CAMERA')
         cam.matrix_world, cam.data.lens = keep_matrix, keep_lens
     # render size: 1K/2K/4K on the long side, it stays when the ratio changes
-    rq = scene.render_studio
+    rq = scene.studio
     keep = (scene.render.resolution_x, scene.render.resolution_y, scene.render.resolution_percentage, rq.quality)
     rq.aspect_x, rq.aspect_y = 3, 4
     size.set_long_side(scene, 2048)
@@ -1216,11 +1216,11 @@ def variants_size_material_open():
         bpy.data.objects.remove(obj)
     # Krea: pressed buttons and the typed wish, several pictures, the place or a reference
     wm = bpy.context.window_manager
-    wm.render_studio_krea_hand, wm.render_studio_krea_prompt = True, "on a wooden table"
+    wm.studio_krea_hand, wm.studio_krea_prompt = True, "on a wooden table"
     text = finish.wish(wm)
     check("krea: buttons and text make the wish", text.startswith("Add a realistic adult hand") and
-          text.endswith("on a wooden table.") and not wm.render_studio_krea_protect)
-    wm.render_studio_krea_hand, wm.render_studio_krea_prompt, wm.render_studio_krea_protect = False, "", True
+          text.endswith("on a wooden table.") and not wm.studio_krea_protect)
+    wm.studio_krea_hand, wm.studio_krea_prompt, wm.studio_krea_protect = False, "", True
     body = krea.request_body('PRECISE', "x", "https://r", 400, 300, ["https://a", "https://b", "https://c", "https://d"],
                              mask_url="https://m", room=False)
     check("krea: pictures as references (three with a mask), not as a place",
@@ -1230,16 +1230,16 @@ def variants_size_material_open():
           and krea.ENV_TEXT.strip() in nano["prompt"])
     check("krea: a place picture with Room needs the free model", krea.pick_model('AUTO', True) == 'NANO'
           and krea.pick_model('AUTO', False) == 'PRECISE')
-    bpy.ops.render_studio.krea_frame(target="zoom", value='CLOSER')
-    first = wm.render_studio_krea_zoom
-    bpy.ops.render_studio.krea_frame(target="zoom", value='CLOSER')
-    check("krea: camera buttons switch on and off", first == 'CLOSER' and wm.render_studio_krea_zoom == 'KEEP')
+    bpy.ops.studio.krea_frame(target="zoom", value='CLOSER')
+    first = wm.studio_krea_zoom
+    bpy.ops.studio.krea_frame(target="zoom", value='CLOSER')
+    check("krea: camera buttons switch on and off", first == 'CLOSER' and wm.studio_krea_zoom == 'KEEP')
 
 
 @section
 def shots_presets_check():
     scene = bpy.context.scene
-    rs = scene.render_studio
+    rs = scene.studio
     io = mod("studio.presets_io")
     env = mod("studio.environment")
     env.save_scene(scene, "IO Scene")
@@ -1265,7 +1265,7 @@ def shots_presets_check():
     bpy.data.images.remove(img)
     cam = next(o for o in scene.objects if o.type == 'CAMERA')
     scene.camera = cam
-    bpy.ops.render_studio.shot_add()
+    bpy.ops.studio.shot_add()
     shot = rs.shots[-1]
     shot.scene_preset, shot.variant, shot.quality = "Studio White", "", 'LOW'
     before = len(rs.items)
@@ -1394,10 +1394,10 @@ def draft_before_the_render():
     scene.render.resolution_x, scene.render.resolution_y, scene.cycles.samples = 1280, 960, 40
     log_path = os.path.join(runner.jobs_dir(), "..", "queue.log")
     mark = log_mark(runner)
-    rq = scene.render_studio
+    rq = scene.studio
     rq.items.clear()
     rq.quality = 'HIGH'
-    bpy.ops.render_studio.add()
+    bpy.ops.studio.add()
     seen, live = [], []
     runner.on_render_saved.append(lambda path, *_a: seen.append(path))
     runner.on_live_image.append(live.append)
@@ -1412,7 +1412,7 @@ def draft_before_the_render():
     check("live preview: the draft, then the image", len(live) >= 2 and "draft_" in live[0]
           and live[-1] == seen[0], live)
     worker_log = open(runner.worker_log_path(), encoding="utf-8").read()
-    check("worker on the GPU without set-up devices", "RS devices: METAL" in worker_log, worker_log[:300])
+    check("worker on the GPU without set-up devices", "W devices: METAL" in worker_log, worker_log[:300])
     image = runner.show_in_preview(seen[0])
     size = tuple(image.preview.image_size)
     check("sharp preview, not Blender's 256 px", 256 < max(size) <= runner.PREVIEW_SIZE and size[0] * 3 == size[1] * 4,
@@ -1430,7 +1430,7 @@ def worker_matches_blender():
     scene = small_scene()
     scene.cycles.samples, scene.cycles.use_denoising = 64, True
     scene.render.film_transparent = False
-    rq = scene.render_studio
+    rq = scene.studio
     keep = (scene.view_settings.view_transform, scene.view_settings.look, scene.view_settings.exposure,
             rq.still_format, rq.quality)
     rq.quality, rq.background_mode = 'HIGH', 'NORMAL'
@@ -1456,7 +1456,7 @@ def worker_matches_blender():
             scene.render.filepath = local
             bpy.ops.render.render(write_still=True)
             rq.items.clear()
-            bpy.ops.render_studio.add()
+            bpy.ops.studio.add()
             seen = []
             runner.on_render_saved.append(lambda path, *_a: seen.append(path))
             try:
@@ -1566,10 +1566,10 @@ def short_names():
     check("rename in the studio: the word is enough", cams.rename(made[3], "Seite") == "P_side_01"
           and made[3].data.name == "P_side_01")
     check("rename: a name in the scheme stays", cams.rename(made[3], "P_side_07") == "P_side_07")
-    made[3].render_studio_camera.short_name = "detail"
+    made[3].studio_camera.short_name = "detail"
     check("rename field of the Render tab", made[3].name == "P_detail_01", made[3].name)
     scene.camera = made[2]
-    bpy.ops.render_studio.duplicate_camera()
+    bpy.ops.studio.duplicate_camera()
     copy = scene.camera
     check("duplicate camera: next number, not .001", copy.name == "O_top_02" and copy.data.name == "O_top_02",
           copy.name)
@@ -1592,17 +1592,17 @@ def short_names():
         bpy.data.collections.new(old)
     cams.rename_old_collections()
     check("collections without AS_", all(n in bpy.data.collections for n in
-                                         ("Camera", "Camera | Packshot", "Archive V2", "Set")),
+                                         ("Camera", "Camera | Packshot", "Archiv V2", "Set")),
           [c.name for c in bpy.data.collections])
-    for name in ("Camera | Packshot", "Archive V2", "Set"):
+    for name in ("Camera | Packshot", "Archiv V2", "Set"):
         bpy.data.collections.remove(bpy.data.collections[name])
     # 1 mm steps
-    rna = bpy.types.RS_Settings.bl_rna.properties if hasattr(bpy.types, "RS_Settings") else scene.render_studio.bl_rna.properties
+    rna = bpy.types.STUDIO_Settings.bl_rna.properties if hasattr(bpy.types, "STUDIO_Settings") else scene.studio.bl_rna.properties
     check("camera lengths in 1 mm steps", all(abs(rna[k].step - 0.05) < 1e-6 for k in
           ("orbit_distance", "orbit_height", "orbit_side_offset", "cam_ortho_scale", "cam_focus_distance",
            "cam_clip_start", "cam_clip_end", "light_orbit_distance")))
     scene.camera = made[2]
-    scene.render_studio.cam_ortho_scale = 1.234
+    scene.studio.cam_ortho_scale = 1.234
     check("ortho scale field sets the camera", abs(made[2].data.ortho_scale - 1.234) < 1e-6)
     for obj in made + [copy, light, key]:
         bpy.data.objects.remove(obj)
@@ -1653,10 +1653,10 @@ def worker_reloads_the_file():
         worker.start(scene, 902, "Camera")   # the scene changed: the same Blender opens a fresh copy
         end = time.monotonic() + 60
         text = ""
-        while time.monotonic() < end and text.count("RS loaded") < 2:
+        while time.monotonic() < end and text.count("W loaded") < 2:
             time.sleep(0.3)
             text = open(runner.worker_log_path(), encoding="utf-8", errors="replace").read()
-        check("worker opens new copies itself", text.count("RS loaded") == 2 and worker.proc.pid == pid
+        check("worker opens new copies itself", text.count("W loaded") == 2 and worker.proc.pid == pid
               and worker.alive(), text[-400:])
     finally:
         worker.stop()
@@ -1677,10 +1677,10 @@ def material_groups():
         obj[tab.GROUP_KEY] = "g1"   # linked with the eyedropper
     bpy.ops.object.select_all(action='DESELECT')
     bpy.context.view_layer.objects.active = objects[0]
-    bpy.ops.render_studio.material_duplicate()
+    bpy.ops.studio.material_duplicate()
     a, b, c = (o.active_material for o in objects)
     check("duplicate changes the whole group", a is b and a is not material and c is material)
-    bpy.ops.render_studio.material_unlink()
+    bpy.ops.studio.material_unlink()
     check("unlink takes one object out", objects[0].active_material is not b
           and tab.GROUP_KEY not in objects[0] and objects[1].active_material is b)
     for obj in objects:
@@ -1700,13 +1700,13 @@ def library_click_switches_everywhere():
     objects[1].data.materials.append(old)   # a second slot with the same material
     bpy.ops.object.select_all(action='DESELECT')
     bpy.context.view_layer.objects.active = objects[0]
-    bpy.ops.render_studio.material_assign(name=new.name)
+    bpy.ops.studio.material_assign(name=new.name)
     slots = [s.material for o in objects for s in o.material_slots]
     check("library click switches every object with the old material",
           slots == [new, new, new, other] and old.use_fake_user, slots)
-    bpy.ops.render_studio.material_assign(name=old.name)
+    bpy.ops.studio.material_assign(name=old.name)
     check("and back", [s.material for s in objects[1].material_slots] == [old, old])
-    bpy.ops.render_studio.material_assign(name=other.name, only_selected=True)
+    bpy.ops.studio.material_assign(name=other.name, only_selected=True)
     check("shift: only the active object", objects[0].active_material == other
           and objects[1].active_material == old)
     # Without an active object the last material stays the current one.
@@ -1714,15 +1714,15 @@ def library_click_switches_everywhere():
     bpy.ops.object.select_all(action='DESELECT')
     tab = mod("studio").tab_material
     tab.remember(old)
-    bpy.ops.render_studio.material_assign(name=new.name)
+    bpy.ops.studio.material_assign(name=new.name)
     check("switch without selecting an object", objects[1].active_material == new
           and tab.current_material(bpy.context) == new)
-    bpy.ops.render_studio.material_variant()
+    bpy.ops.studio.material_variant()
     variant = objects[1].active_material
     check("color variant replaces it everywhere", variant.name == "Holz B V2"
           and [s.material for s in objects[1].material_slots] == [variant, variant] and new.use_fake_user,
           variant.name)
-    bpy.ops.render_studio.material_select(name=variant.name)
+    bpy.ops.studio.material_select(name=variant.name)
     check("select the objects of a material", {o.name for o in bpy.context.selected_objects} == {"sw1"}
           and bpy.context.active_object == objects[1],
           ([o.name for o in bpy.context.selected_objects], bpy.context.active_object, bpy.context.mode))
@@ -1731,7 +1731,7 @@ def library_click_switches_everywhere():
     check("search and favorites", [m.name for m, _s in groups.get(tab.FAVORITES_GROUP, [])] == ["Holz A"]
           and "Alu" not in {m.name for items in groups.values() for m, _s in items}, list(groups))
     unused = {m.name for m in tab.unused_materials()}
-    bpy.ops.render_studio.material_clean_unused()
+    bpy.ops.studio.material_clean_unused()
     check("remove unused keeps favorites", "Holz B" in unused and "Holz A" not in unused
           and "Holz B" not in bpy.data.materials and "Holz A" in bpy.data.materials, unused)
     tab.toggle_favorite("Holz A")
@@ -2080,7 +2080,7 @@ def feedback_tools():
     cam.location.x += 1
     check("moving a camera does not reload", runner.scene_content(scene) == moved)
     # compositor look
-    rq = scene.render_studio
+    rq = scene.studio
     rq.look_glow, rq.look_vignette = 0.4, 0.5
     tree = studio.background.compositor_tree(scene)
     names = {n.name for n in tree.nodes}
@@ -2356,6 +2356,36 @@ def render_review_stars():
     check("stars: kept, sorted, toggled off", review.rating(two) == 4 and review.rating(one) == 0
           and order == [two, one] and rated == [two], (order, rated))
     check("refined version: kind and its render", review.refined_kind(two) == "krea" and review.source_of(two) == one)
+
+
+@section
+def three_zero():
+    """3.0: old settings move to the new names, the six fixed collections, a film's progress text."""
+    migrate, cams, film = mod("studio.migrate"), mod("studio.cameras"), mod("studio.film")
+    scene = bpy.context.scene
+    keep = scene.studio.film_parts
+    scene["render_studio"] = {"film_parts": 7}
+    migrate.run()
+    check("old scene settings taken over", scene.studio.film_parts == 7 and "render_studio" not in scene.keys(),
+          scene.studio.film_parts)
+    scene.studio.film_parts = keep
+    old = bpy.data.collections.new("AS_lights")
+    temp = bpy.data.collections.new("temp")
+    scene.collection.children.link(old)
+    scene.collection.children.link(temp)
+    had_light = bpy.data.collections.get("Light") is not None
+    had_temp = bpy.data.collections.get("TEMP") is not None
+    cams.rename_old_collections()
+    check("collections: fixed names", (had_light or old.name == "Light") and (had_temp or temp.name == "TEMP")
+          and cams.archive_collection_name() == "Archiv" and cams.object_collection_name() == "Object",
+          (old.name, temp.name))
+    for coll in (old, temp):
+        if coll.name not in ("Light", "TEMP"):
+            bpy.data.collections.remove(coll)
+    st = {"part": 2, "parts": 4, "done": 250, "total": 960, "per_frame": 2.0}
+    line = film.text({"label": "P_front"}, st, 'RENDERING')
+    check("film: part, frames and time left", "Part 2/4" in line and "250/960" in line and "left" in line
+          and abs(film.progress(st) - 250 / 960) < 1e-6, line)
 
 
 ok = all(results)

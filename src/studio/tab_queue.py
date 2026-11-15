@@ -16,18 +16,18 @@ from .ui_common import (QUEUE_TAB_ORDER, SCALE_PRESETS, _SidebarPanel, _item_pro
 from .runner import RUN
 
 
-class RS_OT_render_queue(Operator):
-    bl_idname = "render_studio.render_queue"
+class STUDIO_OT_render_queue(Operator):
+    bl_idname = "studio.render_queue"
     bl_label = "Render Queue"
     bl_description = ("Renders the entries left in the list one after another in a second Blender "
                       "without a window. You can keep working meanwhile")
 
     @classmethod
     def poll(cls, context):
-        return not RUN.busy and any(i.camera for i in context.scene.render_studio.items)
+        return not RUN.busy and any(i.camera for i in context.scene.studio.items)
 
     def execute(self, context):
-        rq = context.scene.render_studio
+        rq = context.scene.studio
         ensure_uids(rq)
         try:
             RUN.start(context.scene, rq.quality, rq.mode == 'ANIM')   # defaults for entries from older files
@@ -37,8 +37,8 @@ class RS_OT_render_queue(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_cancel(Operator):
-    bl_idname = "render_studio.cancel"
+class STUDIO_OT_cancel(Operator):
+    bl_idname = "studio.cancel"
     bl_label = "Cancel"
     bl_description = "Cancel the queue (Shift+Esc). The current render stops right away and is not saved"
 
@@ -51,8 +51,8 @@ class RS_OT_cancel(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_add(Operator):
-    bl_idname = "render_studio.add"
+class STUDIO_OT_add(Operator):
+    bl_idname = "studio.add"
     bl_label = "Add Camera"
     bl_description = ("Adds the active camera as it is now and renders it (⌘R High Quality, ⇧⌘R Low Quality, "
                       "⇧⌘E shows the image). The same camera can be added several times (move it in between)")
@@ -67,7 +67,7 @@ class RS_OT_add(Operator):
     batch: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})     # "Batch_03": into that folder, numbered
 
     def execute(self, context):
-        rq = context.scene.render_studio
+        rq = context.scene.studio
         # The camera bar's camera, not the viewport selection: cameras are usually
         # hidden, and hidden objects cannot be selected.
         cam = context.scene.objects.get(self.camera) if self.camera else active_camera(context.scene)
@@ -84,14 +84,16 @@ class RS_OT_add(Operator):
         item.quality = rq.quality if self.quality == 'DEFAULT' else self.quality
         item.mode = rq.mode
         item.batch = self.batch
-        cam.render_studio_camera.queue_count += 1
-        item.number = cam.render_studio_camera.queue_count
+        cam.studio_camera.queue_count += 1
+        item.number = cam.studio_camera.queue_count
         item.has_snapshot = True
         item.matrix = [v for row in cam.matrix_world for v in row]
         item.lens = cam.data.lens
         item.resolution_x, item.resolution_y = _user_resolution(scene, cam)
         item.percentage = scene.render.resolution_percentage
-        self.report({'INFO'}, "Render Studio: added %s" % runner.item_label(scene, item))
+        item.frame_start, item.frame_end = scene.frame_start, scene.frame_end
+        item.parts = rq.film_parts
+        self.report({'INFO'}, "AI Studio: added %s" % runner.item_label(scene, item))
         p = runner.prefs(context)
         if (p is None or p.auto_render) and not RUN.busy:
             try:
@@ -102,23 +104,23 @@ class RS_OT_add(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_clear(Operator):
-    bl_idname = "render_studio.clear"
+class STUDIO_OT_clear(Operator):
+    bl_idname = "studio.clear"
     bl_label = "Clear"
     bl_description = "Remove all cameras from the list. A running render is discarded"
     bl_options = {'UNDO'}
 
     @classmethod
     def poll(cls, context):
-        return len(context.scene.render_studio.items) > 0
+        return len(context.scene.studio.items) > 0
 
     def execute(self, context):
-        context.scene.render_studio.items.clear()
+        context.scene.studio.items.clear()
         return {'FINISHED'}
 
 
-class RS_OT_remove(Operator):
-    bl_idname = "render_studio.remove"
+class STUDIO_OT_remove(Operator):
+    bl_idname = "studio.remove"
     bl_label = "Remove"
     bl_description = "Remove from the list. If this entry is rendering right now, its image is not saved"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -126,14 +128,14 @@ class RS_OT_remove(Operator):
     index: IntProperty(options={'HIDDEN', 'SKIP_SAVE'})
 
     def execute(self, context):
-        items = context.scene.render_studio.items
+        items = context.scene.studio.items
         if 0 <= self.index < len(items):
             items.remove(self.index)
         return {'FINISHED'}
 
 
-class RS_OT_move(Operator):
-    bl_idname = "render_studio.move"
+class STUDIO_OT_move(Operator):
+    bl_idname = "studio.move"
     bl_label = "Move"
     bl_description = "Move up or down in the order"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -142,15 +144,15 @@ class RS_OT_move(Operator):
     direction: IntProperty(options={'HIDDEN', 'SKIP_SAVE'}, default=-1)
 
     def execute(self, context):
-        items = context.scene.render_studio.items
+        items = context.scene.studio.items
         target = self.index + self.direction
         if 0 <= self.index < len(items) and 0 <= target < len(items):
             items.move(self.index, target)
         return {'FINISHED'}
 
 
-class RS_OT_view_camera(Operator):
-    bl_idname = "render_studio.view_camera"
+class STUDIO_OT_view_camera(Operator):
+    bl_idname = "studio.view_camera"
     bl_label = "Look Through Camera"
     bl_description = "Makes the camera the active scene camera and looks through it"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -158,7 +160,7 @@ class RS_OT_view_camera(Operator):
     index: IntProperty(options={'HIDDEN', 'SKIP_SAVE'})
 
     def execute(self, context):
-        items = context.scene.render_studio.items
+        items = context.scene.studio.items
         if not (0 <= self.index < len(items)) or items[self.index].camera is None:
             return {'CANCELLED'}
         _look_through(context, items[self.index].camera)
@@ -188,8 +190,8 @@ def _selected_image(images):
     return images[0] if images else ""
 
 
-class RS_OT_preview_step(Operator):
-    bl_idname = "render_studio.preview_step"
+class STUDIO_OT_preview_step(Operator):
+    bl_idname = "studio.preview_step"
     bl_label = "Browse Renders"
     bl_description = "Older (◀) or newer (▶) image of the queue; the newest follows new renders"
     bl_options = {'INTERNAL'}
@@ -218,7 +220,7 @@ def _schedule_preview(path):
         try:
             runner.show_in_preview(path)
         except (RuntimeError, OSError) as ex:
-            print("Render Studio: preview failed:", ex)
+            print("AI Studio: preview failed:", ex)
         runner.tag_redraw()
         return None
     bpy.app.timers.register(load, first_interval=0.0)
@@ -233,7 +235,7 @@ def on_live_image(path):
     try:
         runner.show_in_preview(path)
     except (RuntimeError, OSError) as ex:
-        print("Render Studio: preview failed:", ex)
+        print("AI Studio: preview failed:", ex)
     runner.tag_redraw()
 
 
@@ -261,8 +263,8 @@ def _show_image_in_render_window(image):
                 area.tag_redraw()
 
 
-class RS_OT_show_render(Operator):
-    bl_idname = "render_studio.show_render"
+class STUDIO_OT_show_render(Operator):
+    bl_idname = "studio.show_render"
     bl_label = "View Render"
     bl_description = "Shows the image of the preview big in the render window, or hides it (⇧⌘E)"
 
@@ -307,8 +309,8 @@ def _title(path):
     return runner.variant_of(path) or os.path.splitext(os.path.basename(path))[0]
 
 
-class RS_OT_render_pick(Operator):
-    bl_idname = "render_studio.render_pick"
+class STUDIO_OT_render_pick(Operator):
+    bl_idname = "studio.render_pick"
     bl_label = "Render"
     bl_options = {'INTERNAL'}
 
@@ -329,8 +331,8 @@ class RS_OT_render_pick(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_render_ab(Operator):
-    bl_idname = "render_studio.render_ab"
+class STUDIO_OT_render_ab(Operator):
+    bl_idname = "studio.render_ab"
     bl_label = "A / B"
     bl_description = "Swap A and B, or clear both"
     bl_options = {'INTERNAL'}
@@ -345,8 +347,8 @@ class RS_OT_render_ab(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_render_rate(Operator):
-    bl_idname = "render_studio.render_rate"
+class STUDIO_OT_render_rate(Operator):
+    bl_idname = "studio.render_rate"
     bl_label = "Stars"
     bl_description = "Rate this render (the same star again: none); sort and filter by it below"
     bl_options = {'INTERNAL'}
@@ -364,8 +366,8 @@ class RS_OT_render_rate(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_render_arrange(Operator):
-    bl_idname = "render_studio.render_arrange"
+class STUDIO_OT_render_arrange(Operator):
+    bl_idname = "studio.render_arrange"
     bl_label = "Sort and Filter"
     bl_options = {'INTERNAL'}
 
@@ -382,8 +384,8 @@ class RS_OT_render_arrange(Operator):
         return {'FINISHED'}
 
 
-class RS_MT_render_arrange(Menu):
-    bl_idname = "RS_MT_render_arrange"
+class STUDIO_MT_render_arrange(Menu):
+    bl_idname = "STUDIO_MT_render_arrange"
     bl_label = "Sort and Filter"
 
     def draw(self, context):
@@ -391,19 +393,19 @@ class RS_MT_render_arrange(Menu):
         layout = self.layout
         layout.label(text="Sort")
         for key, label, icon in render_review.SORTS:
-            op = layout.operator(RS_OT_render_arrange.bl_idname, text=label, icon=icon,
+            op = layout.operator(STUDIO_OT_render_arrange.bl_idname, text=label, icon=icon,
                                  depress=render_review.state["sort"] == key)
             op.key, op.value = "sort", key
         layout.separator()
         layout.label(text="Show")
         for key, label, icon in render_review.FILTERS:
-            op = layout.operator(RS_OT_render_arrange.bl_idname, text=label, icon=icon,
+            op = layout.operator(STUDIO_OT_render_arrange.bl_idname, text=label, icon=icon,
                                  depress=render_review.state["filter"] == key)
             op.key, op.value = "filter", key
 
 
-class RS_OT_render_refine(Operator):
-    bl_idname = "render_studio.render_refine"
+class STUDIO_OT_render_refine(Operator):
+    bl_idname = "studio.render_refine"
     bl_label = "Refine"
     bl_description = "Open this render in the Refine tab: Krea, look and adjustments (the result comes back here)"
     bl_options = {'INTERNAL'}
@@ -413,12 +415,12 @@ class RS_OT_render_refine(Operator):
     def execute(self, context):
         if self.path:
             _view["path"] = self.path
-        context.window_manager.render_studio_tab = 'FINISH'
+        context.window_manager.studio_tab = 'FINISH'
         return {'FINISHED'}
 
 
-class RS_OT_render_reveal(Operator):
-    bl_idname = "render_studio.render_reveal"
+class STUDIO_OT_render_reveal(Operator):
+    bl_idname = "studio.render_reveal"
     bl_label = "Show in Finder"
     bl_description = "Show this render (or batch folder) in the Finder"
     bl_options = {'INTERNAL'}
@@ -437,8 +439,8 @@ class RS_OT_render_reveal(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_render_overview(Operator):
-    bl_idname = "render_studio.render_overview"
+class STUDIO_OT_render_overview(Operator):
+    bl_idname = "studio.render_overview"
     bl_label = "All Renders"
     bl_description = "Show all renders or only the newest"
     bl_options = {'INTERNAL'}
@@ -451,7 +453,7 @@ class RS_OT_render_overview(Operator):
 def _ab_button(row, path, slot):
     sub = row.row(align=True)
     sub.ui_units_x = 1.1
-    op = sub.operator(RS_OT_render_pick.bl_idname, text=slot, depress=_ab[slot] == path)
+    op = sub.operator(STUDIO_OT_render_pick.bl_idname, text=slot, depress=_ab[slot] == path)
     op.path, op.slot = path, slot
 
 
@@ -462,7 +464,7 @@ def _stars(row, path):
     sub = row.row(align=True)
     sub.emboss = 'NONE'
     for n in range(1, 6):
-        op = sub.operator(RS_OT_render_rate.bl_idname, text="", icon='SOLO_ON' if n <= have else 'SOLO_OFF')
+        op = sub.operator(STUDIO_OT_render_rate.bl_idname, text="", icon='SOLO_ON' if n <= have else 'SOLO_OFF')
         op.path, op.stars = path, n
 
 
@@ -489,7 +491,7 @@ def _draw_compare(layout, context):
             if icon:
                 col.template_icon(icon_value=icon, scale=scale)
             name = col.row(align=True)
-            op = name.operator(RS_OT_render_pick.bl_idname, text=_title(path), emboss=False, translate=False)
+            op = name.operator(STUDIO_OT_render_pick.bl_idname, text=_title(path), emboss=False, translate=False)
             op.path, op.slot = path, "VIEW"
             _stars(col.row(align=True), path)
         else:
@@ -499,9 +501,9 @@ def _draw_compare(layout, context):
             empty.label(text="pick %s below" % slot)
     row = box.row(align=True)
     row.scale_y = 1.2
-    row.operator(RS_OT_render_ab.bl_idname, text="", icon='ARROW_LEFTRIGHT').action = "SWAP"
+    row.operator(STUDIO_OT_render_ab.bl_idname, text="", icon='ARROW_LEFTRIGHT').action = "SWAP"
     shots.draw_results(row)
-    row.operator(RS_OT_render_ab.bl_idname, text="", icon='X').action = "CLEAR"
+    row.operator(STUDIO_OT_render_ab.bl_idname, text="", icon='X').action = "CLEAR"
 
 
 def _draw_overview(layout, context, images, shown):
@@ -537,7 +539,7 @@ def _draw_overview(layout, context, images, shown):
                 row = box.row(align=True)
                 row.label(text=group, icon='FILE_FOLDER' if grouped else 'CAMERA_DATA', translate=False)
                 if grouped:
-                    row.operator(RS_OT_render_reveal.bl_idname, text="", icon='VIEWZOOM',
+                    row.operator(STUDIO_OT_render_reveal.bl_idname, text="", icon='VIEWZOOM',
                                  emboss=False).path = os.path.dirname(path)
             grid = box.grid_flow(row_major=True, columns=columns, even_columns=True, align=False)
             group_now = group
@@ -549,7 +551,7 @@ def _draw_overview(layout, context, images, shown):
         kind = render_review.refined_kind(path)
         name = cell.row(align=True)
         name.scale_y = 0.8
-        op = name.operator(RS_OT_render_pick.bl_idname, text=_title(path), emboss=path == shown,
+        op = name.operator(STUDIO_OT_render_pick.bl_idname, text=_title(path), emboss=path == shown,
                            icon='SHADERFX' if kind == "krea" else 'MODIFIER' if kind == "edit" else 'NONE',
                            translate=False)
         op.path, op.slot = path, "VIEW"
@@ -564,7 +566,7 @@ def _draw_overview(layout, context, images, shown):
         tag.label(text=render_review.stars_text(stars) if stars else
                   ("Low" if render_review.quality_of(path) == 'LOW' else ""))
     if len(images) > OVERVIEW_FIRST:
-        box.operator(RS_OT_render_overview.bl_idname, emboss=False,
+        box.operator(STUDIO_OT_render_overview.bl_idname, emboss=False,
                      text="Less" if _overview["all"] else "All %d Renders" % len(images))
 
 
@@ -575,15 +577,15 @@ def draw_statusbar(self, context):
     row = self.layout.row(align=True)
     bar = row.row(align=True)
     bar.ui_units_x = 14
-    bar.progress(factor=RUN.list_progress, type='BAR', text="Render Studio · " + _queue_progress_text())
-    row.operator(RS_OT_cancel.bl_idname, text="", icon='X', emboss=False)
+    bar.progress(factor=RUN.list_progress, type='BAR', text="AI Studio · " + _queue_progress_text())
+    row.operator(STUDIO_OT_cancel.bl_idname, text="", icon='X', emboss=False)
 
 
 LOW_SCALES = (0.25, 0.5, 0.75, 1.0)
 
 
-class RS_OT_low_scale(Operator):
-    bl_idname = "render_studio.low_scale"
+class STUDIO_OT_low_scale(Operator):
+    bl_idname = "studio.low_scale"
     bl_label = "Low Quality"
     bl_description = "Low Quality relative to High: resolution or samples"
     bl_options = {'INTERNAL'}
@@ -612,7 +614,7 @@ def _factor_row(layout, label, factors, op, depress_value, **props):
             setattr(o, key, value)
 
 
-class RS_PT_output(Panel):
+class STUDIO_PT_output(Panel):
     """Gear menu in the Queue tab, top to bottom: High Quality, Low Quality, Still, Animation."""
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'HEADER'
@@ -622,7 +624,7 @@ class RS_PT_output(Panel):
     def draw(self, context):
         layout = self.layout
         scene = context.scene
-        rq = scene.render_studio
+        rq = scene.studio
         render = scene.render
         p = runner.prefs(context)
         cycles = scene.render.engine == 'CYCLES'
@@ -643,7 +645,7 @@ class RS_PT_output(Panel):
         # High Quality: the scene's own settings
         box = layout.box()
         box.label(text="High Quality", icon='SHADING_RENDERED')
-        _factor_row(box, "Size", SCALE_PRESETS, 'render_studio.set_scale', render.resolution_percentage)
+        _factor_row(box, "Size", SCALE_PRESETS, 'studio.set_scale', render.resolution_percentage)
         pct = render.resolution_percentage / 100
         sub = box.row()
         sub.alignment = 'CENTER'
@@ -668,9 +670,9 @@ class RS_PT_output(Panel):
         box = layout.box()
         box.label(text="Low Quality", icon='SORTTIME')
         if p is not None:
-            _factor_row(box, "Resolution", LOW_SCALES, RS_OT_low_scale.bl_idname, p.low_resolution,
+            _factor_row(box, "Resolution", LOW_SCALES, STUDIO_OT_low_scale.bl_idname, p.low_resolution,
                         target="resolution")
-            _factor_row(box, "Samples", LOW_SCALES, RS_OT_low_scale.bl_idname, p.low_samples_percent,
+            _factor_row(box, "Samples", LOW_SCALES, STUDIO_OT_low_scale.bl_idname, p.low_samples_percent,
                         target="samples")
         if cycles:
             box.prop(rq, "low_denoise", text="Denoise", toggle=True, icon='SHADERFX')
@@ -713,14 +715,14 @@ class RS_PT_output(Panel):
             box.prop(p, "worker_gpu_only")
 
 
-class RS_MT_render_presets(Menu):
+class STUDIO_MT_render_presets(Menu):
     """The preset menu of the Render tab: quality and what is rendered."""
-    bl_idname = "RS_MT_render_presets"
+    bl_idname = "STUDIO_MT_render_presets"
     bl_label = "Render Presets"
 
     def draw(self, context):
         layout = self.layout
-        rq = context.scene.render_studio
+        rq = context.scene.studio
         layout.prop_enum(rq, "quality", 'HIGH', text="High Quality")
         layout.prop_enum(rq, "quality", 'LOW', text="Low Quality")
         layout.separator()
@@ -728,9 +730,9 @@ class RS_MT_render_presets(Menu):
         layout.prop_enum(rq, "mode", 'ANIM', text="Animation", icon='RENDER_ANIMATION')
 
 
-class RS_PT_render_queue(_SidebarPanel, Panel):
+class STUDIO_PT_render_queue(_SidebarPanel, Panel):
     """The queue, in its own tab. New name in 0.14: a pinned panel shows up in every tab,
-    and Blender keeps the pin per panel name in the file (RS_PT_panel, RS_PT_queue)."""
+    and Blender keeps the pin per panel name in the file (STUDIO_PT_panel, STUDIO_PT_queue)."""
     studio_tab = 'QUEUE'
     bl_label = "Queue"
     bl_options = {'HIDE_HEADER'}
@@ -741,7 +743,7 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
         _schedule_prewarm()
         layout = self.layout
         scene = context.scene
-        rq = scene.render_studio
+        rq = scene.studio
         if not RUN.busy:
             shots.draw_check(layout, scene)
 
@@ -751,15 +753,18 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
         head.scale_y = 1.2
         from . import render_review
         sort = next(label for key, label, _i in render_review.SORTS if key == render_review.state["sort"])
-        head.menu(RS_MT_render_arrange.bl_idname, text=sort, icon='FILTER')
-        head.popover(RS_PT_output.__name__, text="", icon='PREFERENCES')
+        head.menu(STUDIO_MT_render_arrange.bl_idname, text=sort, icon='FILTER')
+        head.popover(STUDIO_PT_output.__name__, text="", icon='PREFERENCES')
 
         # What renders now and what waits: progress only (renders are started in the chat).
         current = RUN.current["uid"] if RUN.current else None
         waiting = [(i, item) for i, item in enumerate(rq.items) if item.camera is not None]
-        if RUN.busy or waiting:
+        from . import film
+        films = [f for f in film.films() if f[2] != 'DONE']
+        if RUN.busy or waiting or films:
             box = layout.box()
             col_run = box.column(align=True)
+            film.draw(col_run)
             for i, item in waiting:
                 row = col_run.row(align=True)
                 rendering = item.uid == current
@@ -769,11 +774,11 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
                 row.label(text=label, icon='RENDER_STILL' if rendering else 'TIME', translate=False)
                 if rendering:
                     row.progress(factor=RUN.render_progress, type='BAR', text=_item_progress_text())
-                    row.operator(RS_OT_cancel.bl_idname, text="", icon='X', emboss=False)
+                    row.operator(STUDIO_OT_cancel.bl_idname, text="", icon='X', emboss=False)
                 else:
-                    row.operator(RS_OT_remove.bl_idname, text="", icon='X', emboss=False).index = i
-            if not RUN.busy:   # left over after a cancel
-                col_run.operator(RS_OT_render_queue.bl_idname, text="Render the Rest (%d)" % len(waiting),
+                    row.operator(STUDIO_OT_remove.bl_idname, text="", icon='X', emboss=False).index = i
+            if not RUN.busy and waiting:   # left over after a cancel
+                col_run.operator(STUDIO_OT_render_queue.bl_idname, text="Render the Rest (%d)" % len(waiting),
                                  icon='PLAY')
             if RUN.message and not RUN.busy:
                 col_run.label(text=RUN.message, icon='INFO')
@@ -799,15 +804,15 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
         head = pic.row(align=True)
         older = head.row(align=True)
         older.enabled = index < len(entries) - 1
-        older.operator(RS_OT_preview_step.bl_idname, text="", icon='TRIA_LEFT').direction = 1
+        older.operator(STUDIO_OT_preview_step.bl_idname, text="", icon='TRIA_LEFT').direction = 1
         count = head.row(align=True)
         count.alignment = 'CENTER'
         count.label(text="Rendering" if live is not None else
                     "%d / %d" % (index + 1, len(entries)) if index else "Newest")
         newer = head.row(align=True)
         newer.enabled = index > 0
-        newer.operator(RS_OT_preview_step.bl_idname, text="", icon='TRIA_RIGHT').direction = -1
-        head.operator(RS_OT_show_render.bl_idname, text="", icon='ZOOM_IN')
+        newer.operator(STUDIO_OT_preview_step.bl_idname, text="", icon='TRIA_RIGHT').direction = -1
+        head.operator(STUDIO_OT_show_render.bl_idname, text="", icon='ZOOM_IN')
         scale = max(6.0, min(24.0, context.region.width / (20 * (context.preferences.system.ui_scale or 1.0)) - 2.5))
         if image is not None and path:
             pic.template_icon(icon_value=layout.icon(image), scale=scale)
@@ -824,11 +829,11 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
             _ab_button(row, path, "A")
             _ab_button(row, path, "B")
             row.label(text=_title(path), translate=False)
-            row.operator(RS_OT_render_reveal.bl_idname, text="", icon='FILE_FOLDER', emboss=False).path = path
+            row.operator(STUDIO_OT_render_reveal.bl_idname, text="", icon='FILE_FOLDER', emboss=False).path = path
             row = pic.row(align=True)
             _stars(row, path)
             refine = row.row(align=True)
             refine.alignment = 'RIGHT'
-            refine.operator(RS_OT_render_refine.bl_idname, text="Refine", icon='NODE_COMPOSITING').path = path
+            refine.operator(STUDIO_OT_render_refine.bl_idname, text="Refine", icon='NODE_COMPOSITING').path = path
         _draw_compare(layout, context)
         _draw_overview(layout, context, images, path)

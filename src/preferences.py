@@ -3,7 +3,7 @@
 import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, PointerProperty, StringProperty
 
-from .studio.props import RS_Preferences
+from .studio.props import STUDIO_Preferences
 
 MODELS = [
     ('sonnet', "Sonnet", "Latest Sonnet model – fast and strong (default)"),
@@ -75,7 +75,7 @@ def get_prefs():
 class ClaudeAssistantPreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
-    studio: PointerProperty(type=RS_Preferences)   # Render Studio's settings (Studio tab)
+    studio: PointerProperty(type=STUDIO_Preferences)   # AI Studio's settings (Studio tab)
     show_stats: BoolProperty(
         name="Answer Statistics",
         description="Show duration, tokens and usage share under every answer",

@@ -426,15 +426,16 @@ class CLAUDE_PT_chat(bpy.types.Panel):
     @staticmethod
     def _draw_render(layout):
         """A render runs (the queue, or a preview for Claude): its progress, also in the chat."""
-        from .studio import runner
+        from .studio import film, runner
         from .studio.ui_common import _queue_progress_text
+        film.draw(layout)             # films in their own process: part, frame, time left
         if not runner.RUN.busy:
             return
         row = layout.row(align=True)
         text = _queue_progress_text()
         row.progress(factor=runner.RUN.list_progress, type='BAR',
                      text=text if text.startswith("Preview") else "Render " + text)
-        row.operator("render_studio.cancel", text="", icon='X')
+        row.operator("studio.cancel", text="", icon='X')
 
     def _draw_live(self, layout):
         text = core.live_status()
@@ -488,7 +489,7 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         chips = False
         wm = context.window_manager
         # Render without Claude: a big button above the skills (all or some cameras, quality, size)
-        if hasattr(bpy.types, "RS_PT_chat_render"):
+        if hasattr(bpy.types, "STUDIO_PT_chat_render"):
             import sys
             chat_render = sys.modules.get(__package__ + ".studio.chat_render")
             if chat_render is not None:

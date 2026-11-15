@@ -123,7 +123,7 @@ def _stem(camera_name, name="", blend_filepath=None, quality=None):
     """File name before the number, after the pattern chosen in the Queue settings."""
     pattern = 'NAME_CAM'
     try:
-        pattern = bpy.context.scene.render_studio.name_pattern
+        pattern = bpy.context.scene.studio.name_pattern
     except AttributeError:
         pass
     cam = safe_name(camera_name)
@@ -199,7 +199,7 @@ def remove_output(path):
         elif os.path.exists(path):
             os.remove(path)
     except OSError as ex:
-        print("Render Studio: could not delete %s: %s" % (path, ex))
+        print("AI Studio: could not delete %s: %s" % (path, ex))
 
 
 # ----------------------------------------------------------------- Overrides
@@ -299,12 +299,12 @@ class Overrides:
                 return
             pending = [(path, packed) for path, packed, _ex in failed]
         for path, _packed, ex in failed:
-            print("Render Studio: could not restore %s: %s" % (path, ex))
+            print("AI Studio: could not restore %s: %s" % (path, ex))
 
 
 def _output_settings(ov, scene, animation, background_mode):
     """File format, bit depth, alpha and video codec from the Queue's output presets."""
-    rq = scene.render_studio
+    rq = scene.studio
     images = "render.image_settings."
     for key in ("media_type", "file_format", "color_mode", "color_depth", "quality", "exr_codec"):
         ov.save(scene, images + key)
@@ -422,13 +422,13 @@ def prepare_job(scene, camera, quality, filepath, background_mode, low_resolutio
             # low_samples: share of the High (scene) samples in percent
             if engine == 'CYCLES':
                 ov.set(scene, "cycles.samples", max(1, round(ov.get(scene, "cycles.samples") * low_samples / 100)))
-                if scene.render_studio.low_denoise:
+                if scene.studio.low_denoise:
                     ov.set(scene, "cycles.use_denoising", True)
             elif engine == 'BLENDER_EEVEE':
                 ov.set(scene, "eevee.taa_render_samples",
                        max(1, round(ov.get(scene, "eevee.taa_render_samples") * low_samples / 100)))
 
-        if animation and ANIM_FORMATS.get(scene.render_studio.anim_format, ("IMAGE",))[0] == 'VIDEO':
+        if animation and ANIM_FORMATS.get(scene.studio.anim_format, ("IMAGE",))[0] == 'VIDEO':
             # Video codecs (H.264) need even pixel sizes: bake the percentage into an even size.
             pct = ov.get(scene, "render.resolution_percentage")
             w = max(2, round(ov.get(scene, "render.resolution_x") * pct / 100) // 2 * 2)

@@ -2,7 +2,7 @@
 """HDRIs from a folder, favorites and the HDRI world.
 
 Favorites are stored in the extension's user folder, so they are shared by
-all blend files. The world is a regular World named "Render Studio HDRI";
+all blend files. The world is a regular World named "AI Studio HDRI";
 the previous world of the scene is remembered and can be restored.
 """
 
@@ -13,8 +13,8 @@ import os
 import bpy
 
 EXTENSIONS = (".hdr", ".exr")
-WORLD_NAME = "Render Studio HDRI"
-NODE_COORD, NODE_MAPPING, NODE_ENV, NODE_BG = "RS Coord", "RS Mapping", "RS Environment", "RS Background"
+WORLD_NAME = "AI Studio HDRI"
+NODE_COORD, NODE_MAPPING, NODE_ENV, NODE_BG = "Studio Coord", "Studio Mapping", "Studio Environment", "Studio Background"
 
 _cache = {"folder": None, "files": []}
 _favorites = None
@@ -151,7 +151,7 @@ def restore(scene, settings):
     settings.previous_world = None
 
 
-# Getters/setters for strength and rotation (RS_Settings) ---------------------
+# Getters/setters for strength and rotation (STUDIO_Settings) ---------------------
 
 def get_strength(_settings):
     bg = _node(NODE_BG)
@@ -247,7 +247,7 @@ def import_blenderkit(folder, wait=False):
                     os.replace(dst + ".part", dst)
                     _copying["done"] += 1
         except OSError as ex:
-            print("Render Studio: could not copy BlenderKit HDRIs:", ex)
+            print("AI Studio: could not copy BlenderKit HDRIs:", ex)
         finally:
             _copying["busy"] = False
             _cache["folder"] = None   # scan again
@@ -341,7 +341,7 @@ def _watch_timer():
             if p is not None:
                 import_blenderkit(p.hdri_folder)
     except Exception as ex:
-        print("Render Studio: BlenderKit check:", ex)
+        print("AI Studio: BlenderKit check:", ex)
     return 5.0
 
 

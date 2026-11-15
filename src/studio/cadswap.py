@@ -166,13 +166,13 @@ def copy_setup(source, target, skip_parents=()):
 
 def archive_collection(scene=None):
     scene = scene or bpy.context.scene
-    pattern = archive_collection_name()
-    name = pattern.replace("{scene}", scene.name)      # "{scene}" in the preference: the scene's name
+    from .cameras import rename_old_collections
+    rename_old_collections()
+    name = archive_collection_name()
     coll = bpy.data.collections.get(name)
-    if coll is None:   # an archive this scene already has ("archiv velo" for "archiv {scene}")
-        prefix = pattern.split("{")[0].strip().lower()
-        coll = next((c for c in scene.collection.children_recursive
-                     if prefix and c.name.lower().startswith(prefix)), None)
+    if coll is None:   # an archive this scene already has under an older name ("archiv velo")
+        coll = next((c for c in scene.collection.children
+                     if c.name.lower().startswith("archiv")), None)
     if coll is None:
         coll = bpy.data.collections.new(name)
         coll.hide_viewport = coll.hide_render = True
@@ -253,7 +253,22 @@ def import_model(path):
     ext = os.path.splitext(path)[1].lower()
     before = set(bpy.data.objects)
     IMPORTERS[ext](path)
-    return [o for o in bpy.data.objects if o not in before]
+    new = [o for o in bpy.data.objects if o not in before]
+    _into_object_collection(new)
+    return new
+
+
+def _into_object_collection(objects):
+    """The product goes into the collection Object (its own hierarchy stays)."""
+    from .cameras import object_collection
+    scene = bpy.context.scene
+    target = object_collection(scene)
+    for obj in objects:
+        if target in obj.users_collection:
+            continue
+        for coll in list(obj.users_collection):
+            coll.objects.unlink(obj)
+        target.objects.link(obj)
 
 
 def check(objects, floor=True):

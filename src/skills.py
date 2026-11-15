@@ -28,16 +28,17 @@ ACTIVE = ".active.json"   # the checked skills, kept between Blender sessions
 # Claude line in the Light and Material tabs any more, these skills are used from the chat).
 IN_CHAT = {"camera", "light", "material"}
 # Earlier shipped versions (sha1 of the file): a copy the user never changed gets the new text.
-UPGRADES = {"cad": {"e7b3d80ae27d22995023a36ddcaab3b3761f1b97"},
+UPGRADES = {"sort": {"b35e76dbacdeb8cbbbf0f5eb0167c16a63492077"},
+            "cad": {"e7b3d80ae27d22995023a36ddcaab3b3761f1b97"},
             "photo-match": {"a34caebb3fd705b8973cab6c1019c6d541e46aa2"},
-            "world": {"1a3ba7d58d06ff2b246bc978ab1c0c482f37f9a5"},
+            "world": {"1a3ba7d58d06ff2b246bc978ab1c0c482f37f9a5", "076f978bd04040c0e0d75c2ed3f2afcb09636abc"},
             "camera": {"925c6fe6c1b6442c271e4c0547a76407d2d139b7"},
             "finish": {"2c8e2980a4e3960e845ceaa0933402ef1aa3a520", "3a398b13b482836e9cbd207528b050c89c18fe95", "9ea64e3d802313f63d87e93dd73bf6399efdb5d1",
                        "275623b5bedd1339797315e1bd0f302adc054bb4"},
             "material": {"6ce2e39e716956cfeadf82e2b4e65e6e6800d243", "0b5914cfc5e631ebaf7906c58f86cd84c29c8dba",
-                         "8943cce70de0d1325a652aa55edc0fdaca5b1855"},
+                         "8943cce70de0d1325a652aa55edc0fdaca5b1855", "37835b81a9da24889085115e41a96c6d2b89b5ba"},
             "light": {"836f400f42ede6f5a887089f90528bf1e29da481", "dd0b9b9a2a01ef17ccf380bfc53708180e61224e",
-                      "f0af9312a69eafd23e268221be706be8fffab3ba", "b5d877c4c7bf2035cd52552db1f4d371071a4ca5"}}
+                      "f0af9312a69eafd23e268221be706be8fffab3ba", "b5d877c4c7bf2035cd52552db1f4d371071a4ca5", "aca7b2ea8e34e2ff04bae9046de24b9aff6ed4ef"}}
 _FRONT = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.S)
 
 

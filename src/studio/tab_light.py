@@ -14,8 +14,8 @@ from .ui_common import (LIGHT_TAB_ORDER, _SidebarPanel, _report_value_error, _se
                         studio_tab)
 
 
-class RS_OT_select_light(Operator):
-    bl_idname = "render_studio.select_light"
+class STUDIO_OT_select_light(Operator):
+    bl_idname = "studio.select_light"
     bl_label = "Select Light"
     bl_description = "Show the settings of this light (click again to close) and select it in the viewport"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -26,7 +26,7 @@ class RS_OT_select_light(Operator):
         obj = bpy.data.objects.get(self.name)
         if obj is None or obj.type != 'LIGHT':
             return {'CANCELLED'}
-        rs = context.scene.render_studio
+        rs = context.scene.studio
         if rs.active_light == obj and context.active_object != obj:
             rs.active_light = None   # close the details
             return {'FINISHED'}
@@ -35,8 +35,8 @@ class RS_OT_select_light(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_add_light(Operator):
-    bl_idname = "render_studio.add_light"
+class STUDIO_OT_add_light(Operator):
+    bl_idname = "studio.add_light"
     bl_label = "New Light"
     bl_description = ("Adds an area light front left, aimed at the orbit object "
                       "(or the 3D cursor if no orbit object is picked)")
@@ -44,15 +44,15 @@ class RS_OT_add_light(Operator):
 
     def execute(self, context):
         scene = context.scene
-        rs = scene.render_studio
+        rs = scene.studio
         obj = lights.add_light(scene, rs.light_orbit_target)
         rs.active_light = obj
         _select_only(context, obj)
         return {'FINISHED'}
 
 
-class RS_OT_duplicate_light(Operator):
-    bl_idname = "render_studio.duplicate_light"
+class STUDIO_OT_duplicate_light(Operator):
+    bl_idname = "studio.duplicate_light"
     bl_label = "Duplicate Light"
     bl_description = "Duplicates the light (like Shift+D) and edits the copy"
     bl_options = {'UNDO'}
@@ -61,7 +61,7 @@ class RS_OT_duplicate_light(Operator):
 
     def execute(self, context):
         scene = context.scene
-        rs = scene.render_studio
+        rs = scene.studio
         src = bpy.data.objects.get(self.name) if self.name else rs.active_light
         if src is None or src.type != 'LIGHT':
             return {'CANCELLED'}
@@ -71,8 +71,8 @@ class RS_OT_duplicate_light(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_light_preset(Operator):
-    bl_idname = "render_studio.light_preset"
+class STUDIO_OT_light_preset(Operator):
+    bl_idname = "studio.light_preset"
     bl_label = "Light Preset"
     bl_description = ("Places the lights of this preset around the light orbit object (or the 3D cursor), "
                       "relative to the active camera. Replaces the lights of the previous preset, "
@@ -83,7 +83,7 @@ class RS_OT_light_preset(Operator):
 
     def execute(self, context):
         scene = context.scene
-        rs = scene.render_studio
+        rs = scene.studio
         spec = lights.preset(self.name)
         if spec is None:
             self.report({'ERROR'}, "Preset %r not found" % self.name)
@@ -95,8 +95,8 @@ class RS_OT_light_preset(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_light_preset_save(Operator):
-    bl_idname = "render_studio.light_preset_save"
+class STUDIO_OT_light_preset_save(Operator):
+    bl_idname = "studio.light_preset_save"
     bl_label = "Save Light Setup"
     bl_description = ("Saves all lights of the scene as a preset (available in every blend file). "
                       "Positions are stored relative to the light orbit object and the camera")
@@ -118,7 +118,7 @@ class RS_OT_light_preset_save(Operator):
             self.report({'ERROR'}, "%r is a built-in preset, pick another name" % name)
             return {'CANCELLED'}
         spec = _report_value_error(
-            self, lambda: lights.setup_from_scene(scene, scene.render_studio.light_orbit_target, name))
+            self, lambda: lights.setup_from_scene(scene, scene.studio.light_orbit_target, name))
         if spec is None:
             return {'CANCELLED'}
         lights.save_preset(spec)
@@ -129,8 +129,8 @@ class RS_OT_light_preset_save(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_light_preset_delete(Operator):
-    bl_idname = "render_studio.light_preset_delete"
+class STUDIO_OT_light_preset_delete(Operator):
+    bl_idname = "studio.light_preset_delete"
     bl_label = "Delete Preset"
     bl_description = "Delete this saved preset (the lights in the scene stay)"
     bl_options = {'INTERNAL'}
@@ -142,8 +142,8 @@ class RS_OT_light_preset_delete(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_light_setup(Operator):
-    bl_idname = "render_studio.light_setup"
+class STUDIO_OT_light_setup(Operator):
+    bl_idname = "studio.light_setup"
     bl_label = "Apply Light Setup"
     bl_description = "Applies a light setup given as JSON (e.g. from Claude) and saves it as a preset"
     bl_options = {'UNDO'}
@@ -159,8 +159,8 @@ class RS_OT_light_setup(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_hdri_apply(Operator):
-    bl_idname = "render_studio.hdri_apply"
+class STUDIO_OT_hdri_apply(Operator):
+    bl_idname = "studio.hdri_apply"
     bl_label = "Use HDRI"
     bl_description = "Use this HDRI as the world of the scene"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -169,15 +169,15 @@ class RS_OT_hdri_apply(Operator):
 
     def execute(self, context):
         try:
-            hdri.apply(context.scene, self.path, context.scene.render_studio)
+            hdri.apply(context.scene, self.path, context.scene.studio)
         except RuntimeError as ex:
             self.report({'ERROR'}, str(ex))
             return {'CANCELLED'}
         return {'FINISHED'}
 
 
-class RS_OT_hdri_favorite(Operator):
-    bl_idname = "render_studio.hdri_favorite"
+class STUDIO_OT_hdri_favorite(Operator):
+    bl_idname = "studio.hdri_favorite"
     bl_label = "Favorite"
     bl_description = "Mark or unmark as favorite (shared by all blend files)"
     bl_options = {'INTERNAL'}
@@ -189,8 +189,8 @@ class RS_OT_hdri_favorite(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_hdri_refresh(Operator):
-    bl_idname = "render_studio.hdri_refresh"
+class STUDIO_OT_hdri_refresh(Operator):
+    bl_idname = "studio.hdri_refresh"
     bl_label = "Refresh"
     bl_description = "Read the HDRI folder again and copy new BlenderKit HDRIs into it"
 
@@ -204,8 +204,8 @@ class RS_OT_hdri_refresh(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_world_restore(Operator):
-    bl_idname = "render_studio.world_restore"
+class STUDIO_OT_world_restore(Operator):
+    bl_idname = "studio.world_restore"
     bl_label = "Original World"
     bl_description = "Switch back to the world the scene had before the HDRI"
     bl_options = {'UNDO'}
@@ -215,7 +215,7 @@ class RS_OT_world_restore(Operator):
         return context.scene.world == hdri.hdri_world() and context.scene.world is not None
 
     def execute(self, context):
-        hdri.restore(context.scene, context.scene.render_studio)
+        hdri.restore(context.scene, context.scene.studio)
         return {'FINISHED'}
 
 
@@ -223,11 +223,11 @@ LIGHT_ICONS = {'POINT': 'LIGHT_POINT', 'SUN': 'LIGHT_SUN', 'SPOT': 'LIGHT_SPOT',
 
 
 # name: Principled BSDF values
-class RS_OT_light_focus_selection(Operator):
-    bl_idname = "render_studio.light_focus_selection"
+class STUDIO_OT_light_focus_selection(Operator):
+    bl_idname = "studio.light_focus_selection"
     bl_label = "Aim at Selection"
     bl_description = ("Aim the light setup at the selected object. With several objects: at the center of "
-                      "all of them together (an empty \"Render Studio Focus\" marks it)")
+                      "all of them together (an empty \"AI Studio Focus\" marks it)")
     bl_options = {'UNDO'}
 
     def execute(self, context):
@@ -235,12 +235,12 @@ class RS_OT_light_focus_selection(Operator):
         if subject is None:
             self.report({'WARNING'}, "Select one or more objects first")
             return {'CANCELLED'}
-        context.scene.render_studio.light_orbit_target = subject
+        context.scene.studio.light_orbit_target = subject
         return {'FINISHED'}
 
 
-class RS_OT_show_world(Operator):
-    bl_idname = "render_studio.show_world"
+class STUDIO_OT_show_world(Operator):
+    bl_idname = "studio.show_world"
     bl_label = "Show World"
     bl_description = ("Make the World visible as background: Film Transparent off, World visible to the camera, "
                       "strength above 0, viewport compositor off and viewports using the scene World")
@@ -251,8 +251,8 @@ class RS_OT_show_world(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_toggle_light(Operator):
-    bl_idname = "render_studio.toggle_light"
+class STUDIO_OT_toggle_light(Operator):
+    bl_idname = "studio.toggle_light"
     bl_label = "Light On/Off"
     bl_description = "Switch the light on or off (viewport and render)"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -269,8 +269,8 @@ class RS_OT_toggle_light(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_hdri_step(Operator):
-    bl_idname = "render_studio.hdri_step"
+class STUDIO_OT_hdri_step(Operator):
+    bl_idname = "studio.hdri_step"
     bl_label = "Next HDRI"
     bl_description = "Switch to the previous or next HDRI of the folder"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -285,12 +285,12 @@ class RS_OT_hdri_step(Operator):
         current = hdri.current_path(context.scene)
         norm = [os.path.normpath(x) for x in paths]
         index = norm.index(current) + self.direction if current in norm else (0 if self.direction > 0 else -1)
-        hdri.apply(context.scene, paths[index % len(paths)], context.scene.render_studio)
+        hdri.apply(context.scene, paths[index % len(paths)], context.scene.studio)
         return {'FINISHED'}
 
 
-class RS_OT_lights_adjust(Operator):
-    bl_idname = "render_studio.lights_adjust"
+class STUDIO_OT_lights_adjust(Operator):
+    bl_idname = "studio.lights_adjust"
     bl_label = "All Lights"
     bl_description = "Change all lights of the scene together"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -339,8 +339,8 @@ BOUNCE_PRESETS = {
 }
 
 
-class RS_OT_bounces_preset(Operator):
-    bl_idname = "render_studio.bounces_preset"
+class STUDIO_OT_bounces_preset(Operator):
+    bl_idname = "studio.bounces_preset"
     bl_label = "Light Paths"
     bl_description = "Cycles light bounces: Fast (quick, darker glass), Standard, Glass (clean glass and liquids)"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -360,7 +360,7 @@ def _bounce_preset(cy):
                  if all(getattr(cy, k, None) == x for k, x in v.items())), "")
 
 
-class RS_PT_light_settings(Panel):
+class STUDIO_PT_light_settings(Panel):
     """Gear menu in the Light tab: all lights together, shadows and light bounces."""
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'HEADER'
@@ -377,38 +377,38 @@ class RS_PT_light_settings(Panel):
         split.label(text="Power")
         sub = split.row(align=True)
         for factor in (0.5, 0.8, 1.25, 2.0):
-            op = sub.operator(RS_OT_lights_adjust.bl_idname, text="×%g" % factor)
+            op = sub.operator(STUDIO_OT_lights_adjust.bl_idname, text="×%g" % factor)
             op.what, op.value = "POWER", factor
         row = box.row(align=True)
         split = row.split(factor=0.3, align=True)
         split.label(text="Shadows")
         sub = split.row(align=True)
-        op = sub.operator(RS_OT_lights_adjust.bl_idname, text="Harder")
+        op = sub.operator(STUDIO_OT_lights_adjust.bl_idname, text="Harder")
         op.what, op.value = "SOFT", 1 / 1.5
-        op = sub.operator(RS_OT_lights_adjust.bl_idname, text="Softer")
+        op = sub.operator(STUDIO_OT_lights_adjust.bl_idname, text="Softer")
         op.what, op.value = "SOFT", 1.5
         row = box.row(align=True)
         split = row.split(factor=0.3, align=True)
         split.label(text="Color")
         sub = split.row(align=True)
         for kelvin in (2700, 4000, 5600, 6500, 8000):
-            op = sub.operator(RS_OT_lights_adjust.bl_idname, text="%gK" % (kelvin / 1000))
+            op = sub.operator(STUDIO_OT_lights_adjust.bl_idname, text="%gK" % (kelvin / 1000))
             op.what, op.value = "KELVIN", kelvin
-        op = sub.operator(RS_OT_lights_adjust.bl_idname, text="", icon='X')
+        op = sub.operator(STUDIO_OT_lights_adjust.bl_idname, text="", icon='X')
         op.what, op.value = "KELVIN", 0
 
         box = layout.box()
         box.label(text="Lights aim at", icon='PIVOT_CURSOR')
         row = box.row(align=True)
-        rs = scene.render_studio
+        rs = scene.studio
         row.prop(rs, "light_orbit_target", text="", placeholder="3D Cursor")
-        row.operator(RS_OT_light_focus_selection.bl_idname, text="", icon='RESTRICT_SELECT_OFF')
+        row.operator(STUDIO_OT_light_focus_selection.bl_idname, text="", icon='RESTRICT_SELECT_OFF')
         current = current_preset(scene)
         row = box.row(align=True)
-        row.operator(RS_OT_light_preset_save.bl_idname, text="Save Light Preset", icon='ADD')
+        row.operator(STUDIO_OT_light_preset_save.bl_idname, text="Save Light Preset", icon='ADD')
         if current and current in lights.saved_presets():
-            row.operator(RS_OT_light_preset_delete.bl_idname, text="", icon='TRASH').name = current
-        layout.operator(light_ui.RS_OT_light_mirror.bl_idname, text="Mirror All Lights",
+            row.operator(STUDIO_OT_light_preset_delete.bl_idname, text="", icon='TRASH').name = current
+        layout.operator(light_ui.STUDIO_OT_light_mirror.bl_idname, text="Mirror All Lights",
                         icon='MOD_MIRROR').everything = True
         presets_io.draw(layout.box())
         addons.draw_list(layout)
@@ -422,7 +422,7 @@ class RS_PT_light_settings(Panel):
         current = _bounce_preset(cy)
         row = box.row(align=True)
         for name in BOUNCE_PRESETS:
-            row.operator(RS_OT_bounces_preset.bl_idname, text=name, depress=name == current,
+            row.operator(STUDIO_OT_bounces_preset.bl_idname, text=name, depress=name == current,
                          translate=False).name = name   # Blender's own catalog: "Fast" → "Einfügen"
         col = box.column(align=True)
         col.prop(cy, "max_bounces", text="Total")
@@ -442,49 +442,49 @@ def current_preset(scene):
     return max(set(names), key=names.count) if names else ""
 
 
-class RS_MT_light_presets(Menu):
-    bl_idname = "RS_MT_light_presets"
+class STUDIO_MT_light_presets(Menu):
+    bl_idname = "STUDIO_MT_light_presets"
     bl_label = "Light Presets"
 
     def draw(self, context):
         layout = self.layout
         current = current_preset(context.scene)
         for name in lights.BUILTIN_PRESETS:
-            layout.operator(RS_OT_light_preset.bl_idname, text=name,
+            layout.operator(STUDIO_OT_light_preset.bl_idname, text=name,
                             icon='CHECKMARK' if name == current else 'BLANK1').name = name
         saved = sorted(lights.saved_presets())
         if saved:
             layout.separator()
             for name in saved:
-                layout.operator(RS_OT_light_preset.bl_idname, text=name,
+                layout.operator(STUDIO_OT_light_preset.bl_idname, text=name,
                                 icon='CHECKMARK' if name == current else 'BLANK1').name = name
 
 
-class RS_MT_hdris(Menu):
-    bl_idname = "RS_MT_hdris"
+class STUDIO_MT_hdris(Menu):
+    bl_idname = "STUDIO_MT_hdris"
     bl_label = "Environment"
 
     def draw(self, context):
         layout = self.layout
         p = runner.prefs(context)
-        layout.operator(RS_OT_world_restore.bl_idname, text="Original World", icon='WORLD')
+        layout.operator(STUDIO_OT_world_restore.bl_idname, text="Original World", icon='WORLD')
         paths = hdri.files(p.hdri_folder if p else "")
         if paths:
             layout.separator()
         flow = layout.column_flow(columns=max(1, (len(paths) + 19) // 20))
         for path in paths:
             icon = hdri.preview_icon(path)
-            op = flow.operator(RS_OT_hdri_apply.bl_idname, text=hdri.display_name(path),
+            op = flow.operator(STUDIO_OT_hdri_apply.bl_idname, text=hdri.display_name(path),
                                icon_value=icon) if icon else \
-                flow.operator(RS_OT_hdri_apply.bl_idname, text=hdri.display_name(path), icon='IMAGE')
+                flow.operator(STUDIO_OT_hdri_apply.bl_idname, text=hdri.display_name(path), icon='IMAGE')
             op.path = path
         if not paths:
             layout.label(text="No HDRIs in the folder", icon='INFO')
         layout.separator()
-        layout.operator(RS_OT_hdri_refresh.bl_idname, text="Refresh (incl. BlenderKit)", icon='FILE_REFRESH')
+        layout.operator(STUDIO_OT_hdri_refresh.bl_idname, text="Refresh (incl. BlenderKit)", icon='FILE_REFRESH')
 
 
-class RS_PT_lighting(_SidebarPanel, Panel):
+class STUDIO_PT_lighting(_SidebarPanel, Panel):
     """The Environment tab in one panel: Scene, Lights, World, Background, Floor, other add-ons.
     Without a header, so it stays at the top of the tab."""
     bl_label = "Lighting"
@@ -495,18 +495,18 @@ class RS_PT_lighting(_SidebarPanel, Panel):
     def draw(self, context):
         _unpin(self)
         scene = context.scene
-        rs = scene.render_studio
+        rs = scene.studio
         layout = self.layout
 
         # The same head as every tab: [presets ▾] [looks A B …] [+ save scene] [settings]
-        light_ui.draw_head(layout, scene, RS_PT_light_settings.__name__)
+        light_ui.draw_head(layout, scene, STUDIO_PT_light_settings.__name__)
 
         # The open light, always here: how a click on the product places it, and its few values
         light_ui.draw_open_light(layout, context)
 
         # Lights: the ones that are on (eye, kind, name, brightness), the others folded into one line
         box, head, is_open = section(layout, "lights", "Lights", 'LIGHT')
-        head.menu(light_ui.RS_MT_light_new.bl_idname, text="", icon='ADD')
+        head.menu(light_ui.STUDIO_MT_light_new.bl_idname, text="", icon='ADD')
         if is_open:
             light_ui.draw_list(box, context)
 
@@ -541,12 +541,12 @@ def _draw_world(box, scene, rs):
     strength and rotation."""
     path = hdri.current_path(scene)
     row = box.row(align=True)
-    row.operator(RS_OT_hdri_step.bl_idname, text="", icon='TRIA_LEFT').direction = -1
+    row.operator(STUDIO_OT_hdri_step.bl_idname, text="", icon='TRIA_LEFT').direction = -1
     if path:
-        row.menu(RS_MT_hdris.bl_idname, text=hdri.display_name(path), icon='IMAGE')
+        row.menu(STUDIO_MT_hdris.bl_idname, text=hdri.display_name(path), icon='IMAGE')
     else:
-        row.menu(RS_MT_hdris.bl_idname, text=scene.world.name if scene.world else "No World", icon='WORLD')
-    row.operator(RS_OT_hdri_step.bl_idname, text="", icon='TRIA_RIGHT').direction = 1
+        row.menu(STUDIO_MT_hdris.bl_idname, text=scene.world.name if scene.world else "No World", icon='WORLD')
+    row.operator(STUDIO_OT_hdri_step.bl_idname, text="", icon='TRIA_RIGHT').direction = 1
     if path:
         icon = hdri.preview_icon(path)
         if icon:

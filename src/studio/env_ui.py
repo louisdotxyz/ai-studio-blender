@@ -15,8 +15,8 @@ def _light(name):
 
 # ------------------------------------------------------------------ scene presets
 
-class RS_OT_scene_preset(Operator):
-    bl_idname = "render_studio.scene_preset"
+class STUDIO_OT_scene_preset(Operator):
+    bl_idname = "studio.scene_preset"
     bl_label = "Scene Preset"
     bl_description = "Apply this scene: lights, World, background, floor, haze and look together"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -34,8 +34,8 @@ class RS_OT_scene_preset(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_scene_preset_save(Operator):
-    bl_idname = "render_studio.scene_preset_save"
+class STUDIO_OT_scene_preset_save(Operator):
+    bl_idname = "studio.scene_preset_save"
     bl_label = "Save Scene"
     bl_description = ("Save the whole environment as a scene preset (every blend file): lights, World, background, "
                       "floor, haze and look")
@@ -55,8 +55,8 @@ class RS_OT_scene_preset_save(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_scene_preset_delete(Operator):
-    bl_idname = "render_studio.scene_preset_delete"
+class STUDIO_OT_scene_preset_delete(Operator):
+    bl_idname = "studio.scene_preset_delete"
     bl_label = "Delete Scene Preset"
     bl_options = {'INTERNAL'}
 
@@ -68,26 +68,26 @@ class RS_OT_scene_preset_delete(Operator):
 
     def execute(self, context):
         environment.delete_scene(self.name)
-        if context.scene.render_studio.scene_preset == self.name:
-            context.scene.render_studio.scene_preset = ""
+        if context.scene.studio.scene_preset == self.name:
+            context.scene.studio.scene_preset = ""
         return {'FINISHED'}
 
 
-class RS_MT_scene_presets(Menu):
-    bl_idname = "RS_MT_scene_presets"
+class STUDIO_MT_scene_presets(Menu):
+    bl_idname = "STUDIO_MT_scene_presets"
     bl_label = "Scene Presets"
 
     def draw(self, context):
         layout = self.layout
-        current = context.scene.render_studio.scene_preset
+        current = context.scene.studio.scene_preset
         for name in environment.BUILTIN_SCENES:
-            layout.operator(RS_OT_scene_preset.bl_idname, text=name,
+            layout.operator(STUDIO_OT_scene_preset.bl_idname, text=name,
                             icon='CHECKMARK' if name == current else 'BLANK1').name = name
         saved = sorted(environment.saved_scenes())
         if saved:
             layout.separator()
             for name in saved:
-                layout.operator(RS_OT_scene_preset.bl_idname, text=name,
+                layout.operator(STUDIO_OT_scene_preset.bl_idname, text=name,
                                 icon='CHECKMARK' if name == current else 'BLANK1').name = name
 
 
@@ -95,17 +95,17 @@ def draw_scene_presets(layout, scene):
     """One row: the scene preset (lights, World, backdrop, haze and look together), + saves the current one."""
     row = layout.row(align=True)
     row.scale_y = 1.2
-    current = scene.render_studio.scene_preset
-    row.menu(RS_MT_scene_presets.bl_idname, text=current or "Scene preset", icon='SCENE_DATA')
-    row.operator(RS_OT_scene_preset_save.bl_idname, text="", icon='ADD')
+    current = scene.studio.scene_preset
+    row.menu(STUDIO_MT_scene_presets.bl_idname, text=current or "Scene preset", icon='SCENE_DATA')
+    row.operator(STUDIO_OT_scene_preset_save.bl_idname, text="", icon='ADD')
     if current and current in environment.saved_scenes():
-        row.operator(RS_OT_scene_preset_delete.bl_idname, text="", icon='TRASH').name = current
+        row.operator(STUDIO_OT_scene_preset_delete.bl_idname, text="", icon='TRASH').name = current
 
 
 # ------------------------------------------------------------------ lights: solo, linking, flags
 
-class RS_OT_solo_light(Operator):
-    bl_idname = "render_studio.solo_light"
+class STUDIO_OT_solo_light(Operator):
+    bl_idname = "studio.solo_light"
     bl_label = "Solo"
     bl_description = "Render only this light; click again to bring the others back as they were"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -120,8 +120,8 @@ class RS_OT_solo_light(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_light_link(Operator):
-    bl_idname = "render_studio.light_link"
+class STUDIO_OT_light_link(Operator):
+    bl_idname = "studio.light_link"
     bl_label = "Only the Product"
     bl_description = ("This light lights only the product, not the floor, room or background (light linking, "
                       "Cycles). Click again to light everything")
@@ -137,8 +137,8 @@ class RS_OT_light_link(Operator):
         return {'FINISHED'}
 
 
-class RS_OT_add_flag(Operator):
-    bl_idname = "render_studio.add_flag"
+class STUDIO_OT_add_flag(Operator):
+    bl_idname = "studio.add_flag"
     bl_label = "Flag / Gobo"
     bl_description = ("A card in front of the open light: cuts (flag) or shapes (gobo) its light. Leaves, tree, "
                       "water and clouds move when the animation plays; a small light gives sharper shadows")
@@ -148,17 +148,17 @@ class RS_OT_add_flag(Operator):
 
     @classmethod
     def poll(cls, context):
-        light = context.scene.render_studio.active_light
+        light = context.scene.studio.active_light
         return light is not None and light.type == 'LIGHT'
 
     def execute(self, context):
         scene = context.scene
-        environment.add_flag(scene, scene.render_studio.active_light, self.pattern)
+        environment.add_flag(scene, scene.studio.active_light, self.pattern)
         return {'FINISHED'}
 
 
-class RS_OT_remove_flag(Operator):
-    bl_idname = "render_studio.remove_flag"
+class STUDIO_OT_remove_flag(Operator):
+    bl_idname = "studio.remove_flag"
     bl_label = "Remove Flag"
     bl_description = "Remove the flag or gobo of this light"
     bl_options = {'UNDO', 'INTERNAL'}
@@ -176,16 +176,16 @@ class RS_OT_remove_flag(Operator):
 def draw_light_extras(box, light):
     """Under a light's details: only the product, flag / gobo."""
     row = box.row(align=True)
-    row.operator(RS_OT_light_link.bl_idname, icon='LINKED', depress=environment.linked_to_product(light)).name = \
+    row.operator(STUDIO_OT_light_link.bl_idname, icon='LINKED', depress=environment.linked_to_product(light)).name = \
         light.name
     flag = environment.flag_of(light)
     if flag is None:
-        row.operator_menu_enum(RS_OT_add_flag.bl_idname, "pattern", text="Flag / Gobo", icon='MOD_MASK')
+        row.operator_menu_enum(STUDIO_OT_add_flag.bl_idname, "pattern", text="Flag / Gobo", icon='MOD_MASK')
     else:
         sub = row.row(align=True)
         sub.label(text=dict((k, n) for k, n, _d in environment.FLAG_PATTERNS).get(flag.get("as_pattern"), "Flag"),
                   icon='MOD_MASK')
-        sub.operator(RS_OT_remove_flag.bl_idname, text="", icon='X').name = light.name
+        sub.operator(STUDIO_OT_remove_flag.bl_idname, text="", icon='X').name = light.name
         speed, scale = environment.gobo_nodes(flag)
         if speed is not None and scale is not None:        # a moving gobo: how fast, how fine
             row = box.row(align=True)
@@ -203,8 +203,8 @@ def solo_icon(scene, light):
 
 # ------------------------------------------------------------------ World extras
 
-class RS_OT_sun_from_hdri(Operator):
-    bl_idname = "render_studio.sun_from_hdri"
+class STUDIO_OT_sun_from_hdri(Operator):
+    bl_idname = "studio.sun_from_hdri"
     bl_label = "Sun from HDRI"
     bl_description = ("A sun light from the brightest spot of the HDRI (direction and color): sharp shadows that "
                       "match the World")
@@ -220,17 +220,17 @@ class RS_OT_sun_from_hdri(Operator):
         except (ValueError, RuntimeError) as exc:
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
-        context.scene.render_studio.active_light = obj
+        context.scene.studio.active_light = obj
         self.report({'INFO'}, "%s added" % obj.name)
         return {'FINISHED'}
 
 
 def draw_world_extras(box, scene, sun=True):
     """Sun from the HDRI (for an HDRI image) and haze in one row."""
-    rs = scene.render_studio
+    rs = scene.studio
     row = box.row(align=True)
     if sun:
-        row.operator(RS_OT_sun_from_hdri.bl_idname, text="Sun from HDRI", icon='LIGHT_SUN')
+        row.operator(STUDIO_OT_sun_from_hdri.bl_idname, text="Sun from HDRI", icon='LIGHT_SUN')
     row.prop(rs, "haze_density", text="Haze")
     if rs.haze_density > 0:
         sub = row.row(align=True)
@@ -243,7 +243,7 @@ def draw_world_extras(box, scene, sun=True):
 def draw_backdrop(box, context):
     """Background (what the camera sees behind the product) and floor, one line each, details below."""
     scene = context.scene
-    rs = scene.render_studio
+    rs = scene.studio
     col = box.column(align=True)
     split = col.split(factor=0.3, align=True)
     split.label(text="Background")
@@ -264,7 +264,7 @@ def draw_backdrop(box, context):
             sub = box.column(align=True)
             for text in problems:
                 sub.label(text=text, icon='ERROR')
-            box.operator('render_studio.show_world', icon='WORLD')
+            box.operator('studio.show_world', icon='WORLD')
     col = box.column(align=True)
     split = col.split(factor=0.3, align=True)
     split.label(text="Floor")
@@ -281,8 +281,8 @@ def draw_backdrop(box, context):
         row.prop(rs, "floor_curve")
 
 
-classes = (RS_OT_scene_preset, RS_OT_scene_preset_save, RS_OT_scene_preset_delete, RS_MT_scene_presets,
-           RS_OT_solo_light, RS_OT_light_link, RS_OT_add_flag, RS_OT_remove_flag, RS_OT_sun_from_hdri)
+classes = (STUDIO_OT_scene_preset, STUDIO_OT_scene_preset_save, STUDIO_OT_scene_preset_delete, STUDIO_MT_scene_presets,
+           STUDIO_OT_solo_light, STUDIO_OT_light_link, STUDIO_OT_add_flag, STUDIO_OT_remove_flag, STUDIO_OT_sun_from_hdri)
 
 
 def register():

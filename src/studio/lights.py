@@ -31,7 +31,7 @@ from mathutils import Matrix, Vector
 
 from . import cameras, orbit
 
-PRESET_KEY = "render_studio_preset"
+PRESET_KEY = "studio_preset"
 TYPES = ('POINT', 'SUN', 'SPOT', 'AREA')
 SHAPES = ('SQUARE', 'RECTANGLE', 'DISK', 'ELLIPSE')
 
@@ -331,11 +331,11 @@ def preset(name):
     return BUILTIN_PRESETS.get(name) or saved_presets().get(name)
 
 
-# Getters/setters for the light orbit (RS_Settings) ---------------------------
+# Getters/setters for the light orbit (STUDIO_Settings) ---------------------------
 
 def light_target(light, settings):
     """The light's own target (Light tab, per light), otherwise the setup's target."""
-    own = light.render_studio_light.target if light is not None else None
+    own = light.studio_light.target if light is not None else None
     return own if own is not None else settings.light_orbit_target
 
 
@@ -344,7 +344,7 @@ def _pair(settings):
     target = light_target(light, settings) if light is not None else None
     if light is None or target is None or light == target:
         return None
-    return light, target, light.render_studio_light.lift
+    return light, target, light.studio_light.lift
 
 
 def _getter(index):
@@ -381,13 +381,13 @@ def aim(light, settings):
     target = light_target(light, settings)
     if target is None or target == light:
         return
-    center = orbit.target_center(target, light.render_studio_light.lift)
+    center = orbit.target_center(target, light.studio_light.lift)
     scale = light.matrix_world.to_scale()
     light.matrix_world = orbit.look_at_matrix(light.matrix_world.translation.copy(), center, scale)
 
 
 def on_light_target(light_settings, context):
-    aim(light_settings.id_data, context.scene.render_studio)
+    aim(light_settings.id_data, context.scene.studio)
 
 
 # The light selected in the viewport is the one shown open in the Light tab
@@ -400,8 +400,8 @@ def _active_changed():
         scene = bpy.context.scene
     except AttributeError:
         return
-    if obj is not None and obj.type == 'LIGHT' and scene.render_studio.active_light != obj:
-        scene.render_studio.active_light = obj
+    if obj is not None and obj.type == 'LIGHT' and scene.studio.active_light != obj:
+        scene.studio.active_light = obj
 
 
 def subscribe():
@@ -421,11 +421,11 @@ get_distance, set_distance = _getter(2), _setter("distance")
 
 
 FOCUS_KEY = "light_focus"            # [x, y, z, radius] the lights are arranged around
-FOCUS_NAME = "Render Studio Focus"
+FOCUS_NAME = "AI Studio Focus"
 
 
 def remember_focus(scene, center, radius):
-    scene.render_studio[FOCUS_KEY] = [center.x, center.y, center.z, radius]
+    scene.studio[FOCUS_KEY] = [center.x, center.y, center.z, radius]
 
 
 def setup_lights(scene):
@@ -437,7 +437,7 @@ def setup_lights(scene):
 def retarget(scene, target):
     """Moves the light setup to a new subject: same arrangement, scaled with its size."""
     new_center, new_radius = subject(scene, target)
-    old = scene.render_studio.get(FOCUS_KEY)
+    old = scene.studio.get(FOCUS_KEY)
     if old is not None and len(old) == 4 and old[3] > 0:
         old_center, old_radius = Vector(old[:3]), float(old[3])
         k = new_radius / old_radius

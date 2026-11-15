@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Render Studio's functions for Claude (in execute_python as `api`, and behind the studio_* tools):
+"""AI Studio's functions for Claude (in execute_python as `api`, and behind the studio_* tools):
 light setups, generated HDRIs, environments (baked rooms, HDRI files), the scene context they need.
 """
 
@@ -82,7 +82,7 @@ def _light_info(obj, center, radius, front):
 
 def scene_context(scene):
     """What Claude should know about the scene, as a dict."""
-    rs = scene.render_studio
+    rs = scene.studio
     target = rs.light_orbit_target
     center, radius = lights.subject(scene, target)
     front = lights.front_angle(scene, center)
@@ -123,11 +123,11 @@ def light_setup(spec, scene=None, save=True):
     Returns the created light objects."""
     scene = scene or bpy.context.scene
     parsed = lights.parse_setup(extract_json(spec))
-    created = lights.apply_setup(scene, scene.render_studio.light_orbit_target, parsed)
+    created = lights.apply_setup(scene, scene.studio.light_orbit_target, parsed)
     if save:
         lights.save_preset(parsed)
     if created:
-        scene.render_studio.active_light = created[0]
+        scene.studio.active_light = created[0]
     return created
 
 
@@ -135,12 +135,12 @@ def hdri_setup(spec, scene=None):
     """Generates an HDRI file from a world setup, uses it and returns its path."""
     scene = scene or bpy.context.scene
     p = runner.prefs()
-    return hdri_gen.generate(scene, extract_json(spec), p.hdri_folder if p else "", scene.render_studio)
+    return hdri_gen.generate(scene, extract_json(spec), p.hdri_folder if p else "", scene.studio)
 
 
 def environment_context(scene):
     """What Claude needs to build a room around the subject, as a dict."""
-    center, radius = lights.subject(scene, scene.render_studio.light_orbit_target)
+    center, radius = lights.subject(scene, scene.studio.light_orbit_target)
     floor = None
     for obj in scene.objects:
         if obj.type != 'MESH' or obj.hide_render or not obj.visible_get():
@@ -171,9 +171,9 @@ def environment_prompt(scene):
 
 def use_hdri(path, scene=None):
     """Use an existing HDRI/EXR (e.g. a baked room) as the World. Brighter/darker and rotation:
-    scene.render_studio.world_strength / world_rotation, never bake again for that."""
+    scene.studio.world_strength / world_rotation, never bake again for that."""
     scene = scene or bpy.context.scene
-    hdri.apply(scene, path, scene.render_studio)
+    hdri.apply(scene, path, scene.studio)
     return path
 
 
@@ -349,7 +349,7 @@ def environment_bake(name, collection=None, location=None, world=None, resolutio
     os.makedirs(folder, exist_ok=True)
     path = core.next_path(folder, core.safe_name(name), ".exr")
     if location is None:
-        location, _radius = lights.subject(scene, scene.render_studio.light_orbit_target)
+        location, _radius = lights.subject(scene, scene.studio.light_orbit_target)
 
     render, cycles, image = scene.render, scene.cycles, scene.render.image_settings
     saved_render = {k: getattr(render, k) for k in ("engine", "resolution_x", "resolution_y",
@@ -360,10 +360,10 @@ def environment_bake(name, collection=None, location=None, world=None, resolutio
     saved_camera, saved_world = scene.camera, scene.world
     hidden = {obj: obj.hide_render for obj in scene.objects}
 
-    data = bpy.data.cameras.new("RS Environment Bake")
+    data = bpy.data.cameras.new("Studio Environment Bake")
     data.type = 'PANO'
     data.panorama_type = 'EQUIRECTANGULAR'
-    cam = bpy.data.objects.new("RS Environment Bake", data)
+    cam = bpy.data.objects.new("Studio Environment Bake", data)
     cam.location = location
     cam.rotation_euler = (math.pi / 2, 0.0, -math.pi / 2)   # image center = +X, as the World maps it
     scene.collection.objects.link(cam)
@@ -405,7 +405,7 @@ def environment_bake(name, collection=None, location=None, world=None, resolutio
         bpy.data.cameras.remove(data)
     hdri._cache["folder"] = None   # scan again, the new file shows up in the gallery
     if use:
-        hdri.apply(scene, path, scene.render_studio)
+        hdri.apply(scene, path, scene.studio)
         hdri.set_rotation(None, 0.0)   # baked in world axes
     return path
 
@@ -674,7 +674,7 @@ def floor(mode="COVE", color=None, roughness=None, size=None, curve=None, shadow
     """Studio floor under the product: mode NONE / FLOOR / COVE; color as sRGB (0-1). Returns the object."""
     from . import environment
     scene = scene or bpy.context.scene
-    rs = scene.render_studio
+    rs = scene.studio
     for prop, value in (("floor_color", color), ("floor_roughness", roughness), ("floor_size", size),
                         ("floor_curve", curve), ("floor_shadow_catcher", shadow_catcher)):
         if value is not None:
@@ -722,7 +722,7 @@ def world(mode, time=None, pins=None, ambient=None, scene=None):
     "color"}; 0° horizontal = from the camera, negative = left."""
     from . import world_modes
     scene = scene or bpy.context.scene
-    rs = scene.render_studio
+    rs = scene.studio
     if time is not None:
         rs["sky_time"] = float(time)
     if ambient is not None:
@@ -770,7 +770,7 @@ def place_light(light, on_object, mode="REFLECTION", distance=None, scene=None):
 def _light_item(light, scene):
     """A light of the Lights list: a scene light (object or name) or a studio World light (its index or name)."""
     from . import light_items
-    rs = scene.render_studio
+    rs = scene.studio
     if isinstance(light, int):
         if not 0 <= light < len(rs.hdri_pins):
             raise ValueError("No studio World light %d" % light)

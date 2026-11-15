@@ -23,7 +23,7 @@ NAMES = "ABCDEFGH"
 def _light_state(obj):
     data = obj.data
     state = {"type": data.type, "on": not obj.hide_render,
-             "matrix": [list(row) for row in obj.matrix_world], "lift": obj.render_studio_light.lift}
+             "matrix": [list(row) for row in obj.matrix_world], "lift": obj.studio_light.lift}
     for key in LIGHT_VALUES:
         if hasattr(data, key):
             value = getattr(data, key)
@@ -48,7 +48,7 @@ def _restore_light(scene, obj, state):
             except (TypeError, ValueError, AttributeError):
                 pass
     obj.matrix_world = Matrix(state["matrix"])
-    obj.render_studio_light.lift = state.get("lift", 0.0)
+    obj.studio_light.lift = state.get("lift", 0.0)
     obj.hide_render = obj.hide_viewport = not state.get("on", True)
     flag = environment.flag_of(obj)
     have = flag.get("as_pattern") if flag is not None else None
@@ -72,7 +72,7 @@ def _pin_state(pin):
 
 def capture(scene):
     """Everything a look holds, as plain data."""
-    rs = scene.render_studio
+    rs = scene.studio
     data = environment.capture(scene, "")
     data.pop("name", None)
     data["lights"] = {obj.name: _light_state(obj) for obj in lights.scene_lights(scene)}
@@ -84,7 +84,7 @@ def capture(scene):
 
 
 def apply(scene, data):
-    rs = scene.render_studio
+    rs = scene.studio
     solo = environment.solo_light(scene)
     if solo and bpy.data.objects.get(solo) is not None:
         environment.toggle_solo(scene, bpy.data.objects[solo])
@@ -122,11 +122,11 @@ def apply(scene, data):
 # ------------------------------------------------------------------ the looks of a scene
 
 def names(scene):
-    return [look.name for look in scene.render_studio.light_looks]
+    return [look.name for look in scene.studio.light_looks]
 
 
 def active(scene):
-    rs = scene.render_studio
+    rs = scene.studio
     return rs.light_look_index if 0 <= rs.light_look_index < len(rs.light_looks) else -1
 
 
@@ -134,7 +134,7 @@ def store(scene):
     """Writes the scene's current state into the open look."""
     index = active(scene)
     if index >= 0:
-        scene.render_studio.light_looks[index].data = json.dumps(capture(scene))
+        scene.studio.light_looks[index].data = json.dumps(capture(scene))
 
 
 def _next_name(scene):
@@ -145,7 +145,7 @@ def _next_name(scene):
 def add(scene):
     """A new look as a copy of what is there now; it becomes the open one. The first call also keeps the
     state so far as look A."""
-    rs = scene.render_studio
+    rs = scene.studio
     data = json.dumps(capture(scene))
     if not len(rs.light_looks):
         name = _next_name(scene)        # before adding: a new entry already carries a default name
@@ -161,7 +161,7 @@ def add(scene):
 
 
 def switch(scene, index):
-    rs = scene.render_studio
+    rs = scene.studio
     if not 0 <= index < len(rs.light_looks):
         raise ValueError("No look %r" % index)
     if index == active(scene):
@@ -183,7 +183,7 @@ def switch_name(scene, name):
 
 def remove(scene, index=None):
     """Removes a look (default: the open one) and opens its neighbor."""
-    rs = scene.render_studio
+    rs = scene.studio
     current = active(scene)
     index = current if index is None else index
     if not 0 <= index < len(rs.light_looks):

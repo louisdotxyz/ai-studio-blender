@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Material variants for the render queue (in execute_python as V).
 
-A queue entry can carry a variant (RS_Item.variant). The render worker applies it
+A queue entry can carry a variant (STUDIO_Item.variant). The render worker applies it
 to its own copy of the file (V.plan, runner), so your scene never changes. varianten.txt in the
 output folder lists file -> variant.
 
@@ -157,7 +157,7 @@ class V:
         from . import runner
         from .ui_common import active_camera, ensure_uids
         scene = bpy.context.scene
-        rq = scene.render_studio
+        rq = scene.studio
         variants = V.data()["variants"]
         missing = [n for n in names if n not in variants]
         if missing:
@@ -166,7 +166,7 @@ class V:
         runner.RUN.set_scene_camera(scene, cam)
         ensure_uids(rq)
         for name in names:
-            bpy.ops.render_studio.add(quality=quality)
+            bpy.ops.studio.add(quality=quality)
             rq.items[-1].variant = name
         if start and not runner.RUN.busy:
             runner.RUN.start(scene)
@@ -177,7 +177,7 @@ class V:
         from . import runner
         run = runner.RUN
         scene = bpy.context.scene
-        left = [it.variant or runner.item_label(scene, it) for it in scene.render_studio.items if it.camera]
+        left = [it.variant or runner.item_label(scene, it) for it in scene.studio.items if it.camera]
         return "busy=%s done=%d failed=%s now=%s %s | %s | open: %s" % (
             run.busy, run.done, run.failed, run.current_camera, run.status, run.message, left)
 
@@ -186,7 +186,7 @@ class V:
     def folder(quality=None):
         from . import core, runner
         root = runner.settings_from_prefs()[0]
-        rq = bpy.context.scene.render_studio
+        rq = bpy.context.scene.studio
         quality = QUALITY_ALIASES.get(str(quality or "").upper(), quality) or rq.quality
         return core.quality_dir(root, core.project_name(None, rq.output_name), quality)
 

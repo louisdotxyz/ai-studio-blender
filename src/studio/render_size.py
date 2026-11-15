@@ -50,8 +50,8 @@ def chosen(scene):
     return next((name for name, length in SIZES if abs(current - length) <= max(4, length * 0.01)), "")
 
 
-class RS_OT_render_size(Operator):
-    bl_idname = "render_studio.render_size"
+class STUDIO_OT_render_size(Operator):
+    bl_idname = "studio.render_size"
     bl_label = "Render Size"
     bl_options = {'UNDO', 'INTERNAL'}
 
@@ -71,7 +71,7 @@ def draw(layout, scene):
     row = layout.row(align=True)
     now = chosen(scene)
     for name, length in SIZES:
-        row.operator(RS_OT_render_size.bl_idname, text=name, depress=name == now).length = length
+        row.operator(STUDIO_OT_render_size.bl_idname, text=name, depress=name == now).length = length
     w, h = pixels(scene)
     sub = row.row(align=True)
     sub.alignment = 'RIGHT'
@@ -79,7 +79,7 @@ def draw(layout, scene):
     sub.label(text="%d × %d px" % (w, h))
 
 
-classes = (RS_OT_render_size,)
+classes = (STUDIO_OT_render_size,)
 
 
 def register():

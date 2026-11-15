@@ -21,7 +21,7 @@ MAX_VERTICAL = math.radians(90.0)
 MIN_DISTANCE = 0.001
 
 
-FOCUS_RADIUS = "render_studio_radius"   # on the focus empty of several objects (lights.focus_selection)
+FOCUS_RADIUS = "studio_radius"   # on the focus empty of several objects (lights.focus_selection)
 
 
 def target_center(target, lift=0.0):
@@ -114,7 +114,7 @@ def aim(camera, target, lift=0.0):
                                          camera.matrix_world.to_scale())
 
 
-# Getters/setters for the scene properties (RS_Settings) ---------------------
+# Getters/setters for the scene properties (STUDIO_Settings) ---------------------
 
 def _camera(settings):
     camera = settings.id_data.camera

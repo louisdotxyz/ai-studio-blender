@@ -67,7 +67,7 @@ def notify_command(message):
     if sys.platform != "darwin":
         return None
     script = "display notification %s with title %s sound name %s" % (
-        _applescript_string(message), _applescript_string("Render Studio"), _applescript_string("Glass"))
+        _applescript_string(message), _applescript_string("AI Studio"), _applescript_string("Glass"))
     return ["osascript", "-e", script]
 
 
@@ -78,7 +78,7 @@ def notify(message):
     try:
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except OSError as ex:
-        print("Render Studio: notification failed:", ex)
+        print("AI Studio: notification failed:", ex)
 
 
 def render_job_running():
@@ -272,9 +272,9 @@ _FINGERPRINT_PATHS = (
     "cycles.samples", "cycles.use_denoising", "cycles.use_adaptive_sampling", "cycles.adaptive_threshold",
     "cycles.max_bounces", "eevee.taa_render_samples", "view_settings.view_transform", "view_settings.look",
     "view_settings.exposure", "view_settings.gamma", "world", "frame_current",
-    "render_studio.background_mode", "render_studio.background_color", "render_studio.background_color_top",
-    "render_studio.use_gradient", "render_studio.noise_size", "render_studio.noise_intensity",
-    "render_studio.look_glow", "render_studio.look_contrast", "render_studio.look_vignette",
+    "studio.background_mode", "studio.background_color", "studio.background_color_top",
+    "studio.use_gradient", "studio.noise_size", "studio.noise_intensity",
+    "studio.look_glow", "studio.look_contrast", "studio.look_vignette",
 )
 
 
@@ -413,7 +413,7 @@ class Runner:
         if scene is None:
             return []
         cur = self.current["uid"] if self.current else None
-        return [item for item in scene.render_studio.items
+        return [item for item in scene.studio.items
                 if item.uid not in self.processed and item.uid != cur and item.camera is not None]
 
     def _remaining(self):
@@ -501,7 +501,7 @@ class Runner:
         their own (older files); every entry normally carries its own."""
         if self.busy:
             return   # already running: it reads the list live and takes new entries along
-        if not any(item.camera for item in scene.render_studio.items) and not _previews:
+        if not any(item.camera for item in scene.studio.items) and not _previews:
             raise RuntimeError("No camera in the queue")
         self._reset()
         self.message = ""
@@ -594,14 +594,14 @@ class Runner:
         tag_redraw()
 
     def _next_item(self, scene):
-        for item in scene.render_studio.items:
+        for item in scene.studio.items:
             if item.uid not in self.processed and item.camera is not None:
                 return item
         return None
 
     @staticmethod
     def _removed(scene, uid):
-        return not any(item.uid == uid for item in scene.render_studio.items)
+        return not any(item.uid == uid for item in scene.studio.items)
 
     def _tick(self):
         scene = self._scene()
@@ -622,7 +622,7 @@ class Runner:
 
     def _start_render(self, scene, item):
         camera = item.camera
-        rq = scene.render_studio
+        rq = scene.studio
         root, low_res, low_samples = settings_from_prefs()
         name = rq.output_name
         self.quality = item.quality if item.quality in {'LOW', 'HIGH'} else (self.default_quality or rq.quality)
@@ -655,6 +655,9 @@ class Runner:
             log("job could not be prepared: %s" % ex)
             self._job_failed(scene, item.uid, label)
             return
+        if self.animation:   # a film: its own process (goes on after a crash, resumes), in parts
+            self._start_film(scene, item, job, path, camera, name, label)
+            return
         if not self.animation:
             draft = os.path.join(jobs_dir(), "draft_%d" % item.uid)
             job["draft"] = {"path": draft, "stages": DRAFT_STAGES}
@@ -671,6 +674,26 @@ class Runner:
             log("worker did not start: %s" % ex)
             WORKER.kill()
             self._job_failed(scene, item.uid, label)
+
+    def _start_film(self, scene, item, job, folder, camera, name, label):
+        from . import film
+        if item.frame_end > 0 and item.frame_end >= item.frame_start:
+            frames = (item.frame_start, item.frame_end)
+        else:
+            frames = (scene.frame_start, scene.frame_end)
+        stem = os.path.basename(core.anim_frame_pattern(folder, camera.name, name)).rstrip("_")
+        video = scene.studio.anim_format if scene.studio.anim_format in film.VIDEOS else None
+        try:
+            film.start(scene, job, folder, stem, frames, item.parts or 1, video, label)
+        except Exception as ex:
+            log("film could not start: %s" % ex)
+            self._job_failed(scene, item.uid, label)
+            return
+        self.current = None
+        self.phase = 'START'
+        self.processed.add(item.uid)
+        remove_item(scene, item.uid)    # it runs on its own now: the bar above the chat shows it
+        self.done += 1
 
     def _start_preview(self, scene, request):
         """A quick render for Claude (render_preview): not in the list, nothing saved for the user."""
@@ -717,7 +740,7 @@ class Runner:
 
     def _job(self, scene, item, camera, output, low_res, low_samples):
         """The entry's settings as data for the worker – your scene is not changed for it."""
-        rq = scene.render_studio
+        rq = scene.studio
         snapshot = None
         camera_spec = None
         if item.has_snapshot:
@@ -767,23 +790,23 @@ class Runner:
         except OSError:
             return None
         lines = tail.replace("\r", "\n").splitlines()
-        marker = "RS job %s" % uid
+        marker = "W job %s" % uid
         start = max((i for i, line in enumerate(lines) if line.strip() == marker), default=None)
         if start is None:
             return None
         lines = lines[start + 1:]
         job = self.current
         for line in lines:
-            if line.startswith("RS done %s" % uid):
+            if line.startswith("W done %s" % uid):
                 return True
-            if line.startswith("RS fail %s" % uid):
+            if line.startswith("W fail %s" % uid):
                 log("worker: " + line[:300])
                 return False
         after = 0
         for i, line in enumerate(lines):
-            if line.startswith("RS draft-start %s" % uid):
+            if line.startswith("W draft-start %s" % uid):
                 job["drafting"] = True
-            elif line.startswith("RS draft %s" % uid):
+            elif line.startswith("W draft %s" % uid):
                 # The drafts' samples are not the entry's: only what comes after them counts.
                 job["drafting"] = False
                 after = i + 1
@@ -799,7 +822,7 @@ class Runner:
             return None
         for line in reversed(lines):
             line = line.strip()
-            if line.startswith("RS Sample"):
+            if line.startswith("W Sample"):
                 match = _SAMPLE_RE.search(line)
                 done, total = (int(match.group(1)), int(match.group(2))) if match else (0, 0)
                 tile, tiles = (int(match.group(3)), int(match.group(4))) if match and match.group(4) else (0, 1)
@@ -815,8 +838,8 @@ class Runner:
                 last_tile = tile + 1 >= tiles
                 self.status = "finishing" if total and done >= total and last_tile else "rendering"
                 return None
-            if line.startswith("RS Status"):
-                self.status = _status_label(line[len("RS Status"):].strip())
+            if line.startswith("W Status"):
+                self.status = _status_label(line[len("W Status"):].strip())
                 return None
         return None
 
@@ -890,7 +913,7 @@ def queue_images(scene, limit=60):
     """The queue's images, newest first: <name>_output/preview and HQ (also the newest
     of this session if it was moved away since). Looked up at most every 2 seconds."""
     root, _res, _samples = settings_from_prefs()
-    project = core.project_name(name=scene.render_studio.output_name)
+    project = core.project_name(name=scene.studio.output_name)
     key = (root, project, RUN.last_path)
     now = time.monotonic()
     if _images_cache["key"] == key and now - _images_cache["time"] < 2.0:
@@ -999,7 +1022,7 @@ def _device_settings():
     return {"compute_device_type": cycles.compute_device_type, "devices": devices}
 
 
-PREVIEW_IMAGE = "Render Studio · Last"
+PREVIEW_IMAGE = "AI Studio · Last"
 
 
 def show_in_preview(path):
@@ -1042,7 +1065,7 @@ def sharp_preview(image, size=PREVIEW_SIZE):
         image.preview.image_size = (w, h)
         image.preview.image_pixels_float.foreach_set(np.ascontiguousarray(small, dtype=np.float32).ravel())
     except Exception as ex:
-        print("Render Studio: sharp preview failed:", ex)
+        print("AI Studio: sharp preview failed:", ex)
         image.preview.reload()
 
 
@@ -1086,7 +1109,7 @@ def item_label(scene, item):
     return "%s · %d" % (item.camera.name, item.number) if item.number > 1 else item.camera.name
 
 
-TEMP_KEY = "render_studio_temp_camera"
+TEMP_KEY = "studio_temp_camera"
 
 
 def remove_temp_camera(name):
@@ -1107,14 +1130,14 @@ def remove_temp_cameras():
 
 def purge_deleted(scene):
     """Entries whose camera no longer exists leave the list."""
-    items = scene.render_studio.items
+    items = scene.studio.items
     for i in reversed(range(len(items))):
         if items[i].camera is None:
             items.remove(i)
 
 
 def remove_item(scene, uid):
-    items = scene.render_studio.items
+    items = scene.studio.items
     for i, item in enumerate(items):
         if item.uid == uid:
             items.remove(i)

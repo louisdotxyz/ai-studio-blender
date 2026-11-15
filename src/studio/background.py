@@ -9,7 +9,7 @@ The setting changes the scene right away:
 - Color: Film > Transparent on plus an Alpha Over in the compositor with the
   color as background. An Alpha Over that already feeds the compositor output
   (e.g. one you built yourself) is used and overwritten, otherwise one named
-  "RS Background" is inserted in front of the output. The viewport compositor
+  "Studio Background" is inserted in front of the output. The viewport compositor
   is switched on ("Camera"), so Material Preview and Rendered show the color
   when looking through the camera.
 
@@ -27,9 +27,9 @@ import tempfile
 
 import bpy
 
-PREFIX = "RS Background"
+PREFIX = "Studio Background"
 N_ALPHA = PREFIX
-TREE_NAME = "Render Studio Compositor"
+TREE_NAME = "AI Studio Compositor"
 
 _cache = {}        # scene name -> state the node color was computed for
 _busy = [False]    # no re-entry while computing (save_render causes depsgraph updates)
@@ -53,8 +53,8 @@ class _ViewTransform:
 
     def __init__(self, scene):
         self.scene = scene
-        self.path = os.path.join(tempfile.gettempdir(), "render_studio_view_probe.png")
-        self.image = bpy.data.images.new("_render_studio_probe", 4, 1, float_buffer=True, alpha=False)
+        self.path = os.path.join(tempfile.gettempdir(), "studio_view_probe.png")
+        self.image = bpy.data.images.new("_studio_probe", 4, 1, float_buffer=True, alpha=False)
 
     def close(self):
         bpy.data.images.remove(self.image)
@@ -324,7 +324,7 @@ def remove_color(scene):
         if source is not None:
             for socket in targets:
                 tree.links.new(source, socket)
-    # 0.5 left more nodes ("RS Background …")
+    # 0.5 left more nodes ("Studio Background …")
     for extra in [n for n in tree.nodes if n.name.startswith(PREFIX)]:
         tree.nodes.remove(extra)
     if tree.name.startswith(TREE_NAME) and {n.bl_idname for n in tree.nodes} <= {
@@ -436,7 +436,7 @@ def set_world_strength(settings, value):
 # -------------------------------------------------------------------- Sync
 
 def _state(scene):
-    rs = scene.render_studio
+    rs = scene.studio
     view, display = scene.view_settings, scene.display_settings
     node = alpha_node(scene)
     return (rs.background_mode, tuple(round(c, 5) for c in rs.background_color),
@@ -458,12 +458,12 @@ def sync(scene, force=False, viewport=False):
     _busy[0] = True
     try:
         _cache[scene.name] = state   # first, so updates during the work do not start it again
-        mode = scene.render_studio.background_mode
+        mode = scene.studio.background_mode
         transparent = mode != 'NORMAL'
         if scene.render.film_transparent != transparent:
             scene.render.film_transparent = transparent
         if mode == 'COLOR':
-            rs = scene.render_studio
+            rs = scene.studio
             bottom = linear_for_display(scene, tuple(rs.background_color))
             top = linear_for_display(scene, tuple(rs.background_color_top)) if rs.use_gradient else bottom
             ensure_color(scene, bottom, top, rs.noise_size, rs.noise_intensity)
@@ -482,7 +482,7 @@ def sync(scene, force=False, viewport=False):
 # ------------------------------------------------- Clean-up of version 0.6
 
 def remove_world_nodes():
-    """0.6 put the color into the World ("RS Background Mix"). Take it out again."""
+    """0.6 put the color into the World ("Studio Background Mix"). Take it out again."""
     for world in bpy.data.worlds:
         tree = world.node_tree
         mix = tree.nodes.get(PREFIX + " Mix") if tree else None
@@ -497,7 +497,7 @@ def remove_world_nodes():
                 tree.links.new(source, socket)
 
 
-# Property updates (RS_Settings) -----------------------------------------------
+# Property updates (STUDIO_Settings) -----------------------------------------------
 
 def on_mode(settings, _context):
     sync(settings.id_data, force=True, viewport=True)
@@ -516,12 +516,12 @@ def _on_load_post(*_args):
         try:
             sync(scene, force=True)
         except Exception as ex:
-            print("Render Studio: background:", ex)
+            print("AI Studio: background:", ex)
     # The viewport compositor only where a scene uses Color.
     try:
-        set_viewport_compositor(any(s.render_studio.background_mode == 'COLOR' for s in bpy.data.scenes))
+        set_viewport_compositor(any(s.studio.background_mode == 'COLOR' for s in bpy.data.scenes))
     except Exception as ex:
-        print("Render Studio: viewport compositor:", ex)
+        print("AI Studio: viewport compositor:", ex)
 
 
 def _later():

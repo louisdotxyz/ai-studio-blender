@@ -1,0 +1,306 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Films (animations) render in their own Blender process (film_job.py), not in the queue's worker:
+
+- each film has its own frame range (the queue entry keeps the scene's range of when it was added)
+  and renders in N parts one after the other, each part also as a video, at the end the whole film;
+- the process has its own process group: it goes on when this Blender crashes or is closed;
+- frames that are there are skipped: a film that stopped (crash, Stop) resumes where it was;
+- progress (part, frame, time left) comes from its status.json, shown above the chat and in the
+  Render tab.
+
+The films are listed in <data dir>/films.json; each one's files are in its folder's .film/
+(scene copy, job, status, log)."""
+
+import json
+import os
+import signal
+import subprocess
+import time
+
+import bpy
+from bpy.props import StringProperty
+from bpy.types import Operator
+
+SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "film_job.py")
+FILM_DIR = ".film"
+VIDEOS = {'MP4': "MP4", 'PRORES': "PRORES"}
+
+
+def _registry():
+    from .paths import data_dir
+    return os.path.join(data_dir(), "films.json")
+
+
+def _load():
+    try:
+        with open(_registry(), encoding="utf-8") as f:
+            films = json.load(f)
+        return [f for f in films if isinstance(f, dict) and f.get("dir")]
+    except (OSError, ValueError):
+        return []
+
+
+def _save(films):
+    path = _registry()
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(films, f, indent=1)
+    os.replace(tmp, path)
+
+
+def _alive(pid):
+    if not pid:
+        return False
+    try:
+        os.kill(int(pid), 0)
+    except (OSError, ValueError):
+        return False
+    try:   # a finished child that was not collected yet counts as gone
+        done, _status = os.waitpid(int(pid), os.WNOHANG)
+        return done == 0
+    except ChildProcessError:
+        return True
+    except OSError:
+        return True
+
+
+def read_status(film):
+    try:
+        with open(os.path.join(film["dir"], "status.json"), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _command(film_dir):
+    cmd = [bpy.app.binary_path, "-b", os.path.join(film_dir, "scene.blend"), "--factory-startup", "-noaudio"]
+    try:
+        if bpy.context.preferences.filepaths.use_scripts_auto_execute:
+            cmd.append("-y")   # drivers with Python, as in your Blender
+    except AttributeError:
+        pass
+    return cmd + ["--python-exit-code", "3", "--python", SCRIPT, "--", os.path.join(film_dir, "job.json")]
+
+
+def _launch(film_dir):
+    log = open(os.path.join(film_dir, "log.txt"), "a", encoding="utf-8")
+    try:
+        proc = subprocess.Popen(_command(film_dir), stdout=log, stderr=subprocess.STDOUT,
+                                stdin=subprocess.DEVNULL, start_new_session=True)
+    finally:
+        log.close()
+    return proc.pid
+
+
+def start(scene, job, folder, stem, frames, parts, video, label):
+    """Save a copy of the file into <folder>/.film, write the job and start the film's process.
+    `job` is the queue's job (overrides, camera, variant). Returns the film's entry."""
+    from . import runner
+    film_dir = os.path.join(folder, FILM_DIR)
+    os.makedirs(film_dir, exist_ok=True)
+    runner.RUN.preparing = True   # the save handlers must not take this copy for the user's save
+    try:
+        bpy.ops.wm.save_as_mainfile(filepath=os.path.join(film_dir, "scene.blend"), copy=True, compress=False,
+                                    relative_remap=True, check_existing=False)
+    finally:
+        runner.RUN.preparing = False
+    data = {"scene": scene.name, "overrides": job["overrides"], "camera": job.get("camera"),
+            "variant": job.get("variant") or [], "frames": list(frames), "parts": int(max(1, parts)),
+            "pattern": os.path.join(folder, stem + "_"), "out": os.path.join(folder, stem),
+            "video": VIDEOS.get(video), "devices": runner._device_settings()}
+    with open(os.path.join(film_dir, "job.json"), "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=1)
+    entry = {"dir": film_dir, "folder": folder, "label": label, "pid": _launch(film_dir),
+             "added": time.time()}
+    films = [f for f in _load() if f["dir"] != film_dir] + [entry]
+    _save(films)
+    runner.log("film %s started (%d frames, %d parts, pid %s)" % (label, frames[1] - frames[0] + 1,
+                                                                   data["parts"], entry["pid"]))
+    _ensure_timer()
+    return entry
+
+
+def films():
+    """[(entry, status, state)] state: 'RENDERING', 'ENCODING', 'PAUSED' (stopped or crashed: resume),
+    'FAILED' or 'DONE'."""
+    out = []
+    for film in _load():
+        st = read_status(film)
+        alive = _alive(film.get("pid"))
+        state = st.get("state", "")
+        if state == "done":
+            kind = 'DONE'
+        elif alive:
+            kind = 'ENCODING' if state == "encoding" else 'RENDERING'
+        elif state == "failed":
+            kind = 'FAILED'
+        else:
+            kind = 'PAUSED'
+        out.append((film, st, kind))
+    return out
+
+
+def running():
+    return [f for f in films() if f[2] in {'RENDERING', 'ENCODING'}]
+
+
+def time_left(st):
+    per, done, total = st.get("per_frame"), st.get("done", 0), st.get("total", 0)
+    return per * max(0, total - done) if per else None
+
+
+def text(film, st, kind):
+    """"P_front · Part 2/4 · 250/960 · ~12 min left" """
+    from .runner import format_time
+    parts = st.get("parts", 1)
+    bits = [film.get("label", "Film")]
+    if parts > 1:
+        bits.append("Part %d/%d" % (st.get("part", 1), parts))
+    bits.append("%d/%d" % (st.get("done", 0), st.get("total", 0) or 1))
+    if kind == 'RENDERING':
+        left = time_left(st)
+        if left is not None:
+            bits.append("~%s left" % format_time(left))
+    elif kind == 'ENCODING':
+        bits.append("making the video")
+    elif kind == 'PAUSED':
+        bits.append("stopped")
+    elif kind == 'FAILED':
+        bits.append(st.get("error", "failed")[:60])
+    return " · ".join(bits)
+
+
+def progress(st):
+    total = st.get("total", 0)
+    return min(1.0, st.get("done", 0) / total) if total else 0.0
+
+
+def stop(film_dir):
+    """Stop the film's process (its frames stay, Resume goes on)."""
+    for film in _load():
+        if film["dir"] == film_dir and _alive(film.get("pid")):
+            try:
+                os.killpg(int(film["pid"]), signal.SIGTERM)
+            except (OSError, ValueError):
+                try:
+                    os.kill(int(film["pid"]), signal.SIGTERM)
+                except (OSError, ValueError):
+                    pass
+
+
+def resume(film_dir):
+    films_now = _load()
+    for film in films_now:
+        if film["dir"] == film_dir and not _alive(film.get("pid")):
+            if not os.path.exists(os.path.join(film_dir, "scene.blend")):
+                raise ValueError("The film's scene copy is gone: render it again")
+            film["pid"] = _launch(film_dir)
+    _save(films_now)
+    _ensure_timer()
+
+
+def forget(film_dir):
+    """Take the film off the list (its files stay)."""
+    _save([f for f in _load() if f["dir"] != film_dir])
+
+
+def _video_or_frame(film):
+    folder = film.get("folder") or os.path.dirname(film["dir"])
+    try:
+        names = sorted(os.listdir(folder))
+    except OSError:
+        return ""
+    videos = [n for n in names if n.lower().endswith((".mp4", ".mov")) and "_part_" not in n]
+    frames = [n for n in names if n.lower().endswith((".png", ".jpg", ".exr"))]
+    pick = videos[-1] if videos else frames[-1] if frames else ""
+    return os.path.join(folder, pick) if pick else ""
+
+
+_seen = {}
+
+
+def _poll():
+    """Every 2 s while films run: redraw the bars; a film that finished is announced and leaves the list."""
+    from . import runner
+    try:
+        now = films()
+    except Exception as ex:
+        print("AI Studio: films:", ex)
+        return 5.0
+    for film, st, kind in now:
+        key = film["dir"]
+        if kind == 'DONE' and _seen.get(key) != 'DONE':
+            runner.log("film done: %s" % film.get("label"))
+            runner.notify("%s is ready" % film.get("label", "The film"))
+            result = _video_or_frame(film)
+            if result:
+                runner.log("film result: %s" % result)
+            forget(key)
+        _seen[key] = kind
+    runner.tag_redraw()
+    return 2.0 if any(k in {'RENDERING', 'ENCODING'} for _f, _s, k in now) else None
+
+
+def _ensure_timer():
+    if not bpy.app.timers.is_registered(_poll):
+        bpy.app.timers.register(_poll, first_interval=1.0, persistent=True)
+
+
+def draw(layout, buttons=True):
+    """One row per film: progress with part, frame and time left; Stop / Resume / ✕."""
+    for film, st, kind in films():
+        if kind == 'DONE':
+            continue
+        row = layout.row(align=True)
+        if kind in {'RENDERING', 'ENCODING'}:
+            row.progress(factor=progress(st), type='BAR', text=text(film, st, kind))
+            if buttons:
+                row.operator("studio.film", text="", icon='PAUSE').film = film["dir"]
+        else:
+            row.label(text=text(film, st, kind), icon='ERROR' if kind == 'FAILED' else 'PAUSE',
+                      translate=False)
+            if buttons:
+                op = row.operator("studio.film", text="", icon='PLAY')
+                op.film, op.action = film["dir"], "RESUME"
+                op = row.operator("studio.film", text="", icon='X')
+                op.film, op.action = film["dir"], "FORGET"
+
+
+class STUDIO_OT_film(Operator):
+    bl_idname = "studio.film"
+    bl_label = "Film"
+    bl_options = {'INTERNAL'}
+
+    film: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    action: StringProperty(default="STOP", options={'HIDDEN', 'SKIP_SAVE'})   # STOP / RESUME / FORGET
+
+    @classmethod
+    def description(cls, _context, props):
+        return {"STOP": "Stop the film (the frames stay; Resume goes on where it stopped)",
+                "RESUME": "Go on where the film stopped (frames that are there are skipped)",
+                "FORGET": "Take the film off the list (its files stay)"}.get(props.action, "")
+
+    def execute(self, context):
+        try:
+            {"STOP": stop, "RESUME": resume, "FORGET": forget}[self.action](self.film)
+        except (ValueError, KeyError) as ex:
+            self.report({'ERROR'}, str(ex))
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
+classes = (STUDIO_OT_film,)
+
+
+def register():
+    for cls in classes:
+        bpy.utils.register_class(cls)
+    if any(k in {'RENDERING', 'ENCODING'} for _f, _s, k in films()):
+        _ensure_timer()     # films still running from before (also after a crash of this Blender)
+
+
+def unregister():
+    if bpy.app.timers.is_registered(_poll):
+        bpy.app.timers.unregister(_poll)
+    for cls in reversed(classes):
+        bpy.utils.unregister_class(cls)
