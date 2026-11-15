@@ -8,7 +8,7 @@
       "id": "AI_Studio",
       "name": "AI Studio",
       "tagline": "Part of ID Toolkit: render, CAD hand-over and a Claude chat",
-      "version": "3.0.0",
+      "version": "3.0.2",
       "type": "add-on",
       "maintainer": "louisdotxyz",
       "license": [
@@ -30,9 +30,9 @@
         "macos-arm64",
         "macos-x64"
       ],
-      "archive_url": "./AI_Studio-3.0.0.zip",
-      "archive_size": 449487,
-      "archive_hash": "sha256:f391ca99725ce840ad1be468b79ac3e302928103d20573025b54f7882a0c8204"
+      "archive_url": "./AI_Studio-3.0.2.zip",
+      "archive_size": 450381,
+      "archive_hash": "sha256:04e674a215275951de7252c377af05b177c456c11f7326f1034a1f0519747fe6"
     }
   ]
 }
