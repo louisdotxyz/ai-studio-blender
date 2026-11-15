@@ -1634,9 +1634,11 @@ def product_render_setup():
           and any(d.use and d.type != 'CPU' for d in cprefs.devices), cprefs.compute_device_type)
     check("product setup explains itself", len(said) >= 8 and any("millimeters" in s for s in said))
     rs.apply(scene)   # pressed twice: Undo still goes back to the very first state
-    check("undo: everything as before", rs.undo(scene) and (scene.render.engine, scene.cycles.samples,
-          scene.view_settings.view_transform, scene.unit_settings.length_unit, scene.cycles.max_bounces) == start
-          and cprefs.compute_device_type == device_before and not rs.is_set(scene))
+    undone = rs.undo(scene)
+    now = (scene.render.engine, scene.cycles.samples, scene.view_settings.view_transform,
+           scene.unit_settings.length_unit, scene.cycles.max_bounces)
+    check("undo: everything as before", undone and now == start and cprefs.compute_device_type == device_before
+          and not rs.is_set(scene), (undone, now, start, cprefs.compute_device_type, device_before))
     scene.render.engine, scene.cycles.samples, scene.view_settings.view_transform, \
         scene.unit_settings.length_unit, scene.cycles.max_bounces = before
 
