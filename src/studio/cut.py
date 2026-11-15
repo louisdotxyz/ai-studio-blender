@@ -138,10 +138,26 @@ def cut_scene(scene=None, create=False):
     return cut
 
 
+def sequencer_scenes():
+    """The scenes the sequencers show (Blender 5: each workspace has its sequencer scene), the Video
+    Editing workspace's first."""
+    spaces = sorted(bpy.data.workspaces, key=lambda w: "video" not in w.name.lower())
+    out = []
+    for space in spaces:
+        found = getattr(space, "sequencer_scene", None)
+        if found is not None and found not in out:
+            out.append(found)
+    return out
+
+
 def _editing_scene(scene):
-    """A scene the user already edits in: the one open in a Video Editing window, else one named like a
-    cut ("Schnitt", "schnitt", "Cut", "Edit") – not the film's own scene, not another film's cut."""
+    """A scene the user already edits in: the sequencer scene of the Video Editing workspace (Blender 5),
+    the one open in a Video Editing window, else one named like a cut ("Schnitt", "Cut", "Edit") – never
+    the film's own scene or another film's cut."""
     free = [s for s in bpy.data.scenes if s is not scene and not s.get(SOURCE_KEY)]
+    for found in sequencer_scenes():
+        if found in free:
+            return found
     wm = bpy.context.window_manager
     for window in (wm.windows if wm else ()):
         if "video" in window.workspace.name.lower() and window.scene in free:
@@ -214,9 +230,40 @@ def _remove_ours(cut):
             cut.timeline_markers.remove(marker)
 
 
+def video_name(section):
+    return re.sub(r'[/\\:*?"<>|]', "_", section).strip() or "Section"
+
+
+def section_video(section):
+    """The section's video as the films put it: <animation>/<section>.mp4 (newest render), or ""."""
+    for ext in (".mp4", ".mov"):
+        path = os.path.join(_anim_folder(), video_name(section) + ext)
+        if os.path.isfile(path):
+            return path
+    return ""
+
+
+def _adopt(cut, scene):
+    """Strips someone put in by hand for a section ("01 Hero.mp4"): they become ours (replaced by the
+    build). Other strips stay."""
+    sed = cut.sequence_editor
+    if sed is None:
+        return
+    names = {video_name(m.name).lower(): m.name for m, _s, _e in motion.sections(scene)}
+    for strip in _all(sed):
+        if _get(strip, KIND_KEY):
+            continue
+        stem = os.path.splitext(strip.name)[0].lower()
+        stem = re.sub(r"\.\d{3}$", "", stem)
+        if stem in names:
+            _tag(strip, "SECTION", names[stem])
+
+
 def build(scene):
-    """(cut scene, report): the sections as strips with transitions, holds and music."""
+    """(cut scene, report): the sections as strips (their videos, else their frames) with transitions,
+    holds and music."""
     cut = cut_scene(scene, create=True)
+    _adopt(cut, scene)
     render, out = scene.render, cut.render
     pct = render.resolution_percentage / 100
     out.resolution_x = max(2, round(render.resolution_x * pct) // 2 * 2)
@@ -230,16 +277,21 @@ def build(scene):
     report = {"sections": [], "missing": [], "stills": []}
     at, previous, previous_item, placed = 1, None, None, 0
     for marker, start, end in motion.sections(scene):
-        paths = source(scene.name, start, end, found)
-        if paths is None:
+        video = section_video(marker.name)
+        paths = None if video else source(scene.name, start, end, found)
+        if not video and paths is None:
             report["missing"].append(marker.name)
             continue
         item = settings(scene, marker.name)
+        length = end - start + 1
         if previous is not None and previous_item.transition == 'CROSS':
-            at -= min(previous_item.frames, previous.frame_final_duration, len(paths))
+            at -= min(previous_item.frames, previous.frame_final_duration, length)
         channel = 1 + placed % 2
         placed += 1
-        strip = _image(strips, marker.name, paths, channel, at)
+        if video:
+            strip = strips.new_movie(name=marker.name, filepath=video, channel=channel, frame_start=at)
+        else:
+            strip = _image(strips, marker.name, paths, channel, at)
         _tag(strip, "SECTION", marker.name)
         if previous is not None and previous_item.transition == 'CROSS':
             overlap = previous.frame_final_end - strip.frame_final_start
@@ -251,13 +303,20 @@ def build(scene):
             _dip(cut, strips, previous_item, strip.frame_final_start, marker.name)
         last = strip
         if item.hold:
-            hold = _image(strips, "%s hold" % marker.name, paths[-1:], channel, strip.frame_final_end)
+            frames = paths or source(scene.name, start, end, found)
+            if frames:
+                hold = _image(strips, "%s hold" % marker.name, frames[-1:], channel, strip.frame_final_end)
+            else:                                   # only the video: its last image held
+                hold = strips.new_movie(name="%s hold" % marker.name, filepath=video, channel=channel,
+                                        frame_start=strip.frame_final_end)
+                hold.frame_offset_start = max(0, hold.frame_duration - 1)
             hold.frame_final_duration = item.hold
             _tag(hold, "HOLD", marker.name)
-            os.makedirs(cut_folder(), exist_ok=True)
-            still = os.path.join(cut_folder(), "%s_still.png" % re.sub(r"[^\w\- ]", "_", marker.name))
-            shutil.copyfile(paths[-1], still)
-            report["stills"].append(still)
+            if frames:
+                os.makedirs(cut_folder(), exist_ok=True)
+                still = os.path.join(cut_folder(), "%s_still.png" % re.sub(r"[^\w\- ]", "_", marker.name))
+                shutil.copyfile(frames[-1], still)
+                report["stills"].append(still)
             last = hold
         report["sections"].append(marker.name)
         at = last.frame_final_end
@@ -418,7 +477,7 @@ def export(scene, path=None):
             images.media_type = keep[2]
         render.use_file_extension = keep[3]
     with open(os.path.join(work, "job.json"), "w", encoding="utf-8") as f:
-        json.dump({"scene": cut.name, "out": path, "frames": [cut.frame_start, cut.frame_end]}, f)
+        json.dump({"scene": cut.name, "out": path, "frames": [cut.frame_start, cut.frame_end], "cut": True}, f)
     status = os.path.join(work, "status.json")
     total = cut.frame_end - cut.frame_start + 1
     log = os.path.join(work, "log.txt")
@@ -493,7 +552,17 @@ def open_cut(context, cut):
                    default=None)
         if area is not None:
             area.type = 'SEQUENCE_EDITOR'
-    window.scene = cut
+    target = space or window.workspace
+    if hasattr(target, "sequencer_scene"):         # Blender 5: the sequencer shows its own scene
+        target.sequencer_scene = cut
+    else:
+        window.scene = cut
+    for screen in ([window.screen] + ([s for s in getattr(target, "screens", [])] if target else [])):
+        for area in screen.areas:                  # the sidebar with the Studio tab open
+            if area.type == 'SEQUENCE_EDITOR':
+                for sp in area.spaces:
+                    if sp.type == 'SEQUENCE_EDITOR' and getattr(sp, "view_type", "") != 'PREVIEW':
+                        sp.show_region_ui = True
 
 
 # ------------------------------------------------------------------ operators
@@ -504,6 +573,8 @@ CUT_ACTIONS = (
                              "strips are replaced, your own stay)"),
     ('REFRESH', "Newest Frames", "The section strips take the newest renders (where and how long they are stays)"),
     ('BACK', "Back to the Film", "Back to the 3D scene"),
+    ('ADOPT', "Put the Sections in Here", "This sequencer scene becomes the film's cut: its sections' videos go in "
+                                           "(and come in by themselves after every render)"),
     ('SNAP', "Sections on Beats", "Every section a whole number of beats long (the sections after it move along, "
                                   "with their keys)"),
     ('EXPORT', "Export MP4", "The cut as MP4 (H.264, high) in its own process"),
@@ -542,6 +613,19 @@ class STUDIO_OT_cut(Operator):
                 open_cut(context, cut)
                 if report and report["missing"]:
                     self.report({'WARNING'}, "Not rendered yet: %s" % ", ".join(report["missing"]))
+            elif self.action == 'ADOPT':
+                target = getattr(context, "sequencer_scene", None)
+                if target is None or target is main:
+                    target = bpy.data.scenes.new(CUT_SCENE)
+                    for space in bpy.data.workspaces:
+                        if "video" in space.name.lower() and hasattr(space, "sequencer_scene"):
+                            space.sequencer_scene = target
+                for other in bpy.data.scenes:      # one cut per film
+                    if other.get(SOURCE_KEY) == main.name and other is not target:
+                        del other[SOURCE_KEY]
+                target[SOURCE_KEY] = main.name
+                cut, report = build(main)
+                self.report({'INFO'}, "Cut in %s: %d sections" % (cut.name, len(report["sections"])))
             elif self.action == 'BUILD':
                 cut, report = build(main)
                 text = "Cut: %d sections" % len(report["sections"])
@@ -551,7 +635,8 @@ class STUDIO_OT_cut(Operator):
             elif self.action == 'REFRESH':
                 self.report({'INFO'}, "%d strips took newer frames" % refresh(main))
             elif self.action == 'BACK':
-                context.window.scene = main
+                if context.window.scene is not main:
+                    context.window.scene = main
                 space = bpy.data.workspaces.get("Layout")
                 if space is not None:
                     context.window.workspace = space
@@ -664,16 +749,19 @@ class STUDIO_PT_cut(Panel):
     bl_category = "Studio"
     bl_label = "Cut"
 
-    @classmethod
-    def poll(cls, context):
-        return context.scene is not None and bool(context.scene.get(SOURCE_KEY))
-
     def draw(self, context):
         layout = self.layout
-        cut = context.scene
+        cut = getattr(context, "sequencer_scene", None) or context.scene
         main = source_scene(cut)
         if main is None:
-            layout.label(text="The film's scene is gone", icon='ERROR')
+            film_scene = context.scene if context.scene is not cut else None
+            col = layout.column()
+            if film_scene is not None and film_scene.timeline_markers:
+                col.label(text="Films of %s:" % film_scene.name, icon='SEQUENCE', translate=False)
+                col.operator(STUDIO_OT_cut.bl_idname, text="Put the Sections in Here",
+                             icon='IMPORT').action = 'ADOPT'
+            else:
+                col.label(text="No film with sections in this window", icon='INFO')
             return
         row = layout.row(align=True)
         row.operator(STUDIO_OT_cut.bl_idname, text="Back to the Film", icon='LOOP_BACK').action = 'BACK'
@@ -719,14 +807,40 @@ class STUDIO_PT_cut(Panel):
         film.draw(layout)
 
 
-def on_film_done():
-    """A film finished: the cut takes its frames."""
+def sync(scene):
+    """After a film: its videos are in the cut. Same files → the strips read them again; a section new
+    or with another length → the cut is built again (your own strips stay). Returns what it did."""
+    cut = cut_scene(scene)
+    if cut is None or not ours(cut):
+        build(scene)
+        return "built"
+    by_section = {_get(s, SECTION_KEY): s for s in ours(cut) if _get(s, KIND_KEY) == "SECTION"}
+    for marker, start, end in motion.sections(scene):
+        video = section_video(marker.name)
+        strip = by_section.get(marker.name)
+        if not video:
+            continue
+        if strip is None or getattr(strip, "filepath", None) is None or \
+                os.path.normcase(bpy.path.abspath(strip.filepath)) != os.path.normcase(video):
+            build(scene)
+            return "built"
+        strip.filepath = strip.filepath                 # read again (rendered again under the same name)
+        if strip.frame_duration != end - start + 1:
+            build(scene)
+            return "built"
+    _reload(cut)
+    return "reloaded"
+
+
+def on_film_done(scene_name=None):
+    """A film finished: its videos go into the cut (made the first time)."""
     for scene in bpy.data.scenes:
-        if not scene.get(SOURCE_KEY) and cut_scene(scene) is not None:
-            try:
-                refresh(scene)
-            except (RuntimeError, ReferenceError, OSError) as ex:
-                print("AI Studio: cut:", ex)
+        if scene.get(SOURCE_KEY) or (scene_name and scene.name != scene_name) or not scene.timeline_markers:
+            continue
+        try:
+            sync(scene)
+        except (RuntimeError, ReferenceError, OSError, ValueError) as ex:
+            print("AI Studio: cut:", ex)
 
 
 classes = (STUDIO_OT_cut, STUDIO_OT_cut_strip, STUDIO_OT_cut_settings, STUDIO_PT_cut)

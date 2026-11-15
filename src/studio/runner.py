@@ -715,6 +715,7 @@ class Runner:
                     for m, s, e in motion.sections(scene) if e >= frames[0] and s <= frames[1]]
             if runs:
                 job["runs"] = runs
+                job["titles"] = {core.safe_name(m.name): m.name for m, _s, _e in motion.sections(scene)}
             if len(runs) > 1:          # several sections: each with its own camera (Blender switches)
                 job["overrides"] = [o for o in job["overrides"] if not o[0].startswith("timeline_markers[")]
         try:

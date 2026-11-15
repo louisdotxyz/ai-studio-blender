@@ -194,6 +194,37 @@ def results(folder):
     return whole, parts
 
 
+def _publish(folder, whole, parts):
+    """A finished film's videos next to its folder under the sections' names: <animation>/01 Hero.mp4
+    (the newest render of each section; the one before goes to archiv). Returns the film's scene name."""
+    try:
+        with open(os.path.join(folder, FILM_DIR, "job.json"), encoding="utf-8") as f:
+            job = json.load(f)
+    except (OSError, ValueError):
+        return ""
+    if job.get("cut") or not job.get("runs"):
+        return ""
+    titles = job.get("titles") or {}
+    runs = job["runs"]
+    videos = {}
+    if len(runs) == 1 and whole:
+        videos[titles.get(runs[0][2], runs[0][2])] = whole
+    for safe, video in parts:
+        videos[titles.get(safe, safe)] = video
+    from .cut import video_name
+    root = os.path.dirname(folder)
+    import shutil
+    for title, video in videos.items():
+        target = os.path.join(root, video_name(title) + os.path.splitext(video)[1])
+        if os.path.isfile(target):
+            old = os.path.join(root, "archiv", "%s %s%s" % (video_name(title), time.strftime("%Y-%m-%d %H%M%S"),
+                                                            os.path.splitext(target)[1]))
+            os.makedirs(os.path.dirname(old), exist_ok=True)
+            os.replace(target, old)
+        shutil.copyfile(video, target)
+    return job.get("scene", "")
+
+
 def _clear_old_frames(folder, stem):
     """A new film into a folder that has frames already (a name used again): they go to archiv first,
     else Blender would keep them (frames that are there are skipped so a film can resume)."""
@@ -348,12 +379,18 @@ def _poll():
             if result:
                 runner.log("film result: %s" % result)
             whole, parts = results(film.get("folder") or os.path.dirname(key))
+            try:
+                scene_name = _publish(film.get("folder") or os.path.dirname(key), whole, parts)
+            except OSError as ex:
+                runner.log("film videos not put next to the films: %s" % ex)
+                scene_name = ""
+            if scene_name and mine(film):
+                from . import cut
+                cut.on_film_done(scene_name)
             FINISHED.append({"label": film.get("label", ""), "video": whole, "sections": parts,
                              "folder": film.get("folder", ""), "when": time.time(), "blend": film.get("blend", "")})
             del FINISHED[:-20]
             forget(key)
-            from . import cut
-            cut.on_film_done()
         _seen[key] = kind
     runner.tag_redraw()
     return 2.0 if any(k in {'RENDERING', 'ENCODING'} for _f, _s, k in now) else None

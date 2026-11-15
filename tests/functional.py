@@ -2539,6 +2539,20 @@ def film_fixes():
     archived = os.listdir(os.path.join(TMP, "archiv"))
     check("new film: older frames go to archiv", moved == 2 and not any(n.endswith(".png") for n in os.listdir(folder))
           and len(archived) == 1, (moved, archived))
+    # a finished section film: its video next to the films as "01 Intro.mp4", the one before into archiv
+    anim = os.path.join(TMP, "anim_publish")
+    film_dir = os.path.join(anim, "Film_low_01")
+    os.makedirs(os.path.join(film_dir, ".film"), exist_ok=True)
+    with open(os.path.join(film_dir, ".film", "job.json"), "w") as f:
+        json.dump({"scene": "S", "out": os.path.join(film_dir, "Film"), "runs": [[1, 50, "01_Intro"]],
+                   "titles": {"01_Intro": "01 Intro"}}, f)
+    video = os.path.join(film_dir, "Film.mp4")
+    for _round in (1, 2):
+        open(video, "w").write("video %d" % _round)
+        film._publish(film_dir, video, [])
+    published = os.path.join(anim, "01 Intro.mp4")
+    check("film video under the section's name, the older one in archiv", open(published).read() == "video 2"
+          and len(os.listdir(os.path.join(anim, "archiv"))) == 1, os.listdir(anim))
 
 
 @section
