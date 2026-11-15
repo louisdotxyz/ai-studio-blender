@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The Finish tab: the finished render. Its preview, refining it with Krea, then adjusting it like a raw
+"""The Refine tab: the finished render. Its preview, refining it with Krea, then adjusting it like a raw
 photo (image_edit; saved as a new file next to it). The look of the live camera (exposure, glow …) is in the
 Camera tab (look.draw); its saved looks and the viewport switch are defined here."""
 
@@ -381,7 +381,7 @@ def _scale_and_mask(scene, source, width, height, used, zoom, view, protect):
 
 
 def refine(scene, prompt, model=None, environment=None, zoom=None, view=None, protect=None):
-    """Refines the render shown in the Finish tab with the API token; the choices of the tab where an
+    """Refines the render shown in the Refine tab with the API token; the choices of the tab where an
     argument is None. Returns (result path, model used, width, height)."""
     prompt, used, refs, zoom, view, protect, source, width, height, room = _choices(
         prompt, model, environment, zoom, view, protect)
@@ -740,7 +740,7 @@ class RS_PT_finish_settings(Panel):
 
 class RS_PT_finish(_SidebarPanel, Panel):
     studio_tab = 'FINISH'
-    bl_label = "Finish"
+    bl_label = "Refine"
     bl_options = {'HIDE_HEADER'}
     bl_order = FINISH_TAB_ORDER
 

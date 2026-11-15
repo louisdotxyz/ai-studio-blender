@@ -23,7 +23,7 @@ from . import (addons, background, cameras, claude_link, core, env_ui, environme
 from . import api, baselib, claude_tools, light_items, looks, variants  # noqa: F401
 from .props import (RS_CameraSettings, RS_HdriPin, RS_Item, RS_LightSettings, RS_Look, RS_Shot, RS_Preferences,
                     RS_Settings, _apply_clipping)
-from .ui_common import STUDIO_TABS, _queue_progress_text, _unpin
+from .ui_common import STUDIO_TABS, _unpin
 from .keymaps import register_keymaps, unregister_keymaps
 from .tab_camera import (RS_MT_aspect, RS_MT_formats, RS_OT_set_aspect, RS_MT_camera_presets, RS_OT_camera_back, RS_OT_camera_from_view, RS_OT_camera_preset,
                          RS_OT_dof_focus, RS_OT_duplicate_camera,
@@ -49,8 +49,9 @@ from .tab_material import (RS_MT_material_more, RS_MT_material_new, RS_MT_materi
 from .tab_queue import (RS_MT_render_presets, RS_OT_add, RS_OT_cancel, RS_OT_clear, RS_OT_low_scale, RS_OT_move,
                         RS_OT_preview_step, RS_OT_remove, RS_OT_render_queue, RS_OT_show_render,
                         RS_OT_render_overview, RS_OT_render_pick, RS_OT_render_reveal,
+                        RS_OT_render_ab, RS_OT_render_rate, RS_OT_render_arrange, RS_MT_render_arrange,
+                        RS_OT_render_refine,
                         RS_OT_view_camera, RS_PT_output, RS_PT_render_queue, draw_statusbar)
-from .runner import RUN
 from . import cad_link, render_setup
 from .look import RS_OT_look_preset, RS_OT_look_reset
 
@@ -99,10 +100,6 @@ class RS_PT_tabs(Panel):
         grid.scale_y = 1.3
         for key, _name, _text, icon, _n in STUDIO_TABS:
             grid.prop_enum(wm, "render_studio_tab", key, text="", icon=icon)
-        if RUN.busy:   # rendering: compact, in every sub-tab – ring for the queue, ✕ cancels
-            row = self.layout.row(align=True)
-            row.progress(factor=RUN.list_progress, type='BAR', text=_queue_progress_text())
-            row.operator('render_studio.cancel', text="", icon='X', emboss=False)
 
 
 # ------------------------------------------------------------------ Register
@@ -193,6 +190,11 @@ classes = render_setup.classes + (
     RS_OT_render_pick,
     RS_OT_render_reveal,
     RS_OT_render_overview,
+    RS_OT_render_ab,
+    RS_OT_render_rate,
+    RS_OT_render_arrange,
+    RS_MT_render_arrange,
+    RS_OT_render_refine,
     RS_OT_material_new,
     RS_OT_material_to_base,
     RS_OT_pick_from_object,
@@ -273,7 +275,6 @@ def register():
     bpy.types.UI_MT_button_context_menu.append(draw_tile_menu)
     bpy.types.Object.render_studio_camera = PointerProperty(type=RS_CameraSettings)
     bpy.types.Object.render_studio_light = PointerProperty(type=RS_LightSettings)
-    bpy.types.STATUSBAR_HT_header.append(draw_statusbar)
     if tab_queue.on_live_image not in runner.on_live_image:
         runner.on_live_image.append(tab_queue.on_live_image)
     bpy.app.timers.register(_keep_old_hdri_folder, first_interval=0.2)
@@ -313,6 +314,8 @@ def unregister():
     if tab_queue.on_live_image in runner.on_live_image:
         runner.on_live_image.remove(tab_queue.on_live_image)
 
+    from . import render_review
+    render_review.unregister()
     cad_link.unregister()
     shots.unregister()
     presets_io.unregister()

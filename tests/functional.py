@@ -2333,5 +2333,30 @@ def env_skill_back():
         os.path.join(folder, "_retired", "environment.md")), back)
 
 
+@section
+def render_review_stars():
+    """Stars next to the images, sort by them; a refined version knows its render."""
+    review = mod("studio.render_review")
+    folder = os.path.join(TMP, "review")
+    os.makedirs(folder, exist_ok=True)
+    one, two = os.path.join(folder, "P_front_01.png"), os.path.join(folder, "P_front_01_krea_01.png")
+    for path in (one, two):
+        open(path, "w").close()
+    review.set_rating(two, 4)
+    review.set_rating(one, 2)
+    review.set_rating(one, 2)          # the same again: none
+    keep = dict(review.state)
+    review.state.update(sort='BEST', filter='ALL')
+    try:
+        order = review.arrange([one, two])
+        review.state.update(filter='RATED')
+        rated = review.arrange([one, two])
+    finally:
+        review.state.update(keep)
+    check("stars: kept, sorted, toggled off", review.rating(two) == 4 and review.rating(one) == 0
+          and order == [two, one] and rated == [two], (order, rated))
+    check("refined version: kind and its render", review.refined_kind(two) == "krea" and review.source_of(two) == one)
+
+
 ok = all(results)
 print("FUNCTIONAL_OK" if ok else "FUNCTIONAL_FAIL", "%d/%d" % (sum(results), len(results)))

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Refine a finished render with Krea (Finish tab): a sentence ("a hand holds the product"), the render
+"""Refine a finished render with Krea (Refine tab): a sentence ("a hand holds the product"), the render
 goes to Krea's image editing, the result is saved next to the render, at exactly the render's size.
 
 Two ways:
@@ -81,7 +81,7 @@ def _refs(references):
     return [r for r in (str(x).strip() for x in references) if r]
 
 
-# The toggles of the Finish tab: (key, label, sentence for Krea, keep the product untouched?)
+# The toggles of the Refine tab: (key, label, sentence for Krea, keep the product untouched?)
 SCENE = (
     ('hand', "Hand", "Add a realistic adult hand that holds the product naturally, matching the existing light.", False),
     ('inuse', "In Use", "Show the product in use by a person, cropped so the product stays the hero of the image.",
@@ -394,7 +394,7 @@ def _download(url, target, model, width, height, credits, balance):
 
 def save_from(url, source, model, credits=None, balance=None):
     """A Krea result (made through the connector): downloads it next to `source` as …_krea_01.png at exactly
-    the render's size, logs what it cost and shows it in the Finish and Render tabs. Returns the path."""
+    the render's size, logs what it cost and shows it in the Refine and Render tabs. Returns the path."""
     if not str(url).startswith("http"):
         raise ValueError("Not an image URL: %r" % url)
     if not source or not os.path.isfile(source):
@@ -412,7 +412,7 @@ def save_from(url, source, model, credits=None, balance=None):
 
 
 def set_quote(model, credits, balance=None):
-    """What Krea said the next picture costs (preflight), shown in the Finish tab while it is made."""
+    """What Krea said the next picture costs (preflight), shown in the Refine tab while it is made."""
     job.update(state="working", text="", started=time.monotonic(), model=model, thread=None,
                quote=[credits, balance])
     if not bpy.app.timers.is_registered(_finish):
@@ -420,7 +420,7 @@ def set_quote(model, credits, balance=None):
 
 
 def fail(text):
-    """Claude could not finish a run: the Finish tab shows why (and is free for the next one)."""
+    """Claude could not finish a run: the Refine tab shows why (and is free for the next one)."""
     job.update(state="error", text=str(text)[:200], thread=None)
 
 

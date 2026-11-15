@@ -433,7 +433,7 @@ class RS_Settings(PropertyGroup):
     look_saturation: FloatProperty(name="Saturation", description="How strong the colors are: 0 = gray, 1 = as "
                                    "rendered (compositor)", default=1.0, min=0.0, max=2.0, soft_max=1.5,
                                    options=set(), update=_look_changed)
-    # Finish tab: adjustments of the finished render (image_edit), -100 … 100, exposure in stops
+    # Refine tab: adjustments of the finished render (image_edit), -100 … 100, exposure in stops
     edit_exposure: FloatProperty(name="Exposure", description="Brighter or darker, in stops", default=0.0,
                                  min=-4.0, max=4.0, soft_min=-2.0, soft_max=2.0, options=set(), update=_edit_changed)
     edit_contrast: FloatProperty(name="Contrast", description="Difference between light and dark parts",
@@ -666,7 +666,7 @@ class RS_Preferences(PropertyGroup):
 
     krea_token: StringProperty(
         name="Krea API Token", subtype='PASSWORD',
-        description="For refining renders in the Finish tab (krea.ai/app/api/tokens). Uses the API balance of "
+        description="For refining renders in the Refine tab (krea.ai/app/api/tokens). Uses the API balance of "
                     "your Krea workspace, not the plan's credits")
 
     # Camera frame (passepartout) in the viewport, see sync.py

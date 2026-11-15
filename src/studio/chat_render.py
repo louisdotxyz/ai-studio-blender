@@ -11,7 +11,6 @@ from bpy.types import Operator, Panel
 
 from . import cameras
 from .runner import RUN
-from .ui_common import _item_progress_text
 
 
 def chosen(context):
@@ -129,13 +128,9 @@ def draw_inline(layout, context):
     mid.prop_enum(rq, "mode", 'ANIM', text="", icon='RENDER_ANIMATION')
     right = row.row(align=True)
     right.ui_units_x = 5.5
-    if RUN.busy:
-        right.progress(factor=RUN.render_progress, type='BAR', text=_item_progress_text())
-        right.operator("render_studio.cancel", text="", icon='X')
-    else:
-        right.enabled = bool(names)
-        right.operator(RS_OT_chat_render.bl_idname, text="Render (%d)" % len(names) if len(names) > 1 else "Render",
-                       icon='RENDER_STILL' if rq.mode == 'STILL' else 'RENDER_ANIMATION')
+    right.enabled = bool(names)       # while one renders: more go into the queue (progress above the chat)
+    right.operator(RS_OT_chat_render.bl_idname, text="Render (%d)" % len(names) if len(names) > 1 else "Render",
+                   icon='RENDER_STILL' if rq.mode == 'STILL' else 'RENDER_ANIMATION')
 
 
 classes = (RS_OT_chat_camera, RS_OT_chat_render, RS_PT_chat_render)

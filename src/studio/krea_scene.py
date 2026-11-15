@@ -40,11 +40,11 @@ def render_camera(scene, path):
     return best or scene.camera
 
 
-PRODUCT_KEY = "as_product"       # obj["as_product"] = True: this object is the product (Finish tab)
+PRODUCT_KEY = "as_product"       # obj["as_product"] = True: this object is the product (Refine tab)
 
 
 def product_objects(scene):
-    """The objects marked as the product ("Use Selection" in the Finish tab), else everything the
+    """The objects marked as the product ("Use Selection" in the Refine tab), else everything the
     product could be (environment.product_objects: all visible meshes that are not studio or room)."""
     marked = [o for o in scene.objects if o.get(PRODUCT_KEY) and not o.hide_render
               and o.type in {'MESH', 'CURVE', 'SURFACE', 'META', 'FONT'}]

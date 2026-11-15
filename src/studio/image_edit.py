@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Finish tab: adjust a finished render like a raw photo (light: exposure, contrast, highlights, shadows;
+"""Refine tab: adjust a finished render like a raw photo (light: exposure, contrast, highlights, shadows;
 color: temperature, tint, vibrance, saturation). The preview shows it right away (a small copy, made in a
 timer); "Save" writes …_edit_01.png next to the render at full size. The render itself stays as it is.
 """

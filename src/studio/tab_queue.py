@@ -295,12 +295,7 @@ class RS_OT_show_render(Operator):
 
 _ab = {"A": "", "B": ""}       # the two renders to compare (paths); "" = the shown one and the one before it
 _overview = {"all": False}
-
-
-def _quality_of(path):
-    names = core.folder_names()
-    parts = os.path.normpath(path).split(os.sep)
-    return "Low" if names['LOW'] in parts else "High" if names['HIGH'] in parts else ""
+OVERVIEW_FIRST = 12
 
 
 def _batch_of(path):
@@ -323,7 +318,7 @@ class RS_OT_render_pick(Operator):
     @classmethod
     def description(cls, _context, props):
         if props.slot == "VIEW":
-            return "Show this render in the preview"
+            return "Show this render big above (also in the Refine tab)"
         return "Compare: this render as %s (click again: not)" % props.slot
 
     def execute(self, context):
@@ -331,6 +326,94 @@ class RS_OT_render_pick(Operator):
             _view["path"] = self.path
         else:
             _ab[self.slot] = "" if _ab[self.slot] == self.path else self.path
+        return {'FINISHED'}
+
+
+class RS_OT_render_ab(Operator):
+    bl_idname = "render_studio.render_ab"
+    bl_label = "A / B"
+    bl_description = "Swap A and B, or clear both"
+    bl_options = {'INTERNAL'}
+
+    action: StringProperty(default="SWAP", options={'HIDDEN', 'SKIP_SAVE'})   # SWAP / CLEAR
+
+    def execute(self, context):
+        if self.action == "CLEAR":
+            _ab.update(A="", B="")
+        else:
+            _ab["A"], _ab["B"] = _ab["B"], _ab["A"]
+        return {'FINISHED'}
+
+
+class RS_OT_render_rate(Operator):
+    bl_idname = "render_studio.render_rate"
+    bl_label = "Stars"
+    bl_description = "Rate this render (the same star again: none); sort and filter by it below"
+    bl_options = {'INTERNAL'}
+
+    path: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    stars: IntProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    def execute(self, context):
+        from . import render_review
+        try:
+            render_review.set_rating(self.path, self.stars)
+        except OSError as exc:
+            self.report({'ERROR'}, "Could not save the stars: %s" % exc)
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
+class RS_OT_render_arrange(Operator):
+    bl_idname = "render_studio.render_arrange"
+    bl_label = "Sort and Filter"
+    bl_options = {'INTERNAL'}
+
+    key: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})     # sort / filter
+    value: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, _context, props):
+        return "Sort the renders" if props.key == "sort" else "Show only these renders"
+
+    def execute(self, context):
+        from . import render_review
+        render_review.state[self.key] = self.value
+        return {'FINISHED'}
+
+
+class RS_MT_render_arrange(Menu):
+    bl_idname = "RS_MT_render_arrange"
+    bl_label = "Sort and Filter"
+
+    def draw(self, context):
+        from . import render_review
+        layout = self.layout
+        layout.label(text="Sort")
+        for key, label, icon in render_review.SORTS:
+            op = layout.operator(RS_OT_render_arrange.bl_idname, text=label, icon=icon,
+                                 depress=render_review.state["sort"] == key)
+            op.key, op.value = "sort", key
+        layout.separator()
+        layout.label(text="Show")
+        for key, label, icon in render_review.FILTERS:
+            op = layout.operator(RS_OT_render_arrange.bl_idname, text=label, icon=icon,
+                                 depress=render_review.state["filter"] == key)
+            op.key, op.value = "filter", key
+
+
+class RS_OT_render_refine(Operator):
+    bl_idname = "render_studio.render_refine"
+    bl_label = "Refine"
+    bl_description = "Open this render in the Refine tab: Krea, look and adjustments (the result comes back here)"
+    bl_options = {'INTERNAL'}
+
+    path: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    def execute(self, context):
+        if self.path:
+            _view["path"] = self.path
+        context.window_manager.render_studio_tab = 'FINISH'
         return {'FINISHED'}
 
 
@@ -372,36 +455,117 @@ def _ab_button(row, path, slot):
     op.path, op.slot = path, slot
 
 
-def _draw_overview(layout, images, shown):
-    """All renders, newest first, a batch as one group: click = preview, [A] [B] = compare."""
+def _stars(row, path):
+    """☆☆☆☆☆ as five small buttons: click = that many stars."""
+    from . import render_review
+    have = render_review.rating(path)
+    sub = row.row(align=True)
+    sub.emboss = 'NONE'
+    for n in range(1, 6):
+        op = sub.operator(RS_OT_render_rate.bl_idname, text="", icon='SOLO_ON' if n <= have else 'SOLO_OFF')
+        op.path, op.stars = path, n
+
+
+def _draw_compare(layout, context):
+    """A and B side by side as small pictures, with stars; [⇆] [✕] and the big side by side window."""
+    from . import render_review
+    a, b = (_ab[k] if _ab[k] and os.path.isfile(_ab[k]) else "" for k in ("A", "B"))
+    box = layout.box()
+    if not (a or b):
+        hint = box.row()
+        hint.active = False
+        hint.label(text="Compare: pick A and B below (or just compare with the one before)", icon='INFO')
+        shots.draw_results(box)
+        return
+    width = context.region.width / (20 * (context.preferences.system.ui_scale or 1.0))
+    scale = max(4.0, min(11.0, width / 2 - 1.5))
+    split = box.split(factor=0.5, align=True)
+    for slot, path in (("A", a), ("B", b)):
+        col = split.column(align=True)
+        head = col.row(align=True)
+        head.label(text=slot)
+        if path:
+            icon = render_review.thumb(path)
+            if icon:
+                col.template_icon(icon_value=icon, scale=scale)
+            name = col.row(align=True)
+            op = name.operator(RS_OT_render_pick.bl_idname, text=_title(path), emboss=False, translate=False)
+            op.path, op.slot = path, "VIEW"
+            _stars(col.row(align=True), path)
+        else:
+            empty = col.row()
+            empty.active = False
+            empty.scale_y = scale * 0.6
+            empty.label(text="pick %s below" % slot)
+    row = box.row(align=True)
+    row.scale_y = 1.2
+    row.operator(RS_OT_render_ab.bl_idname, text="", icon='ARROW_LEFTRIGHT').action = "SWAP"
+    shots.draw_results(row)
+    row.operator(RS_OT_render_ab.bl_idname, text="", icon='X').action = "CLEAR"
+
+
+def _draw_overview(layout, context, images, shown):
+    """All renders as small pictures: sorted and filtered (menu), a batch as one group, refined
+    versions marked. Click the name = big above, [A] [B] = compare."""
+    from . import render_review
+    every = len(images)
+    images = render_review.arrange(images)
     box = layout.box()
     head = box.row(align=True)
-    head.label(text="All Renders (%d)" % len(images), icon='RENDERLAYERS')
-    if len(images) > 8:
-        head.operator(RS_OT_render_overview.bl_idname, text="Less" if _overview["all"] else "All",
-                      emboss=False)
-    col = box.column(align=True)
-    batch_now = None
-    for path in images if _overview["all"] else images[:8]:
-        batch = _batch_of(path)
-        if batch and batch != batch_now:
-            row = col.row(align=True)
-            row.label(text=batch, icon='FILE_FOLDER', translate=False)
-            row.operator(RS_OT_render_reveal.bl_idname, text="", icon='VIEWZOOM',
-                         emboss=False).path = os.path.dirname(path)
-        batch_now = batch
-        row = col.row(align=True)
-        if batch:
-            row.separator(factor=1.5)
-        _ab_button(row, path, "A")
-        _ab_button(row, path, "B")
-        op = row.operator(RS_OT_render_pick.bl_idname, text=_title(path), emboss=path == shown,
-                          icon='RESTRICT_VIEW_OFF' if path == shown else 'NONE', translate=False)
+    sort = next(label for key, label, _i in render_review.SORTS if key == render_review.state["sort"])
+    flt = next(label for key, label, _i in render_review.FILTERS if key == render_review.state["filter"])
+    head.label(text="Renders (%d)" % len(images) if len(images) == every else "Renders (%d of %d)" % (len(images), every),
+               icon='RENDERLAYERS')
+    sub = head.row(align=True)
+    sub.alignment = 'RIGHT'
+    sub.active = False
+    sub.label(text=sort if flt == "All" else "%s · %s" % (sort, flt))
+    if not images:
+        box.label(text="None of them", icon='INFO')
+        return
+    width = context.region.width / (20 * (context.preferences.system.ui_scale or 1.0))
+    columns = max(2, min(5, int(width // 6)))
+    grouped = render_review.state["sort"] == 'NEW'
+    shown_list = images if _overview["all"] else images[:OVERVIEW_FIRST]
+    grid = None
+    group_now = None
+    for path in shown_list:
+        group = _batch_of(path) if grouped else render_review.camera_key(path) \
+            if render_review.state["sort"] == 'CAMERA' else ""
+        if grid is None or group != group_now:
+            if group:
+                row = box.row(align=True)
+                row.label(text=group, icon='FILE_FOLDER' if grouped else 'CAMERA_DATA', translate=False)
+                if grouped:
+                    row.operator(RS_OT_render_reveal.bl_idname, text="", icon='VIEWZOOM',
+                                 emboss=False).path = os.path.dirname(path)
+            grid = box.grid_flow(row_major=True, columns=columns, even_columns=True, align=False)
+            group_now = group
+        cell = grid.column(align=True)
+        pic = cell.box() if path == shown else cell.column()
+        icon = render_review.thumb(path)
+        if icon:
+            pic.template_icon(icon_value=icon, scale=max(3.0, width / columns - 1.2))
+        kind = render_review.refined_kind(path)
+        name = cell.row(align=True)
+        name.scale_y = 0.8
+        op = name.operator(RS_OT_render_pick.bl_idname, text=_title(path), emboss=path == shown,
+                           icon='SHADERFX' if kind == "krea" else 'MODIFIER' if kind == "edit" else 'NONE',
+                           translate=False)
         op.path, op.slot = path, "VIEW"
-        tag = row.row(align=True)
-        tag.ui_units_x = 2.2
+        info = cell.row(align=True)
+        info.scale_y = 0.8
+        _ab_button(info, path, "A")
+        _ab_button(info, path, "B")
+        tag = info.row(align=True)
         tag.active = False
-        tag.label(text=_quality_of(path))
+        tag.alignment = 'RIGHT'
+        stars = render_review.rating(path)
+        tag.label(text=render_review.stars_text(stars) if stars else
+                  ("Low" if render_review.quality_of(path) == 'LOW' else ""))
+    if len(images) > OVERVIEW_FIRST:
+        box.operator(RS_OT_render_overview.bl_idname, emboss=False,
+                     text="Less" if _overview["all"] else "All %d Renders" % len(images))
 
 
 def draw_statusbar(self, context):
@@ -462,6 +626,19 @@ class RS_PT_output(Panel):
         render = scene.render
         p = runner.prefs(context)
         cycles = scene.render.engine == 'CYCLES'
+
+        # Where the renders go and how big (the chat renders with these)
+        from . import render_size
+        box = layout.box()
+        col = box.column()
+        row = col.row(align=True)
+        row.label(text="", icon='SORTALPHA')
+        row.prop(rq, "output_name", text="", placeholder=core.project_name())
+        if p is not None:
+            row = col.row(align=True)
+            row.label(text="", icon='FILE_FOLDER')
+            row.prop(p, "output_root", text="", placeholder="Next to the .blend file")
+        render_size.draw(col, scene)
 
         # High Quality: the scene's own settings
         box = layout.box()
@@ -565,31 +742,17 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
         layout = self.layout
         scene = context.scene
         rq = scene.render_studio
-        p = runner.prefs(context)
         if not RUN.busy:
             shots.draw_check(layout, scene)
 
-        # The head: [High] [Low] [still] [film]  [A] [B] [−] [+ variant] [settings]
-        from . import render_size, variants_ab
+        # The head: what is shown below [sort · filter ▾] and the output settings (name, folder, size,
+        # quality details) in the gear; renders are started in the chat
         head = layout.row(align=True)
         head.scale_y = 1.2
-        head.prop_enum(rq, "quality", 'HIGH', text="High")
-        head.prop_enum(rq, "quality", 'LOW', text="Low")
-        sub = head.row(align=True)
-        sub.prop_enum(rq, "mode", 'STILL', text="", icon='IMAGE_DATA')
-        sub.prop_enum(rq, "mode", 'ANIM', text="", icon='RENDER_ANIMATION')
-        variants_ab.draw(head, scene, 'RENDER')
+        from . import render_review
+        sort = next(label for key, label, _i in render_review.SORTS if key == render_review.state["sort"])
+        head.menu(RS_MT_render_arrange.bl_idname, text=sort, icon='FILTER')
         head.popover(RS_PT_output.__name__, text="", icon='PREFERENCES')
-        box = layout.box()
-        col = box.column()
-        row = col.row(align=True)
-        row.label(text="", icon='SORTALPHA')
-        row.prop(rq, "output_name", text="", placeholder=core.project_name())
-        if p is not None:
-            row = col.row(align=True)
-            row.label(text="", icon='FILE_FOLDER')
-            row.prop(p, "output_root", text="", placeholder="Next to the .blend file")
-        render_size.draw(col, scene)              # 1K / 2K / 4K on the long side, the ratio comes from the camera
 
         # What renders now and what waits: progress only (renders are started in the chat).
         current = RUN.current["uid"] if RUN.current else None
@@ -597,10 +760,6 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
         if RUN.busy or waiting:
             box = layout.box()
             col_run = box.column(align=True)
-            if RUN.busy:
-                row = col_run.row(align=True)
-                row.progress(factor=RUN.list_progress, type='BAR', text=_queue_progress_text())
-                row.operator(RS_OT_cancel.bl_idname, text="", icon='X')
             for i, item in waiting:
                 row = col_run.row(align=True)
                 rendering = item.uid == current
@@ -610,6 +769,7 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
                 row.label(text=label, icon='RENDER_STILL' if rendering else 'TIME', translate=False)
                 if rendering:
                     row.progress(factor=RUN.render_progress, type='BAR', text=_item_progress_text())
+                    row.operator(RS_OT_cancel.bl_idname, text="", icon='X', emboss=False)
                 else:
                     row.operator(RS_OT_remove.bl_idname, text="", icon='X', emboss=False).index = i
             if not RUN.busy:   # left over after a cancel
@@ -657,8 +817,6 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
             wait.scale_y = scale
             wait.active = False
             wait.label(text="", icon='TIME' if live is not None else 'NONE')
-        if RUN.current:   # whatever renders: also while you browse, animations, previews for Claude
-            pic.progress(factor=RUN.render_progress, type='BAR', text=_item_progress_text())
         row = pic.row(align=True)
         if live is not None:
             row.label(text=live["camera"], icon='RENDER_STILL', translate=False)
@@ -667,5 +825,10 @@ class RS_PT_render_queue(_SidebarPanel, Panel):
             _ab_button(row, path, "B")
             row.label(text=_title(path), translate=False)
             row.operator(RS_OT_render_reveal.bl_idname, text="", icon='FILE_FOLDER', emboss=False).path = path
-        shots.draw_results(pic)
-        _draw_overview(layout, images, path)
+            row = pic.row(align=True)
+            _stars(row, path)
+            refine = row.row(align=True)
+            refine.alignment = 'RIGHT'
+            refine.operator(RS_OT_render_refine.bl_idname, text="Refine", icon='NODE_COMPOSITING').path = path
+        _draw_compare(layout, context)
+        _draw_overview(layout, context, images, path)

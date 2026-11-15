@@ -167,6 +167,13 @@ class RS_MT_formats(Menu):
     def draw(self, context):
         layout = self.layout
         render = context.scene.render
+        rq = context.scene.render_studio
+        current = (rq.aspect_x, rq.aspect_y)
+        for x, y in RATIOS:
+            op = layout.operator(RS_OT_set_aspect.bl_idname, text="%d : %d" % (x, y),
+                                 icon='CHECKMARK' if (x, y) == current else 'BLANK1')
+            op.x, op.y = x, y
+        layout.separator()
         for _short, long, w, h in FORMAT_PRESETS:
             op = layout.operator(RS_OT_set_resolution.bl_idname, text="%s (%d × %d)" % (long, w, h),
                                  icon='CHECKMARK' if (render.resolution_x, render.resolution_y) == (w, h) else 'BLANK1')
@@ -327,11 +334,10 @@ class RS_PT_camera(_SidebarPanel, Panel):
         render = scene.render
         cam = active_camera(scene)
 
-        # The same head as every tab: [presets ▾] [A] [B] [−] [+ variant] [copy of this camera] [settings]
+        # The same head as every tab: [presets ▾] [A] [B] [−] [+ variant] [settings]
         from . import variants_ab
         head, _props = tab_head(layout, RS_MT_camera_presets.bl_idname, "Preset")
         variants_ab.draw(head, scene, 'CAMERA')
-        head.operator(RS_OT_duplicate_camera.bl_idname, text="", icon='DUPLICATE')
         head.popover(RS_PT_frame.__name__, text="", icon='PREFERENCES')
 
         # Camera: name, back, the cameras of the scene, orbit object and lock
@@ -349,6 +355,8 @@ class RS_PT_camera(_SidebarPanel, Panel):
         grid = box.grid_flow(row_major=True, columns=3, even_columns=True, align=True)
         for obj in cameras.scene_cameras(scene):
             grid.operator(RS_OT_set_camera.bl_idname, text=obj.name, depress=(obj == cam)).name = obj.name
+        if cam is not None and cam.type == 'CAMERA':   # + : a new camera, a copy of this one
+            grid.operator(RS_OT_duplicate_camera.bl_idname, text="", icon='ADD')
         if cam is None or cam.type != 'CAMERA':
             box.label(text="No scene camera")
             return
@@ -385,7 +393,13 @@ class RS_PT_camera(_SidebarPanel, Panel):
         own = cam.render_studio_camera
         pct = render.resolution_percentage / 100
         row = box.row(align=True)
-        row.menu(RS_MT_aspect.bl_idname, text="%d : %d" % (rq.aspect_x, rq.aspect_y), icon='FULLSCREEN_ENTER')
+        ratio = row.row(align=True)          # [3] : [4]  both editable; common ratios in the formats menu
+        ratio.prop(rq, "aspect_x", text="")
+        colon = ratio.row(align=True)
+        colon.ui_units_x = 0.7
+        colon.alignment = 'CENTER'
+        colon.label(text=":")
+        ratio.prop(rq, "aspect_y", text="")
         row.menu(RS_MT_formats.bl_idname, text=format_name(render))
         row.prop(own, "use_resolution", icon='PINNED' if own.use_resolution else 'UNPINNED', translate=False,
                  text="%d × %d" % (round(render.resolution_x * pct), round(render.resolution_y * pct)))
