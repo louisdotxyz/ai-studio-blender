@@ -102,6 +102,8 @@ def rename_old_collections():
         if coll.library is not None:
             continue
         for old, new in pairs:
+            if new == TEMP and not coll.get("as_temp"):
+                continue      # only the add-on's own helper collection; a "temp" of yours stays as it is
             if coll.name == old or coll.name.startswith(old + " "):
                 target = new + coll.name[len(old):]
                 if bpy.data.collections.get(target) is None:

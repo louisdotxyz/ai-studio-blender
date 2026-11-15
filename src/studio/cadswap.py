@@ -308,7 +308,9 @@ def temp_collection(scene=None):
     coll = bpy.data.collections.get(name)
     if coll is None:
         coll = bpy.data.collections.new(name)
-    coll[TEMP_KEY] = True
+        coll[TEMP_KEY] = True
+    elif not coll.get(TEMP_KEY) and not coll.all_objects:
+        coll[TEMP_KEY] = True      # an empty one of that name becomes ours; one with your things never
     if coll not in scene.collection.children_recursive:
         scene.collection.children.link(coll)
     return coll
