@@ -17,7 +17,7 @@ from bpy.types import Operator, Panel
 
 from . import (addons, background, cameras, claude_link, core, env_ui, environment, foreign, hdri,
                light_paint, light_ui, lights, presets_io, render_size, runner, shots, sync, tab_finish, tab_queue,
-               variants_ab, chat_render)
+               variants_ab, chat_render, render_review)
 # Loaded for their side effects: the chat finds claude_tools (Claude's studio_* tools) in
 # sys.modules; api and variants are the helpers in execute_python.
 from . import api, baselib, claude_tools, light_items, looks, variants  # noqa: F401
@@ -314,7 +314,6 @@ def unregister():
     if tab_queue.on_live_image in runner.on_live_image:
         runner.on_live_image.remove(tab_queue.on_live_image)
 
-    from . import render_review
     render_review.unregister()
     cad_link.unregister()
     shots.unregister()
