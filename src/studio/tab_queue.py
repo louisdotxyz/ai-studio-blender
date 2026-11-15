@@ -30,7 +30,7 @@ class STUDIO_OT_render_queue(Operator):
         rq = context.scene.studio
         ensure_uids(rq)
         try:
-            RUN.start(context.scene, rq.quality, rq.mode == 'ANIM')   # defaults for entries from older files
+            RUN.start(context.scene, rq.quality, False)   # defaults for entries from older files
         except Exception as ex:
             self.report({'ERROR'}, str(ex))
             return {'CANCELLED'}
@@ -53,44 +53,89 @@ class STUDIO_OT_cancel(Operator):
 
 class STUDIO_OT_add(Operator):
     bl_idname = "studio.add"
-    bl_label = "Add Camera"
-    bl_description = ("Renders the active camera as it is now: ⌘R an image, ⌘E a film (the quality chosen in the "
-                      "chat), ⇧⌘R an image in Low Quality, ⇧⌘E shows the image")
+    bl_label = "Render"
     bl_options = {'UNDO'}
 
     quality: EnumProperty(
-        items=(('DEFAULT', "As Chosen", "The quality chosen in the Queue tab"),
+        items=(('DEFAULT', "Automatic", "Low Quality first, High Quality once nothing changed since"),
                ('HIGH', "High Quality", ""),
                ('LOW', "Low Quality", "")),
         default='DEFAULT', options={'SKIP_SAVE'})
     mode: EnumProperty(
-        items=(('DEFAULT', "As Chosen", "Still or film as chosen in the chat"),
+        items=(('DEFAULT', "Image", "One image"),
                ('STILL', "Image", "One image (⌘R)"),
-               ('ANIM', "Film", "The frame range as a film (⌘E)")),
+               ('ANIM', "Film", "The film's sections as frames into the Video Editor (⌘E)")),
         default='DEFAULT', options={'SKIP_SAVE'})
     camera: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})    # this camera instead of the active one
     batch: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})     # "Batch_03": into that folder, numbered
-    switch: BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})      # the shortcuts: Still / Film follows
+    section: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})   # a film: only this section ("" = all)
+    frames: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})    # a film: "a-b" only these frames again
+    other: BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})       # shift-click: the other quality
+
+    @classmethod
+    def description(cls, context, props):
+        from . import autoquality
+        if props.mode == 'ANIM':
+            what = ("Render this section's frames" if props.section else
+                    "Render every section that needs it (one after the other; sections in High Quality with "
+                    "nothing changed are skipped)")
+            text = what + "; they come into the Video Editor by themselves"
+            if props.quality == 'DEFAULT' and not props.frames:
+                text += ". Low Quality first, High Quality once nothing changed. Shift-click: the other quality"
+            return text
+        if props.quality == 'DEFAULT':
+            scene = context.scene if context else None
+            cam = (scene.objects.get(props.camera) if props.camera else active_camera(scene)) if scene else None
+            if cam is not None:
+                quality = autoquality.next_quality(scene, autoquality.still_key(cam.name))
+                return "Render the camera now: %s. Shift-click: the other quality" % autoquality.describe(quality)
+        return "Render the camera as it is now (⌘R an image, ⌘E the film, ⇧⌘R an image in Low Quality)"
+
+    def invoke(self, context, event):
+        self.other = event.shift and self.quality == 'DEFAULT'
+        return self.execute(context)
+
+    def _quality(self, scene, key, done=True, up_to_date=False):
+        """The quality for `key`; None: up to date (nothing to render)."""
+        from . import autoquality
+        if self.quality != 'DEFAULT':
+            return self.quality
+        quality = autoquality.next_quality(scene, key, done)
+        if self.other:
+            return 'LOW' if quality == 'HIGH' else 'HIGH'
+        if up_to_date and quality == 'HIGH':
+            return None
+        return quality
 
     def execute(self, context):
-        rq = context.scene.studio
-        if self.switch and self.mode in {'STILL', 'ANIM'} and rq.mode != self.mode:
-            rq.mode = self.mode
+        if self.mode == 'ANIM':
+            return self._film(context)
         # The camera bar's camera, not the viewport selection: cameras are usually
         # hidden, and hidden objects cannot be selected.
         cam = context.scene.objects.get(self.camera) if self.camera else active_camera(context.scene)
         if cam is None or cam.type != 'CAMERA':
             self.report({'WARNING'}, "No active camera, pick one in the Render tab")
             return {'CANCELLED'}
-        ensure_uids(rq)
+        from . import autoquality
         scene = context.scene
+        key = autoquality.still_key(cam.name)
+        quality = self._quality(scene, key)
+        item = self._item(scene, cam, quality, 'STILL')
+        autoquality.record(scene, key)
+        self.report({'INFO'}, "AI Studio: added %s (%s)" % (runner.item_label(scene, item),
+                                                           "HQ" if quality == 'HIGH' else "LQ"))
+        return self._start(context)
+
+    def _item(self, scene, cam, quality, mode):
+        rq = scene.studio
+        ensure_uids(rq)
         runner.purge_deleted(scene)
         item = rq.items.add()
         item.camera = cam
         item.uid = rq.next_uid
         rq.next_uid += 1
-        item.quality = rq.quality if self.quality == 'DEFAULT' else self.quality
-        item.mode = rq.mode if self.mode == 'DEFAULT' else self.mode
+        item.quality = quality
+        item.mode = mode
         item.batch = self.batch
         cam.studio_camera.queue_count += 1
         item.number = cam.studio_camera.queue_count
@@ -100,16 +145,69 @@ class STUDIO_OT_add(Operator):
         item.resolution_x, item.resolution_y = _user_resolution(scene, cam)
         item.percentage = scene.render.resolution_percentage
         item.frame_start, item.frame_end = scene.frame_start, scene.frame_end
-        item.parts = 1   # a film's parts are the timeline's sections
-        self.report({'INFO'}, "AI Studio: added %s" % runner.item_label(scene, item))
+        item.parts = 1
+        return item
+
+    def _start(self, context):
         p = runner.prefs(context)
         if (p is None or p.auto_render) and not RUN.busy:
             try:
-                RUN.start(scene)
+                RUN.start(context.scene)
             except Exception as ex:
                 self.report({'ERROR'}, str(ex))
                 return {'CANCELLED'}
         return {'FINISHED'}
+
+    def _film(self, context):
+        """One entry per section (each renders its frames in its own process, one after the other)."""
+        from . import autoquality, cut
+        scene = context.scene
+        found = cut.sections_of(scene)
+        if self.section:
+            found = [f for f in found if f[0] == self.section]
+            if not found:
+                self.report({'WARNING'}, "No section %s" % self.section)
+                return {'CANCELLED'}
+        waiting = {i.section for i in scene.studio.items if i.mode == 'ANIM' and i.camera is not None}
+        added, skipped = [], []
+        for name, start, end, marker in found:
+            cam = (marker.camera if marker is not None and marker.camera is not None else None) or \
+                (scene.objects.get(self.camera) if self.camera else None) or active_camera(scene)
+            if cam is None or cam.type != 'CAMERA':
+                skipped.append(name)
+                continue
+            if name in waiting or cut._rendering(name, fresh=True):
+                skipped.append(name)
+                continue
+            a, b, keep = start, end, False
+            if self.frames:
+                try:
+                    a, b = (int(v) for v in self.frames.split("-"))
+                except ValueError:
+                    a, b = start, end
+                a, b, keep = max(start, a), min(end, b), True
+            st = cut.frame_status(name, start, end, fresh=True)
+            key = autoquality.section_key(name)
+            if keep and self.quality == 'DEFAULT':
+                quality = st["quality"] or 'LOW'
+            else:
+                quality = self._quality(scene, key, done=st["done"] == st["total"],
+                                        up_to_date=not self.section and st["quality"] == 'HIGH')
+            if quality is None:
+                skipped.append(name)
+                continue
+            item = self._item(scene, cam, quality, 'ANIM')
+            item.section, item.keep_frames = name, keep
+            item.frame_start, item.frame_end = a, b
+            if not keep:
+                autoquality.record(scene, key)
+            added.append("%s %s" % (name, "HQ" if quality == 'HIGH' else "LQ"))
+        if not added:
+            self.report({'INFO'}, "Nothing to render: %s" % (
+                "everything is in High Quality and nothing changed" if skipped else "no camera"))
+            return {'CANCELLED'}
+        self.report({'INFO'}, "Rendering %s" % ", ".join(added))
+        return self._start(context)
 
 
 class STUDIO_OT_clear(Operator):
@@ -476,97 +574,6 @@ def _stars(row, path):
         op.path, op.stars = path, n
 
 
-_films_seen = [0.0, "", []]      # when, scene, [film dicts]: panels draw often
-
-
-def film_results(scene):
-    """The scene's films, newest first: {folder, film_dir, frames, quality (2 = High), whole (video or ""),
-    sections [(name, video)], thumb (a middle frame), state}."""
-    import glob
-    import json
-    now = time.monotonic()
-    if now - _films_seen[0] < 2.0 and _films_seen[1] == scene.name:
-        return _films_seen[2]
-    from . import cut, film
-    out = []
-    for _when, quality, (a, b), pattern in cut.films(scene.name)[:8]:
-        folder = os.path.dirname(pattern)
-        film_dir = os.path.join(folder, film.FILM_DIR)
-        try:
-            with open(os.path.join(film_dir, "job.json"), encoding="utf-8") as f:
-                stem = os.path.basename(json.load(f)["out"])
-        except (OSError, ValueError, KeyError):
-            stem = ""
-        videos = sorted(glob.glob(os.path.join(glob.escape(folder), "*.mp4")) +
-                        glob.glob(os.path.join(glob.escape(folder), "*.mov")))
-        import re
-        names = [(os.path.splitext(os.path.basename(v))[0], v) for v in videos]
-        whole = next((v for n, v in names if n == stem or re.fullmatch(re.escape(stem) + r"\d+-\d+", n)), "")
-        parts = [(n[len(stem) + 1:] if stem and n.startswith(stem + "_") else n, v) for n, v in names if v != whole]
-        out.append({"folder": folder, "film_dir": film_dir, "frames": (a, b), "quality": quality,
-                    "whole": whole, "sections": parts, "thumb": cut._frame_path(pattern, (a + b) // 2) or "",
-                    "state": film.read_status({"dir": film_dir}).get("state", ""),
-                    "old": film.needs_video(film_dir)})
-    _films_seen[:] = [now, scene.name, out]
-    return out
-
-
-def _convert_old_films():
-    """A finished film without a video (before 3.7): make it, one at a time (a timer, not in draw)."""
-    from . import film
-    if any(k == 'ENCODING' or k == 'RENDERING' for _f, _s, k in film.films()):
-        return None
-    scene = bpy.context.scene
-    for entry in (film_results(scene) if scene is not None else []):
-        if entry["old"]:
-            film.make_video(entry["film_dir"], "Video " + os.path.basename(entry["folder"]))
-            _films_seen[0] = 0.0
-            break
-    return None
-
-
-def _draw_films(layout, scene):
-    """Film mode: every film of this scene to watch: a picture, the whole film and each section."""
-    found = film_results(scene)
-    if not found:
-        sub = layout.row()
-        sub.active = False
-        sub.label(text="No films yet: ⌘E or Render Film in the Animation tab", icon='INFO')
-        return
-    if any(f["old"] for f in found) and not bpy.app.timers.is_registered(_convert_old_films):
-        bpy.app.timers.register(_convert_old_films, first_interval=0.5)
-    from . import render_review
-    for entry in found:
-        a, b = entry["frames"]
-        box = layout.box()
-        head = box.row(align=True)
-        head.label(text="%s · %s · %.1f s" % (os.path.basename(entry["folder"]),
-                                              "HQ" if entry["quality"] == 2 else "LQ",
-                                              motion_seconds(scene, b - a + 1)),
-                   icon='SHADING_RENDERED' if entry["quality"] == 2 else 'SORTTIME', translate=False)
-        head.operator("wm.path_open", text="", icon='FILE_FOLDER', emboss=False).filepath = entry["folder"]
-        icon = render_review.thumb(entry["thumb"]) if entry["thumb"] else 0
-        if icon:
-            box.template_icon(icon_value=icon, scale=6.0)
-        row = box.row(align=True)
-        row.scale_y = 1.2
-        if entry["whole"]:
-            row.operator("wm.path_open", text="Play", icon='PLAY').filepath = entry["whole"]
-            row.operator("studio.cut", text="Into the Cut", icon='SEQUENCE').action = 'OPEN'
-        else:
-            row.active = False
-            row.label(text="Making the video …" if entry["old"] or entry["state"] in {"encoding", "done"}
-                      else "Rendering …", icon='TIME')
-        for name, video in entry["sections"]:
-            box.operator("wm.path_open", text=name.replace("_", " "), icon='PLAY', emboss=False,
-                         translate=False).filepath = video
-
-
-def motion_seconds(scene, frames):
-    from . import motion
-    return motion.seconds(scene, frames)
-
-
 def _draw_compare(layout, context):
     """A and B side by side as small pictures, with stars; [⇆] [✕] and the big side by side window."""
     from . import render_review
@@ -826,9 +833,6 @@ class STUDIO_MT_render_presets(Menu):
         rq = context.scene.studio
         layout.prop_enum(rq, "quality", 'HIGH', text="High Quality")
         layout.prop_enum(rq, "quality", 'LOW', text="Low Quality")
-        layout.separator()
-        layout.prop_enum(rq, "mode", 'STILL', text="Still Image", icon='IMAGE_DATA')
-        layout.prop_enum(rq, "mode", 'ANIM', text="Animation", icon='RENDER_ANIMATION')
 
 
 class STUDIO_PT_render_queue(_SidebarPanel, Panel):
@@ -852,13 +856,10 @@ class STUDIO_PT_render_queue(_SidebarPanel, Panel):
         # quality details) in the gear; renders are started in the chat
         head = layout.row(align=True)
         head.scale_y = 1.2
-        film_mode = rq.mode == 'ANIM'
-        if film_mode:
-            head.operator("studio.cut", text="Open Cut", icon='SEQUENCE').action = 'OPEN'
-        else:
-            from . import render_review
-            sort = next(label for key, label, _i in render_review.SORTS if key == render_review.state["sort"])
-            head.menu(STUDIO_MT_render_arrange.bl_idname, text=sort, icon='FILTER')
+        from . import render_review
+        sort = next(label for key, label, _i in render_review.SORTS if key == render_review.state["sort"])
+        head.menu(STUDIO_MT_render_arrange.bl_idname, text=sort, icon='FILTER')
+        head.operator("studio.cut", text="", icon='SEQUENCE').action = 'OPEN'    # films: the Video Editor
         head.popover(STUDIO_PT_output.__name__, text="", icon='PREFERENCES')
 
         # What renders now and what waits: progress only (renders are started in the chat).
@@ -887,10 +888,6 @@ class STUDIO_PT_render_queue(_SidebarPanel, Panel):
                                  icon='PLAY')
             if RUN.message and not RUN.busy:
                 col_run.label(text=RUN.message, icon='INFO')
-
-        if film_mode:
-            _draw_films(layout, scene)
-            return
 
         # The preview: the entry that renders now (its quick draft, then the image) or the render you
         # picked; ◀ ▶ through all renders, the magnifier opens it big, [A] [B] and Compare next to it.

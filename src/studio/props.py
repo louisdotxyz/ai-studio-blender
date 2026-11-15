@@ -246,6 +246,10 @@ class STUDIO_Item(PropertyGroup):
     frame_start: IntProperty(options={'HIDDEN'})
     frame_end: IntProperty(options={'HIDDEN'})
     parts: IntProperty(default=1, options={'HIDDEN'})
+    # A section of the film (its frames go to animation/Frames/<section>/); keep_frames: only the
+    # frames from frame_start to frame_end render again, the others stay
+    section: StringProperty(options={'HIDDEN'})
+    keep_frames: BoolProperty(options={'HIDDEN'})
 
 
 def _pin_changed(self, context):
@@ -321,7 +325,7 @@ def _sky_changed(self, context):
 
 
 class STUDIO_MotionStep(PropertyGroup):
-    """One step of a section's chain (Animation tab): a preset over some frames."""
+    """One step of a section's chain (Camera tab · Motion): a preset over some frames."""
     section: StringProperty(name="Section", options=set())
     preset: EnumProperty(name="Preset", items=lambda _s, _c: _motion_items(), options=set())
     frames: IntProperty(name="Frames", description="How long this step lasts (0 = to the end of the section)",
@@ -333,15 +337,22 @@ class STUDIO_MotionStep(PropertyGroup):
 
 
 class STUDIO_CutItem(PropertyGroup):
-    """How a section goes into the cut (Animation tab · Cut)."""
+    """How a section goes into the cut (Video Editor · Studio): a change builds the strips again."""
     section: StringProperty(name="Section", options=set())
     transition: EnumProperty(name="Transition", description="Into the next section", options=set(),
+                             update=lambda s, _c: _cut_changed(s),
                              items=(('CUT', "Cut", "A hard cut"), ('CROSS', "Cross", "Blend into the next section"),
                                     ('BLACK', "Black", "Through black"), ('WHITE', "White", "Through white")))
     frames: IntProperty(name="Frames", description="How long the transition lasts", default=12, min=1,
-                        max=240, options=set())
+                        max=240, options=set(), update=lambda s, _c: _cut_changed(s))
     hold: IntProperty(name="Hold", description="Frames the last image stands still after the section "
-                      "(0 = none); also exported as a PNG", default=0, min=0, soft_max=240, options=set())
+                      "(0 = none)", default=0, min=0, soft_max=240, options=set(),
+                      update=lambda s, _c: _cut_changed(s))
+
+
+def _cut_changed(item):
+    from . import cut
+    cut.build_soon(item.id_data)
 
 
 def _motion_items():
@@ -463,8 +474,8 @@ class STUDIO_Settings(PropertyGroup):
     mode: EnumProperty(
         name="Mode",
         items=[
-            ('STILL', "Still", "Images: one per camera at the current frame; compare, rate and refine them"),
-            ('ANIM', "Film", "Films: sections, camera moves, keys and the cut (renders a film per camera)"),
+            ('STILL', "Still", "Images (the default of entries without their own)"),
+            ('ANIM', "Film", "Films (only for entries of older files)"),
         ],
         default='STILL',
         options=set(),
@@ -483,11 +494,10 @@ class STUDIO_Settings(PropertyGroup):
                              default=0, min=0, options=set())
     motion_to: IntProperty(name="To", description="Last frame of the movement (0 = the section's end)",
                            default=0, min=0, options=set())
-    cut_music: StringProperty(name="Music", description="Sound file under the cut", subtype='FILE_PATH',
-                              options=set())
-    cut_bpm: FloatProperty(name="BPM", description="Beats per minute of the music: beat markers in the cut "
-                           "and section lengths on whole beats (0 = none)", default=0.0, min=0.0, max=300.0,
-                           options=set())
+    cut_music: StringProperty(name="Music", description="Sound file under the film (Video Editor)",
+                              subtype='FILE_PATH', options=set(), update=lambda s, _c: _cut_changed(s))
+    cut_bpm: FloatProperty(name="BPM", description="Beats per minute of the music: section lengths on whole "
+                           "beats (0 = none)", default=0.0, min=0.0, max=300.0, options=set())
     film_parts: IntProperty(
         name="Parts", description="A film renders in this many parts, one after the other (each part also as "
         "its own video); in its own process, so it goes on when Blender crashes and resumes where it stopped",

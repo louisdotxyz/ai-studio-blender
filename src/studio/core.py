@@ -437,6 +437,8 @@ def prepare_job(scene, camera, quality, filepath, background_mode, low_resolutio
                 ov.set(scene, "timeline_markers[%d].camera" % i, None)
 
         _output_settings(ov, scene, animation, background_mode)
+        # the film's frames are strips in this scene's Video Editor: renders show the 3D scene, not them
+        ov.set(scene, "render.use_sequencer", False)
         ov.set(scene, "render.film_transparent", background_mode != 'NORMAL')
         if background_mode == 'COLOR':
             from . import background

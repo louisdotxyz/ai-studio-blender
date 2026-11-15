@@ -615,7 +615,7 @@ class Runner:
     def _is_film(self, scene, item):
         if item.mode in {'STILL', 'ANIM'}:
             return item.mode == 'ANIM'
-        return bool(self.default_animation) if self.default_animation is not None else scene.studio.mode == 'ANIM'
+        return bool(self.default_animation)
 
     @staticmethod
     def _removed(scene, uid):
@@ -652,13 +652,16 @@ class Runner:
         if item.mode in {'STILL', 'ANIM'}:
             self.animation = item.mode == 'ANIM'
         else:
-            self.animation = bool(self.default_animation) if self.default_animation is not None else rq.mode == 'ANIM'
+            self.animation = bool(self.default_animation)
         label = item_label(scene, item)
         if item.variant:
             label = "%s · %s" % (item.variant, label)
-        if self.animation:
-            path = core.anim_dir(root, camera.name, self.quality, name)
-            frames = len(range(scene.frame_start, scene.frame_end + 1, scene.frame_step))
+        if self.animation:   # a section's frames: animation/Frames/<section>/<section>_0001.png …
+            from . import cut
+            path = cut.frames_folder(item.section or cut.WHOLE)
+            own = item.frame_end > 0 and item.frame_end >= item.frame_start
+            a, b = (item.frame_start, item.frame_end) if own else (scene.frame_start, scene.frame_end)
+            frames = len(range(a, b + 1, scene.frame_step))
         elif item.batch:
             path = core.batch_path(root, camera.name, self.quality, item.batch, name, ext=core.still_ext(rq))
             frames = 1
@@ -671,7 +674,11 @@ class Runner:
         self.sample_factor = 0.0
         self.phase = 'RENDER'
 
-        output = core.anim_frame_pattern(path, camera.name, name) if self.animation else path
+        if self.animation:
+            from . import cut
+            output = os.path.join(path, cut.frame_stem(item.section or cut.WHOLE) + "_")
+        else:
+            output = path
         try:
             job = self._job(scene, item, camera, output, low_res, low_samples)
         except Exception as ex:
@@ -699,27 +706,27 @@ class Runner:
             self._job_failed(scene, item.uid, label)
 
     def _start_film(self, scene, item, job, folder, camera, name, label):
-        from . import film
+        """A section's frames in their own process (goes on after a crash, resumes); no video: the
+        Video Editor shows the frames, the export makes the one video at the end."""
+        from . import cut, film
         if item.frame_end > 0 and item.frame_end >= item.frame_start:
             frames = (item.frame_start, item.frame_end)
         else:
             frames = (scene.frame_start, scene.frame_end)
-        stem = os.path.basename(core.anim_frame_pattern(folder, camera.name, name)).rstrip("_")
-        video = scene.studio.anim_format if scene.studio.anim_format in film.VIDEOS else None
+        section = item.section or cut.WHOLE
+        stem = cut.frame_stem(section)
         job = dict(job, camera=None)    # the real camera with its keys (no still copy at one place)
         overrides = [o for o in job["overrides"] if o[0] != "camera"]
         job["overrides"] = [["camera", {"object": camera.name}]] + overrides
-        if scene.timeline_markers:   # parts = the timeline's sections (markers) inside the range
-            from . import motion
-            runs = [[max(s, frames[0]), min(e, frames[1]), core.safe_name(m.name)]
-                    for m, s, e in motion.sections(scene) if e >= frames[0] and s <= frames[1]]
-            if runs:
-                job["runs"] = runs
-                job["titles"] = {core.safe_name(m.name): m.name for m, _s, _e in motion.sections(scene)}
-            if len(runs) > 1:          # several sections: each with its own camera (Blender switches)
-                job["overrides"] = [o for o in job["overrides"] if not o[0].startswith("timeline_markers[")]
+        job["runs"] = [[frames[0], frames[1], stem]]
+        job["titles"] = {stem: section}
+        job["quality"], job["section"] = self.quality, section
+        label = "%s · %s" % (section, "HQ" if self.quality == 'HIGH' else "LQ")
+        if item.keep_frames:
+            label += " · %d–%d" % frames
         try:
-            film.start(scene, job, folder, stem, frames, item.parts or 1, video, label)
+            film.start(scene, job, folder, stem, frames, 1, None, label, fresh=not item.keep_frames,
+                       archive=cut.archive_folder())
         except Exception as ex:
             log("film could not start: %s" % ex)
             self._job_failed(scene, item.uid, label)
@@ -729,6 +736,7 @@ class Runner:
         self.processed.add(item.uid)
         remove_item(scene, item.uid)    # it runs on its own now: the bar above the chat shows it
         self.done += 1
+        cut.on_film_done(scene.name)    # the strip is there right away and fills in while it renders
 
     def _start_preview(self, scene, request):
         """A quick render for Claude (render_preview): not in the list, nothing saved for the user."""
@@ -1141,6 +1149,9 @@ def item_label(scene, item):
     """"Front_01 · 3": the camera and, from the second time on, how often it was added."""
     if item.camera is None:
         return "?"
+    if item.mode == 'ANIM' and item.section:     # a film's section: its name, the quality, the frames again
+        text = "%s · %s" % (item.section, "HQ" if item.quality == 'HIGH' else "LQ")
+        return text + (" · %d–%d" % (item.frame_start, item.frame_end) if item.keep_frames else "")
     return "%s · %d" % (item.camera.name, item.number) if item.number > 1 else item.camera.name
 
 

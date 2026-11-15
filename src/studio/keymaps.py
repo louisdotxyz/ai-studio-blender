@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Shortcuts (they also set the Still / Film switch): ⌘R renders an image, ⌘E a film (both in the quality chosen in the chat), ⇧⌘R an image in
-Low Quality, ⇧⌘E views the newest image."""
+"""Shortcuts: ⌘R renders an image, ⌘E the film's sections (both Low Quality first, High Quality once nothing
+changed), ⇧⌘R an image in Low Quality, ⇧⌘E views the newest image."""
 
 import bpy
 
@@ -28,9 +28,9 @@ EDITOR_KEYMAPS = (
 
 # (operator, key, modifier keys with ⌘, operator properties, label)
 SHORTCUTS = (
-    ("studio.add", 'R', {}, {"mode": 'STILL', "switch": True}, "Render Image"),
-    ("studio.add", 'E', {}, {"mode": 'ANIM', "switch": True}, "Render Film"),
-    ("studio.add", 'R', {"shift": True}, {"mode": 'STILL', "quality": 'LOW', "switch": True},
+    ("studio.add", 'R', {}, {"mode": 'STILL'}, "Render Image"),
+    ("studio.add", 'E', {}, {"mode": 'ANIM'}, "Render Film"),
+    ("studio.add", 'R', {"shift": True}, {"mode": 'STILL', "quality": 'LOW'},
      "Render Image, Low Quality"),
     ("studio.show_render", 'E', {"shift": True}, {}, "View Render"),
 )

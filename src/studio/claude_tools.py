@@ -119,12 +119,12 @@ def _queue(args):
         cam = bpy.data.objects.get(name) if name else active_camera(scene)
         if cam is None or cam.type != 'CAMERA':
             raise ValueError(f"No camera named {name!r}" if name else "No active camera")
-        if args.get("quality") in ('LOW', 'HIGH'):
-            rq.quality = args["quality"]
+        quality = args["quality"] if args.get("quality") in ('LOW', 'HIGH') else 'DEFAULT'
         scene.camera = cam
         ensure_uids(rq)
-        bpy.ops.studio.add()
-        return f"Added {cam.name} ({rq.quality}) to the queue; it renders automatically if enabled."
+        bpy.ops.studio.add(quality=quality)
+        added = rq.items[-1].quality if len(rq.items) else quality
+        return f"Added {cam.name} ({added}) to the queue; it renders automatically if enabled."
     if action == "start":
         if runner.RUN.busy:
             return "The queue is already rendering."
@@ -356,7 +356,8 @@ def get_tools():
          "handler": _cad_job},
         {"name": "studio_render_queue", "label": "AI Studio: render queue",
          "description": "AI Studio's render queue: 'status' (entries, cameras, progress), 'add' a camera "
-                        "(LOW = quick test, HIGH = final), 'start', 'wait' (answers when everything is "
+                        "(LOW = quick test, HIGH = final; without quality: by itself, Low first, High once "
+                        "nothing changed), 'start', 'wait' (answers when everything is "
                         "rendered – use it instead of asking for the status again and again) or 'cancel'. "
                         "Renders are saved to the output folder.",
          "inputSchema": {"type": "object", "properties": {

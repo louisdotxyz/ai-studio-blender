@@ -440,7 +440,7 @@ class STUDIO_OT_explode(bpy.types.Operator):
 
 
 def draw(layout, scene):
-    """Animation tab · Explosion."""
+    """Camera tab · Explosion."""
     found = groups(scene)
     row_ = layout.row(align=True)
     if PROP in scene.keys():

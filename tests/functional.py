@@ -1401,7 +1401,7 @@ def draft_before_the_render():
     rq = scene.studio
     rq.items.clear()
     rq.quality = 'HIGH'
-    bpy.ops.studio.add()
+    bpy.ops.studio.add(quality='HIGH')
     seen, live = [], []
     runner.on_render_saved.append(lambda path, *_a: seen.append(path))
     runner.on_live_image.append(live.append)
@@ -1460,7 +1460,7 @@ def worker_matches_blender():
             scene.render.filepath = local
             bpy.ops.render.render(write_still=True)
             rq.items.clear()
-            bpy.ops.studio.add()
+            bpy.ops.studio.add(quality='HIGH')
             seen = []
             runner.on_render_saved.append(lambda path, *_a: seen.append(path))
             try:
@@ -2431,7 +2431,7 @@ def orbit_keys():
 @section
 def motion_sections():
     """Sections "NN Name" with their own camera; a longer section moves the next one with its keys;
-    a preset with strength, a chain, a fade; the cut scene."""
+    a preset with strength, a chain, a fade; the frames in the scene's own Video Editor."""
     motion, orbit, cut = mod("studio.motion"), mod("studio.orbit"), mod("studio.cut")
     scene = bpy.context.scene
     keep = (scene.frame_start, scene.frame_end, scene.frame_current, scene.camera, scene.view_settings.exposure)
@@ -2480,36 +2480,66 @@ def motion_sections():
         scene.frame_set(11)
         check("fade in from black", dark < base - 5 and abs(scene.view_settings.exposure - base) < 0.01,
               (dark, scene.view_settings.exposure))
-        bpy.data.scenes.new("schnitt")       # the user already has a scene for editing: the cut goes there
-        made_cut, report = cut.build(scene)
-        check("cut: into the user's editing scene, sections not rendered yet are named", made_cut.name == "schnitt"
-              and made_cut.get(cut.SOURCE_KEY) == scene.name and len(report["missing"]) == 2, (made_cut.name, report))
-        # a rendered film (its frames and job.json as film.py writes them), then the cut with a cross and a hold
+        # rendered frames as the films write them (animation/Frames/<section>/<section>_0001.png, Low
+        # Quality at a quarter of the width): the strips go into this scene's own Video Editor, 1:1
         anim = os.path.join(TMP, "anim")
-        film_dir = os.path.join(anim, "Film_high_01")
-        os.makedirs(os.path.join(film_dir, ".film"), exist_ok=True)
-        img = bpy.data.images.new("cut frame", 4, 4)
-        img.filepath_raw, img.file_format = os.path.join(film_dir, "f_0001.png"), 'PNG'
-        img.save()
-        bpy.data.images.remove(img)
         import shutil
-        for f in range(2, 111):
-            shutil.copyfile(os.path.join(film_dir, "f_0001.png"), os.path.join(film_dir, "f_%04d.png" % f))
-        with open(os.path.join(film_dir, ".film", "job.json"), "w") as f:
-            json.dump({"scene": scene.name, "frames": [1, 110], "pattern": os.path.join(film_dir, "f_")}, f)
-        keep_folder = cut._anim_folder
+        img = bpy.data.images.new("cut frame", 4, 4)
+        for name, a, b in (("01 Intro", 1, 50), ("02 Hero", 51, 110)):
+            folder = os.path.join(anim, "Frames", name)
+            os.makedirs(os.path.join(folder, ".film"), exist_ok=True)
+            first = os.path.join(folder, "%s_%04d.png" % (name, a))
+            img.filepath_raw, img.file_format = first, 'PNG'
+            img.save()
+            for f in range(a + 1, b + 1):
+                shutil.copyfile(first, os.path.join(folder, "%s_%04d.png" % (name, f)))
+            with open(os.path.join(folder, ".film", "job.json"), "w") as f:
+                json.dump({"scene": scene.name, "quality": "LOW", "overrides": [
+                    ["render.resolution_x", 4], ["render.resolution_percentage", 100]]}, f)
+        bpy.data.images.remove(img)
+        keep_folder, had_editor = cut._anim_folder, scene.sequence_editor is not None
+        keep_seq = scene.render.use_sequencer
         cut._anim_folder = lambda: anim
         try:
+            made, report = cut.build(scene)
+            intro = cut.section_strip(scene, "01 Intro")
+            check("strips in the same scene, where the frames are, Low Quality scaled up, 3D still renders",
+                  made is scene and intro is not None and intro.frame_final_start == 1
+                  and intro.frame_final_duration == 50 and not scene.render.use_sequencer
+                  and abs(intro.transform.scale_x - scene.render.resolution_x / 4) < 1e-3 and not report["missing"],
+                  (made.name, intro and intro.frame_final_start, report))
+            st = cut.frame_status("02 Hero", 51, 110, fresh=True)
+            check("a section's frames: done, LQ", st["done"] == 60 and st["quality"] == "LOW"
+                  and cut.status_text(st) == "LQ", st)
+            check("nothing new: the strips only read again", cut.sync(scene) == "reloaded")
             first, second = cut.settings(scene, "01 Intro"), cut.settings(scene, "02 Hero")
             first.transition, first.frames, second.hold = 'CROSS', 6, 4
-            made_cut, report = cut.build(scene)
-            kinds = sorted(cut._get(s, cut.KIND_KEY) for s in cut.ours(made_cut))
-            check("cut: sections, a cross, a hold and its still", kinds == ["CROSS", "HOLD", "SECTION", "SECTION"]
-                  and made_cut.frame_end == 50 + 60 - 6 + 4 and len(report["stills"]) == 1
-                  and os.path.isfile(report["stills"][0]), (kinds, made_cut.frame_end, report))
+            cut.build(scene)
+            kinds = sorted(cut._get(s, cut.KIND_KEY) for s in cut.ours(scene))
+            hero = cut.section_strip(scene, "02 Hero")
+            check("a cross and a hold; a strip's frame is its section's frame",
+                  kinds == ["CROSS", "HOLD", "SECTION", "SECTION"] and cut.strip_range(scene) == (1, 50 + 60 - 6 + 4)
+                  and cut.scene_frame(scene, hero, hero.frame_final_start) == ("02 Hero", 51),
+                  (kinds, cut.strip_range(scene)))
+            aq = mod("studio.autoquality")
+            key = aq.section_key("02 Hero")
+            before = aq.next_quality(scene, key)
+            aq.record(scene, key)
+            after = aq.next_quality(scene, key)
+            aq._edits[0] += 1                         # something changed in the scene
+            check("quality by itself: LQ, then HQ, after a change LQ again",
+                  (before, after, aq.next_quality(scene, key)) == ('LOW', 'HIGH', 'LOW'))
+            film = mod("studio.film")
+            folder = os.path.join(anim, "Frames", "02 Hero")
+            film._remove_frames(folder, "02 Hero", (60, 62))
+            left = cut.frame_status("02 Hero", 51, 110, fresh=True)
+            check("render again from a frame: only those frames go", left["done"] == 57, left["done"])
         finally:
+            cut._remove_ours(scene)
+            if not had_editor:
+                scene.sequence_editor_clear()
+            scene.render.use_sequencer = keep_seq
             cut._anim_folder = keep_folder
-            bpy.data.scenes.remove(made_cut)
     finally:
         for m in markers:
             scene.timeline_markers.remove(m)
@@ -2595,18 +2625,21 @@ def explosion_view():
 
 
 @section
-def still_film_switch():
-    """Still shows Refine, Film the Animation tab; a hidden tab shows its neighbour."""
+def tabs_without_switch():
+    """Five tabs; the Animation tab of 3.x opens the Camera tab (Motion is there now)."""
     ui = mod("studio.ui_common")
-    scene, wm = bpy.context.scene, bpy.context.window_manager
-    keep = (scene.studio.mode, wm.studio_tab)
-    scene.studio.mode, wm.studio_tab = 'STILL', 'ANIM'
-    still = ui.studio_tab(bpy.context)
-    scene.studio.mode = 'ANIM'
-    film = ui.studio_tab(bpy.context)
-    check("switch: Still hides Animation, Film shows it", still == 'QUEUE' and film == 'ANIM'
-          and 'FINISH' not in ui.visible_tabs(scene), (still, film))
-    scene.studio.mode, wm.studio_tab = keep
+    wm = bpy.context.window_manager
+    keep = wm.studio_tab
+    try:
+        wm.studio_tab = 'ANIM'
+    except TypeError:
+        pass
+    check("no Still / Film switch: five tabs, Animation → Camera", ui.studio_tab(bpy.context) == 'RENDER'
+          and ui.visible_tabs() == ('RENDER', 'LIGHT', 'MATERIAL', 'QUEUE', 'FINISH'), ui.visible_tabs())
+    skills = mod("skills")
+    anim = next((s for s in skills.list_skills(mod("core").workdir()) if s["name"] == "anim"), None)
+    check("the ANIM skill is not in the skill row (it comes by itself)", anim is None or not anim["in_chat"])
+    wm.studio_tab = keep
 
 
 @section

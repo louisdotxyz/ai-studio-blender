@@ -191,14 +191,17 @@ wm.studio_mat_kind = "Metal"
 run(bpy.types.STUDIO_PT_material, ctx)
 wm.studio_mat_kind = ""
 run(bpy.types.STUDIO_MT_material_kind_filter, ctx)
-bpy.context.scene.studio.mode = 'ANIM'      # Film: the Animation tab and the films in the Render tab
-wm.studio_tab = 'ANIM'
-run(bpy.types.STUDIO_PT_anim, ctx)
+wm.studio_tab = 'RENDER'                     # Camera tab with Motion and Explosion open
+wm.studio_sections = "anim_motion\nanim_explode"
+run(bpy.types.STUDIO_PT_camera, ctx)
+wm.studio_sections = ""
+_marker = bpy.context.scene.timeline_markers.new("01 Check", frame=1)   # the Video Editor's film sidebar
+run(bpy.types.STUDIO_PT_cut, ctx)
+bpy.context.scene.timeline_markers.remove(_marker)
+run(bpy.types.STUDIO_PT_cut, ctx)
 wm.studio_tab = 'QUEUE'
 run(bpy.types.STUDIO_PT_render_queue, ctx)
 run(bpy.types.STUDIO_PT_tabs, ctx)
-bpy.context.scene.studio.mode = 'STILL'
-run(bpy.types.STUDIO_PT_render_queue, ctx)
 wm.studio_tab = 'FINISH'
 run(bpy.types.STUDIO_PT_finish, ctx)
 studio_p = bpy.context.preferences.addons[PKG].preferences.studio

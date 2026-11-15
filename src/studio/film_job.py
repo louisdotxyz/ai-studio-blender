@@ -7,7 +7,7 @@ It runs on its own (its own process group), so it goes on when the Blender you w
 closed. The frames are written one by one as images and existing ones are skipped: started again
 (film.resume), it goes on where it stopped. The frame range renders in N parts one after the other;
 with a video format each part becomes a video (<name>_part_01.mp4) and at the end the whole film
-(<name>.mp4). Progress goes to status.json next to the job (read by film.py for the bar in Blender).
+(<name>.mp4); without one (sections since 4.0) the frames are the result. Progress goes to status.json next to the job (read by film.py for the bar in Blender).
 """
 
 import json
@@ -191,8 +191,9 @@ def main():
     _apply(scene, overrides)
     render = scene.render
     render.compositor_device = 'CPU'       # the GPU compositor gets a windowless Blender killed
+    render.use_sequencer = False           # the film's strips are in this scene's Video Editor: render 3D
     images = render.image_settings
-    if job.get("video"):                   # frames first (they make it resumable), the video after
+    if job.get("video") or images.file_format == 'FFMPEG':   # frames (resumable; the video after, if any)
         if hasattr(images, "media_type"):
             images.media_type = 'IMAGE'
         images.file_format = 'PNG'
@@ -239,13 +240,14 @@ def main():
         missing = [f for f in run if not _done(paths[f])]
         if missing:
             raise RuntimeError("Frames missing after part %d: %s" % (n, missing[:5]))
-        if len(runs) > 1:                  # every section also as its own video (to watch it)
+        if len(runs) > 1 and job.get("video"):   # every section also as its own video (to watch it)
             status(state="encoding")
             part_name = names[n - 1] if n - 1 < len(names) else "part_%02d" % n
             encode(scene, [paths[f] for f in run], "%s_%s" % (base, part_name), job.get("video") or "MP4")
             status(state="rendering")
-    status(state="encoding")              # always a video to watch; an image sequence keeps its frames too
-    encode(scene, [paths[f] for f in frames], base, job.get("video") or "MP4")
+    if job.get("video"):                  # a video too (since 4.0 only when asked: the export makes it)
+        status(state="encoding")
+        encode(scene, [paths[f] for f in frames], base, job["video"])
     status(state="done", done=len(frames), finished=time.time())
     print("FILM done", flush=True)
 

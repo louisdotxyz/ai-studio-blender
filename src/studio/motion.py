@@ -14,6 +14,7 @@ and end of the chosen frames, smooth or linear. A chain is a list of steps for o
 """
 
 import math
+import os
 import re
 
 import bpy
@@ -635,8 +636,8 @@ class STUDIO_OT_section(Operator):
                        "(P_<name>_01 on a pivot), starting from the active camera or the view",
                 'GO': "Go to this section: the timeline plays only it (again: the whole film)",
                 'REMOVE': "Remove this section (its marker and steps; the camera and the keys stay)",
-                'PREVIEW': "LQ: a quick film of this section in Low Quality (watch it in the Render tab)",
-                'RENDER': "HQ: this section as a film in High Quality (watch it in the Render tab)"}.get(props.action, "")
+                'PREVIEW': "This section in Low Quality (its frames come into the Video Editor)",
+                'RENDER': "This section in High Quality (its frames come into the Video Editor)"}.get(props.action, "")
 
     def invoke(self, context, _event):
         if self.action == 'ADD':
@@ -677,8 +678,6 @@ class STUDIO_OT_section(Operator):
                 self.report({'WARNING'}, "No camera")
                 return {'CANCELLED'}
             render_section(scene, camera, start, end, 'LOW' if self.action == 'PREVIEW' else 'HIGH', marker.name)
-            self.report({'INFO'}, "%s: %s, frames %d–%d" % (marker.name, "preview" if self.action == 'PREVIEW'
-                                                             else "film", start, end))
         return {'FINISHED'}
 
 
@@ -757,28 +756,71 @@ class STUDIO_OT_section_edit(Operator):
         return {'FINISHED'}
 
 
-def render_section(scene, camera, start, end, quality, name):
-    """The section as a film in its own process (see film.py)."""
-    rq = scene.studio
-    mode, keep_start, keep_end = rq.mode, scene.frame_start, scene.frame_end
-    rq.mode = 'ANIM'
-    try:
-        scene.frame_start, scene.frame_end = start, end
-        bpy.ops.studio.add(camera=camera.name, quality=quality)
-    finally:
-        scene.frame_start, scene.frame_end = keep_start, keep_end
-        rq.mode = mode
-    item = rq.items[-1]
-    item.parts = 1
-    from .runner import RUN
-    if not RUN.busy:
-        bpy.ops.studio.render_queue()
+def render_section(scene, camera, start, end, quality, name, frames=""):
+    """The section's frames in their own process (film.py) into animation/Frames/<section>/; quality
+    'DEFAULT' = by itself (Low first, High once nothing changed). frames "a-b": only those again."""
+    bpy.ops.studio.add(mode='ANIM', section=name, quality=quality, frames=frames,
+                       camera=camera.name if camera is not None else "")
+
+
+class STUDIO_OT_anim_preview(Operator):
+    bl_idname = "studio.anim_preview"
+    bl_label = "Check in the Viewport"
+    bl_description = ("The current section (or the whole film) as a quick viewport film in seconds, played right "
+                      "away: timing and camera moves (light and materials: render the section)")
+
+    def execute(self, context):
+        scene = context.scene
+        if scene.camera is None:
+            self.report({'WARNING'}, "A camera is needed")
+            return {'CANCELLED'}
+        start, end, name = current_range(scene)
+        render = scene.render
+        images = render.image_settings
+        keep = {"filepath": render.filepath, "pct": render.resolution_percentage,
+                "start": scene.frame_start, "end": scene.frame_end, "format": images.file_format,
+                "media": getattr(images, "media_type", None), "ext": render.use_file_extension}
+        from .runner import jobs_dir
+        out = os.path.join(jobs_dir(), "viewport_preview_%d_" % os.getpid())   # a second Blender: its own
+        found = None                   # a 3D view (from the Video Editor: one of another window, if any)
+        for window in [context.window] + [w for w in context.window_manager.windows if w != context.window]:
+            area = next((a for a in window.screen.areas if a.type == 'VIEW_3D'), None)
+            if area is not None:
+                found = (window, area, next(r for r in area.regions if r.type == 'WINDOW'))
+                break
+        try:
+            render.filepath = out
+            render.resolution_percentage = 50
+            scene.frame_start, scene.frame_end = start, end
+            if hasattr(images, "media_type"):
+                images.media_type = 'VIDEO'
+            images.file_format = 'FFMPEG'
+            render.ffmpeg.format, render.ffmpeg.codec = 'MPEG4', 'H264'
+            render.use_file_extension = True
+            if found is not None:
+                with context.temp_override(window=found[0], area=found[1], region=found[2]):
+                    bpy.ops.render.opengl(animation=True, view_context=False, sequencer=False)
+            else:
+                bpy.ops.render.opengl(animation=True, view_context=False, sequencer=False)
+            bpy.ops.render.play_rendered_anim()
+        except Exception as ex:
+            self.report({'ERROR'}, "Preview failed: %s" % ex)
+            return {'CANCELLED'}
+        finally:
+            render.filepath, render.resolution_percentage = keep["filepath"], keep["pct"]
+            scene.frame_start, scene.frame_end = keep["start"], keep["end"]
+            if keep["media"] is not None:
+                images.media_type = keep["media"]
+            images.file_format = keep["format"]
+            render.use_file_extension = keep["ext"]
+        self.report({'INFO'}, "Preview: %s, frames %d–%d" % (name or "whole film", start, end))
+        return {'FINISHED'}
 
 
 # ------------------------------------------------------------------ drawing
 
 def draw_presets(layout, scene):
-    """Animation tab: a preset with its strength and direction over chosen frames; the section's steps."""
+    """Camera tab · Motion: a preset with its strength and direction over chosen frames; the section's steps."""
     rq = scene.studio
     start, end, name = motion_range(scene)
     col = layout.column(align=True)
@@ -826,50 +868,6 @@ def draw_presets(layout, scene):
     op.chain = True
 
 
-_SHORT = {"Camera": "Cam", "Objects": "Obj"}
-
-
-def draw_sections(layout, scene):
-    """Animation tab: the sections with their camera, frames, keys; go, preview, render, remove."""
-    box = layout.box()
-    head = box.row(align=True)
-    head.label(text="Sections", icon='MARKER_HLT')
-    head.operator(STUDIO_OT_section.bl_idname, text="", icon='ADD').action = 'ADD'
-    found = sections(scene)
-    if not found:
-        hint = box.row()
-        hint.active = False
-        hint.label(text="+ here or in the timeline: a section from this frame on, with its own camera")
-        return
-    frame = scene.frame_current
-    for marker, start, end in found:
-        col = box.column(align=True)
-        row = col.row(align=True)
-        here = start <= frame <= end
-        go_op = row.operator(STUDIO_OT_section.bl_idname, text="", icon='PLAY' if here else 'TRIA_RIGHT',
-                             depress=here)
-        go_op.action, go_op.name = 'GO', marker.name
-        row.prop(marker, "name", text="")
-        cam = row.row(align=True)
-        cam.ui_units_x = 5
-        cam.prop(marker, "camera", text="")
-        for action, text in (('PREVIEW', "LQ"), ('RENDER', "HQ")):
-            op = row.operator(STUDIO_OT_section.bl_idname, text=text)
-            op.action, op.name = action, marker.name
-        op = row.operator(STUDIO_OT_section.bl_idname, text="", icon='X', emboss=False)
-        op.action, op.name = 'REMOVE', marker.name
-        info = col.split(factor=0.4, align=True)
-        edit = info.operator(STUDIO_OT_section_edit.bl_idname, text="%d–%d · %.1f s" % (
-            start, end, seconds(scene, end - start + 1)), icon='TIME', emboss=False, translate=False)
-        edit.name = marker.name
-        overview = key_overview(scene, start, end, marker.camera)
-        sub = info.row(align=True)
-        sub.active = False
-        sub.alignment = 'RIGHT'
-        sub.label(text="◆ " + " · ".join("%s %d" % (_SHORT.get(k, k), n) for k, n in overview.items())
-                  if overview else "no keys", translate=False)
-
-
 def draw_timeline(self, context):
     """In the timeline's header: + Section, a viewport preview, the film."""
     space = context.space_data
@@ -877,15 +875,17 @@ def draw_timeline(self, context):
         return
     row = self.layout.row(align=True)
     row.operator(STUDIO_OT_section.bl_idname, text="Section", icon='MARKER_HLT').action = 'ADD'
-    row.operator("studio.anim_preview", text="", icon='PLAY')
+    row.operator(STUDIO_OT_anim_preview.bl_idname, text="", icon='PLAY')
     row.operator("studio.add", text="", icon='RENDER_ANIMATION').mode = 'ANIM'
+    row.operator("studio.cut", text="", icon='SEQUENCE').action = 'OPEN'
 
 
 def _timeline_header():
     return getattr(bpy.types, "TIME_HT_editor_buttons", None) or getattr(bpy.types, "DOPESHEET_HT_header", None)
 
 
-classes = (STUDIO_OT_motion, STUDIO_OT_motion_step, STUDIO_OT_key_pose, STUDIO_OT_section, STUDIO_OT_section_edit)
+classes = (STUDIO_OT_motion, STUDIO_OT_motion_step, STUDIO_OT_key_pose, STUDIO_OT_section, STUDIO_OT_section_edit,
+           STUDIO_OT_anim_preview)
 
 
 def register():

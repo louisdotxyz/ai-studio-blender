@@ -1,13 +1,11 @@
 ---
 title: ANIM
-description: Product films: sections, camera moves, the cut
+description: Product films: sections, camera moves, the Video Editor
 icon: RENDER_ANIMATION
-studio_tab: ANIM
-chat: yes
+chat: no
 ---
-Product films with AI Studio's tools. Answer briefly.
-Films live in Film mode (the Still | Film switch on top: scene.studio.mode = 'ANIM'); finished films,
-also LQ ones, are watched in the Render tab (each with an MP4 per section and for the whole film).
+Product films with AI Studio's tools. Answer briefly. This skill comes by itself when the scene has
+sections or a film renders (it is not in the skill row).
 Sections = timeline markers "NN Name" (01 Hero, 02 Explosion). A section runs from its marker to the frame
 before the next one. Its camera is marker.camera (own camera P_<name>_01 on a pivot, Pass Index = number).
 - api.section_add("Hero", frame=None, from_view=False): a new section from this frame with its own camera,
@@ -21,20 +19,23 @@ before the next one. Its camera is marker.camera (own camera P_<name>_01 on a pi
   Default frames = the current section. Keys already there: replace=True removes them in the frames, False
   keeps them; say which you did.
 - api.motion_chain("02 Hero", [("PULL_OUT", 24, 140), ("HOLD", 12), ("TURNTABLE", 0, 90)]): steps one after
-  the other (frames 0 = to the end). The steps show in the Animation tab.
+  the other (frames 0 = to the end). Motion is in the Camera tab.
 - api.key_pose(): the viewport's view as a key at this frame (with the lens).
-- Render: ⌘E, Film LQ/HQ or a section's LQ/HQ; films run in their own process strictly one after the
-  other (the queue waits). Check with a viewport preview (studio.anim_preview) before High Quality.
-  api.render_status() says what renders (part, frame, seconds left) and the finished videos' paths;
-  studio_render_queue 'wait' answers only when the films are done, with their paths. Never start own
-  background renders to check a film.
-- Cut: api.cut_build({"01 Intro": ("CROSS", 12, 0), "02 Hero": ("BLACK", 8, 24)}) makes the scene "Schnitt"
-  in the Video Sequencer (transition into the next section, frames, hold frames + PNG still). Our strips
-  are replaced, the user's own stay; re-rendered sections update by themselves. Music + BPM:
-  scene.studio.cut_music / cut_bpm, then studio.cut(action='SNAP') puts sections on whole beats (ask first,
-  it moves keys). api.cut_export(edl=False) writes the MP4 in the background.
-- Explosion view: api.explode_group("Lampenkopf", [parts]) gives a handle "Griff | Lampenkopf"; the parts
-  follow it only while scene["Explosion"] > 0 (0 = exactly as in CAD). Place groups by moving / turning
-  their handles with the explosion open, never the parts themselves. api.explode_arrange(names, flat,
-  upright, in_row) turns groups flat to the camera and puts them in a row; api.explode_key_section("02
+- Render: api.section_render(section=None, quality=None, frames=None) (⌘E, or Render in the Video Editor's
+  Studio tab): each section renders its frames in its own process into animation/Frames/<section>/,
+  strictly one after the other. quality None = by itself: Low Quality first, High Quality once nothing
+  changed; sections already in High Quality with nothing changed are skipped. frames=(a, b) renders only
+  those frames again (the others stay). No video per section. Check first with studio.anim_preview.
+  api.render_status() says what renders (frame, seconds left); studio_render_queue 'wait' answers only
+  when the films are done. Never start own background renders to check a film.
+- The Video Editor of the same scene shows every section as an image strip (they come in and fill in by
+  themselves; the scene renders 3D, render.use_sequencer stays off). api.cut_build({"01 Intro": ("CROSS",
+  12, 0), "02 Hero": ("BLACK", 8, 24)}) sets the transition into the next section, its frames and hold
+  frames, and builds the strips again (ours are replaced, the user's own stay). Music + BPM:
+  scene.studio.cut_music / cut_bpm, studio.cut(action='SNAP') puts sections on whole beats (ask first, it
+  moves keys). api.cut_export(edl=False) renders all strips into one MP4 at the end (animation/Export).
+- Explosion view (Camera tab): api.explode_group("Lampenkopf", [parts]) gives a handle "Griff | Lampenkopf";
+  the parts follow it only while scene["Explosion"] > 0 (0 = exactly as in CAD). Place groups by moving /
+  turning their handles with the explosion open, never the parts themselves. api.explode_arrange(names,
+  flat, upright, in_row) turns groups flat to the camera and puts them in a row; api.explode_key_section("02
   Explosion") keys it open in that section and closed after it; api.realign_hooks() after new origins.

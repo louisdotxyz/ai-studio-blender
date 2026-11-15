@@ -8,7 +8,8 @@ Skills live in <extension user dir>/skills/<name>.md with a small front matter:
     description: Camera, framing, depth of field
     icon: CAMERA_DATA
     studio_tab: RENDER        (optional: used by the chat while you come from that Studio tab)
-    chat: yes                 (optional: also in the chat's skill row although bound to a tab)
+    chat: yes                 (optional: also in the chat's skill row although bound to a tab;
+                               no: never in the row, it comes by itself)
     ---
     Instructions for Claude ...
 
@@ -27,6 +28,8 @@ ACTIVE = ".active.json"   # the checked skills, kept between Blender sessions
 # In the chat's skill row also when an older copy of the file says only studio_tab (2.1: no
 # Claude line in the Light and Material tabs any more, these skills are used from the chat).
 IN_CHAT = {"camera", "light", "material"}
+# Never in the skill row, they come by themselves (anim: when the scene has sections or a film renders).
+HIDDEN = {"anim"}
 # Earlier shipped versions (sha1 of the file): a copy the user never changed gets the new text.
 UPGRADES = {"sort": {"b35e76dbacdeb8cbbbf0f5eb0167c16a63492077"},
             "cad": {"e7b3d80ae27d22995023a36ddcaab3b3761f1b97"},
@@ -37,6 +40,8 @@ UPGRADES = {"sort": {"b35e76dbacdeb8cbbbf0f5eb0167c16a63492077"},
                        "275623b5bedd1339797315e1bd0f302adc054bb4"},
             "material": {"6ce2e39e716956cfeadf82e2b4e65e6e6800d243", "0b5914cfc5e631ebaf7906c58f86cd84c29c8dba",
                          "8943cce70de0d1325a652aa55edc0fdaca5b1855", "37835b81a9da24889085115e41a96c6d2b89b5ba"},
+            "anim": {"962d4b78bc9b8c975496ed5299b42e54bb3d197b", "3296f0cb84fef37a8acfc0479f4998b22973ba91",
+                     "ff82b3329bde9750aaa134aa3801619bd96e3348", "87bf7c97adb4defa26c244cd876b333d9088ab2a"},
             "light": {"836f400f42ede6f5a887089f90528bf1e29da481", "dd0b9b9a2a01ef17ccf380bfc53708180e61224e",
                       "f0af9312a69eafd23e268221be706be8fffab3ba", "b5d877c4c7bf2035cd52552db1f4d371071a4ca5", "aca7b2ea8e34e2ff04bae9046de24b9aff6ed4ef"}}
 _FRONT = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.S)
@@ -222,8 +227,9 @@ def _parse(path):
         # Studio tab whose Claude chat uses this skill (RENDER, LIGHT, MATERIAL, QUEUE) …
         "studio_tab": meta.get("studio_tab", "").upper(),
         # … and whether it is in the chat's skill row anyway (else only via its tab)
-        "in_chat": meta.get("chat", "").lower() in {"yes", "true", "1"} or not meta.get("studio_tab")
-                   or name.lower() in IN_CHAT,
+        "in_chat": name.lower() not in HIDDEN and meta.get("chat", "").lower() not in {"no", "false", "0"} and (
+            meta.get("chat", "").lower() in {"yes", "true", "1"} or not meta.get("studio_tab")
+            or name.lower() in IN_CHAT),
         "body": text.strip(),
         "path": path,
         **({"when": meta["when"]} if meta.get("when") else {}),

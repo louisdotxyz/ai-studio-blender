@@ -17,7 +17,7 @@ from bpy.types import Operator, Panel
 
 from . import (addons, background, cameras, claude_link, core, env_ui, environment, foreign, hdri,
                light_paint, light_ui, lights, presets_io, render_size, runner, shots, sync, tab_finish, tab_queue,
-               variants_ab, chat_render, render_review, film, migrate, keys, motion, cut, explode, tab_anim, project)
+               variants_ab, chat_render, render_review, film, migrate, keys, motion, cut, explode, autoquality, project)
 # Loaded for their side effects: the chat finds claude_tools (Claude's studio_* tools) in
 # sys.modules; api and variants are the helpers in execute_python.
 from . import api, baselib, claude_tools, light_items, looks, variants  # noqa: F401
@@ -110,11 +110,8 @@ class STUDIO_PT_tabs(Panel):
 
     def draw(self, context):
         _unpin(self)
-        # Still | Film, then the mode's five tabs as equal icons (names in the tooltips)
+        # the five tabs as equal icons (names in the tooltips)
         from .ui_common import studio_tab, visible_tabs
-        switch = self.layout.row(align=True)
-        switch.prop_enum(context.scene.studio, "mode", 'STILL', icon='IMAGE_DATA')
-        switch.prop_enum(context.scene.studio, "mode", 'ANIM', icon='RENDER_ANIMATION')
         row = self.layout.row(align=True)
         row.scale_y = 1.3
         shown = visible_tabs(context.scene)
@@ -325,7 +322,7 @@ def register():
     motion.register()
     cut.register()
     explode.register()
-    tab_anim.register()
+    autoquality.register()
     project.register()
     chat_render.register()
     render_size.register()
@@ -353,9 +350,9 @@ def unregister():
     film.unregister()
     keys.unregister()
     explode.unregister()
+    autoquality.unregister()
     cut.unregister()
     motion.unregister()
-    tab_anim.unregister()
     project.unregister()
     cad_link.unregister()
     shots.unregister()

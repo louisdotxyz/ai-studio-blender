@@ -93,15 +93,19 @@ def _launch(film_dir):
     return proc.pid
 
 
-def start(scene, job, folder, stem, frames, parts, video, label):
+def start(scene, job, folder, stem, frames, parts, video, label, fresh=True, archive=None):
     """Save a copy of the file into <folder>/.film, write the job and start the film's process.
-    `job` is the queue's job (overrides, camera, variant). Returns the film's entry."""
+    `job` is the queue's job (overrides, camera, variant). fresh: older frames go to archiv first, else
+    only the frames of `frames` render again (the others stay). Returns the film's entry."""
     from . import runner
     film_dir = os.path.join(folder, FILM_DIR)
     os.makedirs(film_dir, exist_ok=True)
-    moved = _clear_old_frames(folder, stem)
-    if moved:
-        runner.log("film %s: %d older frames moved to archiv" % (label, moved))
+    if fresh:
+        moved = _clear_old_frames(folder, stem, archive)
+        if moved:
+            runner.log("film %s: %d older frames moved to archiv" % (label, moved))
+    else:
+        _remove_frames(folder, stem, frames)
     for name in ("status.json",):          # a new film: no progress from an earlier one
         try:
             os.remove(os.path.join(film_dir, name))
@@ -116,11 +120,12 @@ def start(scene, job, folder, stem, frames, parts, video, label):
     data = {"scene": scene.name, "overrides": job["overrides"], "camera": job.get("camera"),
             "variant": job.get("variant") or [], "frames": list(frames), "parts": int(max(1, parts)),
             "pattern": os.path.join(folder, stem + "_"), "out": os.path.join(folder, stem),
-            "video": VIDEOS.get(video), "devices": runner._device_settings(), "runs": job.get("runs")}
+            "video": VIDEOS.get(video), "devices": runner._device_settings(), "runs": job.get("runs"),
+            "titles": job.get("titles"), "quality": job.get("quality", ""), "section": job.get("section", "")}
     with open(os.path.join(film_dir, "job.json"), "w", encoding="utf-8") as f:
         json.dump(data, f, indent=1)
     entry = {"dir": film_dir, "folder": folder, "label": label, "pid": _launch(film_dir),
-             "added": time.time(), "blend": bpy.data.filepath}
+             "added": time.time(), "blend": bpy.data.filepath, "scene": scene.name}
     films = [f for f in _load() if f["dir"] != film_dir] + [entry]
     _save(films)
     runner.log("film %s started (%d frames, %d parts, pid %s)" % (label, frames[1] - frames[0] + 1,
@@ -225,18 +230,37 @@ def _publish(folder, whole, parts):
     return job.get("scene", "")
 
 
-def _clear_old_frames(folder, stem):
+_FRAME_EXTS = (".png", ".jpg", ".jpeg", ".exr", ".tif", ".tiff", ".webp")
+
+
+def _frames_of(folder, stem):
+    try:
+        return [n for n in os.listdir(folder) if n.startswith(stem + "_") and n.lower().endswith(_FRAME_EXTS)]
+    except OSError:
+        return []
+
+
+def _remove_frames(folder, stem, frames):
+    """Only these frames render again: their files go (the film skips frames that are there)."""
+    import re
+    a, b = frames
+    for name in _frames_of(folder, stem):
+        found = re.fullmatch(re.escape(stem) + r"_(\d+)\.\w+", name)
+        if found and a <= int(found.group(1)) <= b:
+            try:
+                os.remove(os.path.join(folder, name))
+            except OSError:
+                pass
+
+
+def _clear_old_frames(folder, stem, archive=None):
     """A new film into a folder that has frames already (a name used again): they go to archiv first,
     else Blender would keep them (frames that are there are skipped so a film can resume)."""
-    try:
-        old = [n for n in os.listdir(folder) if n.startswith(stem + "_") and n.lower().endswith(
-            (".png", ".jpg", ".jpeg", ".exr", ".tif", ".tiff", ".webp"))]
-    except OSError:
-        return 0
+    old = _frames_of(folder, stem)
     if not old:
         return 0
-    target = os.path.join(os.path.dirname(folder), "archiv", "%s %s" % (os.path.basename(folder),
-                                                                      time.strftime("%Y-%m-%d %H%M%S")))
+    target = os.path.join(archive or os.path.join(os.path.dirname(folder), "archiv"),
+                          "%s %s" % (os.path.basename(folder), time.strftime("%Y-%m-%d %H%M%S")))
     os.makedirs(target, exist_ok=True)
     for name in old:
         os.replace(os.path.join(folder, name), os.path.join(target, name))
@@ -359,6 +383,7 @@ def _video_or_frame(film):
 
 
 _seen = {}
+_filled = {}         # film → (frames done, when) at the last refresh of its strips
 
 
 def _poll():
@@ -371,6 +396,13 @@ def _poll():
         return 5.0
     for film, st, kind in now:
         key = film["dir"]
+        if kind == 'RENDERING' and film.get("scene") and mine(film):     # its new frames into the strips
+            done = st.get("done", 0)
+            last = _filled.get(key, (0, 0.0))
+            if done != last[0] and time.monotonic() - last[1] > 6.0:
+                _filled[key] = (done, time.monotonic())
+                from . import cut
+                cut.on_progress(film["scene"])
         if kind == 'DONE' and _seen.get(key) != 'DONE':
             runner.log("film done: %s" % film.get("label"))
             if mine(film):
@@ -384,7 +416,8 @@ def _poll():
             except OSError as ex:
                 runner.log("film videos not put next to the films: %s" % ex)
                 scene_name = ""
-            if scene_name and mine(film):
+            scene_name = scene_name or film.get("scene", "")
+            if scene_name and mine(film) and not film.get("label", "").startswith("Export"):
                 from . import cut
                 cut.on_film_done(scene_name)
             FINISHED.append({"label": film.get("label", ""), "video": whole, "sections": parts,

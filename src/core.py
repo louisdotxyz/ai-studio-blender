@@ -653,6 +653,17 @@ def _build_content(text, atts, prefs):
     return content
 
 
+def _film_here():
+    """The open scene has film sections or a film of this file renders (the ANIM skill comes along)."""
+    try:
+        import bpy
+        from .studio import film, motion
+        scene = bpy.context.scene
+        return bool(scene is not None and motion.sections(scene)) or bool(film.running_here())
+    except Exception:
+        return False
+
+
 def _send(text, extra_skills=()):
     prefs = get_prefs()
     atts = list(attachments)
@@ -676,6 +687,10 @@ def _send(text, extra_skills=()):
             chosen.append(skill)
     for skill in skills.auto_for(workdir(), text):   # the message asks for it: on for this message
         if all(s["name"] != skill["name"] for s in chosen):
+            chosen.append(skill)
+    if all(s["name"] != "anim" for s in chosen) and _film_here():   # films: the ANIM skill by itself
+        skill = skills.find(workdir(), "anim")
+        if skill:
             chosen.append(skill)
     done_once = [s["name"] for s in chosen if skills.is_once(s) and s["name"] in active_skills]
     if done_once:                # one-off skills (SORT, CAD …) switch themselves off after this message

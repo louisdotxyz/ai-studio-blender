@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Render controls right in the chat, above the skills (draw_inline): start renders without Claude.
-One row: [cameras ▾][All] [high|low] [still|film] [Render (n)]; size and format come from the Render tab,
-progress and comparing are there. Several cameras at once go into one numbered folder (Batch_01 …)."""
+One row: [cameras ▾][All] [Render]. The quality chooses itself (autoquality.py: Low Quality first, High
+Quality once nothing changed; Shift-click: the other one); size and format come from the Render tab,
+progress and comparing are there. Several cameras at once go into one numbered folder (Batch_01 …).
+Films render in the Video Editor (⌘E)."""
 
 import os
 
 import bpy
-from bpy.props import StringProperty
+from bpy.props import BoolProperty, StringProperty
 from bpy.types import Operator, Panel
 
 from . import cameras
@@ -48,32 +50,58 @@ class STUDIO_OT_chat_camera(Operator):
 class STUDIO_OT_chat_render(Operator):
     bl_idname = "studio.chat_render"
     bl_label = "Render"
-    bl_description = ("Render the checked cameras with the quality and still/film chosen here; size and format "
-                      "from the Render tab. Several cameras go into one numbered folder (Batch_01 …)")
+
+    other: BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, context, _props):
+        from . import autoquality
+        names = chosen(context) if context else []
+        if not names:
+            return "Render the checked cameras"
+        qualities = {autoquality.next_quality(context.scene, autoquality.still_key(n)) for n in names}
+        quality = qualities.pop() if len(qualities) == 1 else ""
+        return ("Render %s: %s. Shift-click: the other quality. Size and format from the Render tab; several "
+                "cameras go into one numbered folder (Batch_01 …)" % (
+                    names[0] if len(names) == 1 else "%d cameras" % len(names),
+                    autoquality.describe(quality) if quality else "each in Low or High Quality, as it needs"))
+
+    def invoke(self, context, event):
+        self.other = event.shift
+        return self.execute(context)
 
     def execute(self, context):
+        from . import autoquality, core, runner
         names = chosen(context)
         if not names:
             self.report({'WARNING'}, "Check at least one camera")
             return {'CANCELLED'}
-        batch = ""
-        if len(names) > 1 and context.scene.studio.mode == 'STILL':
-            from . import core, runner
-            root = runner.settings_from_prefs()[0]
-            name = context.scene.studio.output_name
-            batch = core.next_batch(root, name)
-            quality = context.scene.studio.quality
-            project = core.project_name(name=name)
-            try:   # made now, so a second click right after gets the next number
-                os.makedirs(os.path.join(core.quality_dir(root, project, quality), batch), exist_ok=True)
-            except OSError:
-                pass
+        scene = context.scene
+        plan = []
         for name in names:
-            bpy.ops.studio.add(camera=name, batch=batch)
-        if not RUN.busy and any(i.camera for i in context.scene.studio.items):
+            quality = autoquality.next_quality(scene, autoquality.still_key(name))
+            if self.other:
+                quality = 'LOW' if quality == 'HIGH' else 'HIGH'
+            plan.append((name, quality))
+        batch = ""
+        if len(names) > 1:
+            root = runner.settings_from_prefs()[0]
+            name = scene.studio.output_name
+            batch = core.next_batch(root, name)
+            project = core.project_name(name=name)
+            for quality in {q for _n, q in plan}:
+                try:   # made now, so a second click right after gets the next number
+                    os.makedirs(os.path.join(core.quality_dir(root, project, quality), batch), exist_ok=True)
+                except OSError:
+                    pass
+        for name, quality in plan:
+            bpy.ops.studio.add(camera=name, batch=batch, quality=quality, mode='STILL')
+        if not RUN.busy and any(i.camera for i in scene.studio.items):
             bpy.ops.studio.render_queue()
-        self.report({'INFO'}, ("Rendering %d cameras into %s" % (len(names), batch)) if batch else
-                    "Rendering %s" % names[0] if len(names) == 1 else "Rendering %d cameras" % len(names))
+        high = sum(1 for _n, q in plan if q == 'HIGH')
+        what = "HQ" if high == len(plan) else "LQ" if not high else "%d HQ, %d LQ" % (high, len(plan) - high)
+        self.report({'INFO'}, ("Rendering %d cameras into %s (%s)" % (len(names), batch, what)) if batch else
+                    "Rendering %s (%s)" % (names[0], what))
         return {'FINISHED'}
 
 
@@ -105,10 +133,9 @@ def _camera_text(names, cams):
 
 
 def draw_inline(layout, context):
-    """One row in the chat: [cameras ▾][All] [high|low] [still|film] [Render (n)].
-    Size and format come from the Render tab; progress and comparing are there too."""
+    """One row in the chat: [cameras ▾][All] [Render]. Size and format come from the Render tab; progress
+    and comparing are there too."""
     scene = context.scene
-    rq = scene.studio
     cams = cameras.scene_cameras(scene)
     names = chosen(context)
     row = layout.row(align=False)
@@ -120,17 +147,10 @@ def draw_inline(layout, context):
         every.ui_units_x = 1.6
         every.operator(STUDIO_OT_chat_camera.bl_idname, text="All",
                        depress=set(names) >= {o.name for o in cams}).name = "*"
-    mid = row.row(align=True)
-    mid.prop_enum(rq, "quality", 'HIGH', text="", icon='SHADING_RENDERED')
-    mid.prop_enum(rq, "quality", 'LOW', text="", icon='SORTTIME')
-    mid = row.row(align=True)
-    mid.prop_enum(rq, "mode", 'STILL', text="", icon='IMAGE_DATA')
-    mid.prop_enum(rq, "mode", 'ANIM', text="", icon='RENDER_ANIMATION')
     right = row.row(align=True)
     right.ui_units_x = 5.5
     right.enabled = bool(names)       # while one renders: more go into the queue (progress above the chat)
-    right.operator(STUDIO_OT_chat_render.bl_idname, text="Render (%d)" % len(names) if len(names) > 1 else "Render",
-                   icon='RENDER_STILL' if rq.mode == 'STILL' else 'RENDER_ANIMATION')
+    right.operator(STUDIO_OT_chat_render.bl_idname, text="Render", icon='RENDER_STILL')
 
 
 classes = (STUDIO_OT_chat_camera, STUDIO_OT_chat_render, STUDIO_PT_chat_render)

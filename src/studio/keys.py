@@ -114,10 +114,7 @@ class STUDIO_OT_key(Operator):
 
 
 def button(layout, what):
-    """◆ at the head of a section: only in Film mode (stills have no keys to set)."""
-    from .ui_common import is_film
-    if not is_film(bpy.context.scene):
-        return
+    """◆ at the head of a section: keys its values at this frame (for films)."""
     layout.operator(STUDIO_OT_key.bl_idname, text="", icon='DECORATE_KEYFRAME', emboss=False).what = what
 
 

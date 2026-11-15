@@ -952,9 +952,20 @@ def key_pose(from_view=True):
     return m.key_pose(scene, cameras.active_camera(scene), from_view=from_view)
 
 
+def section_render(section=None, quality=None, frames=None):
+    """Render a section's frames (None: every section that needs it) into animation/Frames/<section>/;
+    they come into the Video Editor by themselves. quality None = by itself (Low first, High once nothing
+    changed), else 'LOW' / 'HIGH'. frames=(a, b): only those frames again. Returns what was queued."""
+    scene = bpy.context.scene
+    result = bpy.ops.studio.add(mode='ANIM', section=section or "", quality=quality or 'DEFAULT',
+                                frames="%d-%d" % tuple(frames) if frames else "")
+    return [{"section": i.section, "quality": i.quality, "frames": [i.frame_start, i.frame_end]}
+            for i in scene.studio.items if i.mode == 'ANIM'] if 'FINISHED' in result else []
+
+
 def cut_build(transitions=None):
-    """The cut scene "Schnitt" from the rendered sections. transitions: {section: (kind, frames, hold)} with
-    kind CUT / CROSS / BLACK / WHITE. Returns {"scene", "sections", "missing", "stills"}."""
+    """The sections as strips in this scene's Video Editor. transitions: {section: (kind, frames, hold)} with
+    kind CUT / CROSS / BLACK / WHITE. Returns {"scene", "sections", "missing"}."""
     from . import cut
     scene = bpy.context.scene
     for section, spec in (transitions or {}).items():
@@ -969,7 +980,8 @@ def cut_build(transitions=None):
 
 
 def cut_export(edl=False):
-    """The cut as MP4 (H.264 high) in the background; edl=True also writes an EDL. Returns the paths."""
+    """All strips as one MP4 (H.264 high; ProRes if that is the animation format) in the background, into
+    animation/Export; edl=True also writes an EDL. Returns the paths."""
     from . import cut
     scene = bpy.context.scene
     video, log = cut.export(scene)
@@ -983,7 +995,8 @@ def render_status():
     """What renders and what is ready, for checking renders without own processes:
     {"busy", "message", "queue": [labels], "current": {"label", "path", "progress"} or None,
      "films": [{"label", "state", "part", "parts", "frame", "done", "total", "seconds_left", "text", "folder"}],
-     "finished": [{"label", "video", "sections": [[name, video]], "folder"}]} (films of this file)."""
+     "finished": [{"label", "video", "sections": [[name, video]], "folder"}],
+     "sections": [{"section", "frames", "done", "total", "quality", "folder"}]} (films of this file)."""
     from . import film, runner
     scene = bpy.context.scene
     run = runner.RUN
@@ -1002,9 +1015,15 @@ def render_status():
                       "folder": entry.get("folder", "")})
     finished = [{"label": f["label"], "video": f["video"], "sections": [list(x) for x in f["sections"]],
                  "folder": f["folder"]} for f in film.FINISHED if film.mine(f)]
+    from . import cut
+    sections = []
+    for name, start, end, _marker in cut.sections_of(scene):
+        st = cut.frame_status(name, start, end, fresh=True)
+        sections.append({"section": name, "frames": [start, end], "done": st["done"], "total": st["total"],
+                         "quality": st["quality"], "folder": st["folder"]})
     return {"busy": run.busy, "message": run.message, "current": current,
             "queue": [runner.item_label(scene, i) for i in scene.studio.items if i.camera],
-            "films": films, "finished": finished}
+            "films": films, "finished": finished, "sections": sections}
 
 
 # ---------------------------------------------------------------- explosion view
