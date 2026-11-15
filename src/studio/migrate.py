@@ -75,10 +75,12 @@ def _copy_rna(data, target):
             continue
         try:
             if prop.type == 'POINTER':
+                sub = getattr(target, key)
                 if isinstance(value, dict):
-                    _copy_rna(value, getattr(target, key))
+                    if sub is not None and not isinstance(sub, bpy.types.ID):
+                        _copy_rna(value, sub)          # a settings group of its own
                 elif value is None or isinstance(value, bpy.types.ID):
-                    setattr(target, key, value)
+                    setattr(target, key, value)        # an object, material … or none
             elif prop.type == 'COLLECTION':
                 items = getattr(target, key)
                 items.clear()
