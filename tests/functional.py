@@ -2033,7 +2033,7 @@ def feedback_tools():
     new = bpy.data.objects.new("Gabel <1>", bpy.data.meshes.new("Gabel2"))
     scene.collection.objects.link(new)
     info = api.cad_take_over([new])
-    archived = bpy.data.collections.get("Archive")
+    archived = bpy.data.collections.get("Archiv")
     check("new CAD version takes materials and collections", info["pairs"] == [["Gabel <1>", "Gabel"]]
           and new.active_material == mat and keep_coll in new.users_collection, info)
     check("old part archived, hidden", archived is not None and old.name in archived.objects
@@ -2364,9 +2364,10 @@ def three_zero():
     migrate, cams, film = mod("studio.migrate"), mod("studio.cameras"), mod("studio.film")
     scene = bpy.context.scene
     keep = scene.studio.film_parts
-    scene["render_studio"] = {"film_parts": 7}
+    store = scene.bl_system_properties_get(do_create=True) if hasattr(scene, "bl_system_properties_get") else scene
+    store["render_studio"] = {"film_parts": 7}
     migrate.run()
-    check("old scene settings taken over", scene.studio.film_parts == 7 and "render_studio" not in scene.keys(),
+    check("old scene settings taken over", scene.studio.film_parts == 7 and "render_studio" not in store.keys(),
           scene.studio.film_parts)
     scene.studio.film_parts = keep
     old = bpy.data.collections.new("AS_lights")

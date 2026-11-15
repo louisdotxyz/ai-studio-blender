@@ -22,20 +22,34 @@ def _new_key(key):
     return None
 
 
+def _groups(block):
+    """The block's own custom properties and (Blender 5) the separate storage of add-on properties."""
+    yield block
+    get = getattr(block, "bl_system_properties_get", None)
+    if get is not None:
+        try:
+            system = get()
+        except (TypeError, RuntimeError):
+            system = None
+        if system is not None:
+            yield system
+
+
 def _move_keys(block):
     moved = 0
-    try:
-        keys = list(block.keys())
-    except (TypeError, AttributeError):
-        return 0
-    for key in keys:
-        new = _new_key(key)
-        if new is None:
+    for group in _groups(block):
+        try:
+            keys = list(group.keys())
+        except (TypeError, AttributeError):
             continue
-        value = block[key]
-        block[new] = value.to_dict() if hasattr(value, "to_dict") else value
-        del block[key]
-        moved += 1
+        for key in keys:
+            new = _new_key(key)
+            if new is None:
+                continue
+            value = group[key]
+            group[new] = value.to_dict() if hasattr(value, "to_dict") else value
+            del group[key]
+            moved += 1
     return moved
 
 
