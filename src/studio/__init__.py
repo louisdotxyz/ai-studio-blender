@@ -53,7 +53,7 @@ from .tab_queue import (STUDIO_MT_render_presets, STUDIO_OT_add, STUDIO_OT_cance
                         STUDIO_OT_render_refine,
                         STUDIO_OT_view_camera, STUDIO_PT_output, STUDIO_PT_render_queue, draw_statusbar)
 from . import cad_link, render_setup
-from .look import STUDIO_OT_look_preset, STUDIO_OT_look_reset
+from .look import STUDIO_OT_look_preset, STUDIO_OT_look_reset, STUDIO_OT_open_compositor
 
 
 class STUDIO_OT_open_chat(Operator):
@@ -171,6 +171,7 @@ classes = render_setup.classes + (
     STUDIO_OT_material_preset_save,
     STUDIO_OT_material_preset_delete,
     STUDIO_OT_look_preset,
+    STUDIO_OT_open_compositor,
     STUDIO_OT_look_reset,
     STUDIO_OT_material_assign,
     STUDIO_OT_material_open,

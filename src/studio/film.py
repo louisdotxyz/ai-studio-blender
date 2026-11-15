@@ -41,6 +41,7 @@ def _load():
 
 
 def _save(films):
+    _films_cache[0] = 0.0
     path = _registry()
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -120,9 +121,15 @@ def start(scene, job, folder, stem, frames, parts, video, label):
     return entry
 
 
-def films():
+_films_cache = [0.0, []]
+
+
+def films(fresh=False):
     """[(entry, status, state)] state: 'RENDERING', 'ENCODING', 'PAUSED' (stopped or crashed: resume),
-    'FAILED' or 'DONE'."""
+    'FAILED' or 'DONE'. Read again at most every second (panels draw often)."""
+    now = time.monotonic()
+    if not fresh and now - _films_cache[0] < 1.0:
+        return _films_cache[1]
     out = []
     for film in _load():
         st = read_status(film)
@@ -137,6 +144,7 @@ def films():
         else:
             kind = 'PAUSED'
         out.append((film, st, kind))
+    _films_cache[:] = [now, out]
     return out
 
 
@@ -229,7 +237,7 @@ def _poll():
     """Every 2 s while films run: redraw the bars; a film that finished is announced and leaves the list."""
     from . import runner
     try:
-        now = films()
+        now = films(fresh=True)
     except Exception as ex:
         print("AI Studio: films:", ex)
         return 5.0

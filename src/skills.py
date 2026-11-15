@@ -129,6 +129,52 @@ def _sha1(path):
         return ""
 
 
+# Skills that switch themselves: (words in the message that turn it on for that message, does it turn
+# itself off after one use). Off after one use: tasks done once (tidying up, a CAD version, a photo
+# match …), so a forgotten SORT does not tidy every following answer. A skill's own front matter can
+# set "when: <regex>" and "once: yes/no".
+AUTO = {
+    "sort": (r"aufr[äa]um|tidy|clean ?up|sortier|ordnung", True),
+    "cad": (r"\bcad\b|\bstep\b|onshape|neue version|cad-auftrag", True),
+    "photo-match": (r"foto nachstell|wie auf dem (foto|bild)|in das foto|ins foto|match.*photo|photo match", True),
+    "environment": (r"raum (bauen|erstellen)|room from|baue? (einen|den) raum|umgebung bauen", True),
+    "build": (r"datenblatt|datasheet|nachbauen|kaufteil", True),
+    "finish": (r"\bkrea\b|verfeiner|refine", True),
+    "camera": (r"kamera|camera|brennweite|focal|bildausschnitt|framing|perspektive|orbit|tiefenschärfe", False),
+    "light": (r"licht|light|lampe|schatten|shadow|beleucht|ausleucht", False),
+    "material": (r"material|oberfläche|textur|glanz|metall|glas|lack|farbe des", False),
+    "world": (r"\bhdri\b|\bworld\b|himmel|\bsky\b|umgebungslicht", False),
+}
+
+
+def auto_rule(skill):
+    """(regex or "", once?) of a skill: its own front matter first, else AUTO."""
+    when, once = AUTO.get(skill.get("name"), ("", False))
+    when = skill.get("when") or when
+    if "once" in skill:
+        once = str(skill["once"]).strip().lower() in ("yes", "true", "1")
+    return when, once
+
+
+def auto_for(workdir, text):
+    """Skills whose words are in the message (on for this message only)."""
+    found = []
+    low = (text or "").lower()
+    for skill in list_skills(workdir):
+        when, _once = auto_rule(skill)
+        if when:
+            try:
+                if re.search(when, low):
+                    found.append(skill)
+            except re.error:
+                pass
+    return found
+
+
+def is_once(skill):
+    return auto_rule(skill)[1]
+
+
 def load_active(workdir):
     """The skills that were checked when Blender closed (only the ones that still exist); None
     when nothing was ever saved (the caller picks defaults)."""
@@ -178,6 +224,8 @@ def _parse(path):
                    or name.lower() in IN_CHAT,
         "body": text.strip(),
         "path": path,
+        **({"when": meta["when"]} if meta.get("when") else {}),
+        **({"once": meta["once"]} if meta.get("once") else {}),
     }
 
 

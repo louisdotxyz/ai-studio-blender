@@ -162,6 +162,22 @@ def _output_node(tree):
     return next((n for n in outputs if n.is_active_output), outputs[0] if outputs else None)
 
 
+def ensure_output(tree):
+    """The compositor's output must get an image: when nothing is connected to it (a broken chain),
+    the render layer's image goes straight to it."""
+    if tree is None:
+        return False
+    out = _output_node(tree)
+    if out is None or not out.inputs or out.inputs[0].is_linked:
+        return False
+    image = _render_layers_image(tree)
+    if image is None:
+        return False
+    tree.links.new(image, out.inputs[0])
+    print("AI Studio: compositor output was empty, the render goes to it again")
+    return True
+
+
 def _new_tree():
     tree = bpy.data.node_groups.new(TREE_NAME, 'CompositorNodeTree')
     tree.interface.new_socket("Image", in_out='OUTPUT', socket_type='NodeSocketColor')
@@ -327,6 +343,7 @@ def remove_color(scene):
     # 0.5 left more nodes ("Studio Background …")
     for extra in [n for n in tree.nodes if n.name.startswith(PREFIX)]:
         tree.nodes.remove(extra)
+    ensure_output(tree)
     if tree.name.startswith(TREE_NAME) and {n.bl_idname for n in tree.nodes} <= {
             'CompositorNodeRLayers', 'NodeGroupOutput'}:
         set_compositor_tree(scene, None)

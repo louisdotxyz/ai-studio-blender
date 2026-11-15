@@ -24,33 +24,34 @@ PRESETS = {
 }
 
 
+OLD_PREFIXES = ("AS Look",)        # before 3.0
+
+
+def _is_ours(node):
+    return node.name.startswith((PREFIX,) + OLD_PREFIXES)
+
+
 def _ours(tree):
-    return [n for n in tree.nodes if n.name.startswith(PREFIX)]
+    return [n for n in tree.nodes if _is_ours(n)]
 
 
 def _remove(tree):
-    """Take our nodes out and connect what fed them straight to where they went."""
-    first = (tree.nodes.get(SATURATION) or tree.nodes.get(GLOW) or tree.nodes.get(CONTRAST)
-             or tree.nodes.get(VIGNETTE + " Mix"))
-    last_out = None
-    for name in (VIGNETTE + " Mix", CONTRAST, GLOW, SATURATION):
-        node = tree.nodes.get(name)
-        if node is not None:
-            last_out = node
-            break
-    source = None
-    if first is not None:
-        socket = first.inputs["Image"] if first.bl_idname != 'ShaderNodeMix' else first.inputs[6]
-        if socket.is_linked:
-            source = socket.links[0].from_socket
-    targets = [l.to_socket for l in last_out.outputs[0].links] if last_out is not None else []
-    if last_out is not None and last_out.bl_idname == 'ShaderNodeMix':
-        targets = [l.to_socket for l in last_out.outputs[2].links]
-    for node in _ours(tree):
-        tree.nodes.remove(node)
-    if source is not None:
-        for socket in targets:
-            tree.links.new(source, socket)
+    """Take our nodes out and connect what fed them straight to where they went (also old or doubled
+    ones, "Studio Look Glow.001"); the output is never left without an image."""
+    ours = set(_ours(tree))
+    if ours:
+        source = None
+        for link in tree.links:      # the image that comes into our chain (not the vignette's side input)
+            if link.to_node in ours and link.from_node not in ours and link.to_socket.type == 'RGBA':
+                if link.to_socket.name in ("Image", "A") or source is None:
+                    source = link.from_socket
+        targets = [l.to_socket for l in tree.links if l.from_node in ours and l.to_node not in ours]
+        for node in ours:
+            tree.nodes.remove(node)
+        if source is not None:
+            for socket in targets:
+                tree.links.new(source, socket)
+    background.ensure_output(tree)
 
 
 def _node(tree, name, idname, x, y):
@@ -126,6 +127,7 @@ def apply(scene, glow, contrast, vignette, saturation=1.0):
         tree.links.new(mask.outputs["Result"], mix.inputs[7])
         image = mix.outputs[2]
     tree.links.new(image, out.inputs[0])
+    background.ensure_output(tree)
     if not scene.render.use_compositing:
         scene.render.use_compositing = True
 
@@ -224,28 +226,59 @@ def effects(scene):
             and not n.name.startswith((PREFIX, background.PREFIX))]
 
 
+# The few values worth a slider per kind of effect (the rest: in the compositor)
+MAIN = {
+    'CompositorNodeGlare': ("Type", "Threshold", "Strength", "Size"),
+    'CompositorNodeBrightContrast': ("Bright", "Contrast"),
+    'CompositorNodeHueSat': ("Hue", "Saturation", "Value"),
+    'CompositorNodeLensdist': ("Distortion", "Dispersion"),
+    'CompositorNodeBlur': ("Size",),
+    'CompositorNodeDefocus': ("Size",),
+    'CompositorNodeColorBalance': ("Factor",),
+    'CompositorNodeExposure': ("Exposure",),
+    'CompositorNodeGamma': ("Gamma",),
+    'CompositorNodeFilter': ("Factor",),
+}
+
+
 def draw_effects(layout, scene):
-    """Every other effect in the compositor: on/off and its values (the unconnected number inputs)."""
+    """Every other effect in the compositor: on/off and its two or three main values; all the rest
+    in the compositor (the button on the right)."""
     nodes = effects(scene)
-    if not nodes:
-        return
     layout.separator(factor=0.5)
-    layout.label(text="Effects", icon='SHADERFX')
+    head = layout.row(align=True)
+    head.label(text="Effects" if nodes else "Effects: none", icon='SHADERFX')
+    head.operator("studio.open_compositor", text="", icon='NODETREE')
     for node in nodes:
         col = layout.column(align=True)
-        head = col.row(align=True)
-        head.prop(node, "mute", text="", icon='HIDE_ON' if node.mute else 'HIDE_OFF', invert_checkbox=True,
-                  emboss=False)
-        head.label(text=node.label or node.name, translate=False)
+        row = col.row(align=True)
+        row.prop(node, "mute", text="", icon='HIDE_ON' if node.mute else 'HIDE_OFF', invert_checkbox=True,
+                 emboss=False)
+        row.label(text=node.label or node.name, translate=False)
         body = col.column(align=True)
         body.active = not node.mute
-        base = bpy.types.Node.bl_rna.properties.keys()
-        for prop in node.bl_rna.properties:      # Glare type, quality … (settings of this node kind)
-            if prop.identifier not in base and prop.type in {'ENUM', 'BOOLEAN', 'FLOAT', 'INT'} \
-                    and not prop.is_readonly and getattr(prop, "array_length", 0) == 0:
-                body.prop(node, prop.identifier)
+        names = MAIN.get(node.bl_idname)
+        shown = 0
         for socket in node.inputs:
-            if socket.is_linked or not socket.enabled or getattr(socket, "hide_value", False):
+            if socket.is_linked or not socket.enabled or not hasattr(socket, "default_value"):
                 continue
-            if socket.type in {'VALUE', 'INT', 'BOOLEAN', 'MENU'} or (socket.type == 'RGBA'):
-                body.prop(socket, "default_value", text=socket.name)
+            if names is not None and socket.name not in names:
+                continue
+            if names is None and (socket.type not in {'VALUE', 'INT'} or shown >= 2):
+                continue
+            body.prop(socket, "default_value", text=socket.name)
+            shown += 1
+
+
+class STUDIO_OT_open_compositor(bpy.types.Operator):
+    bl_idname = "studio.open_compositor"
+    bl_label = "Open Compositor"
+    bl_description = "All effects and their values in Blender's compositor (a new window)"
+
+    def execute(self, context):
+        bpy.ops.wm.window_new()
+        window = context.window_manager.windows[-1]
+        area = window.screen.areas[0]
+        area.type = 'NODE_EDITOR'
+        area.ui_type = 'CompositorNodeTree'
+        return {'FINISHED'}

@@ -684,7 +684,7 @@ class Runner:
         stem = os.path.basename(core.anim_frame_pattern(folder, camera.name, name)).rstrip("_")
         video = scene.studio.anim_format if scene.studio.anim_format in film.VIDEOS else None
         job = dict(job, camera=None)    # the real camera with its keys (no still copy at one place)
-        if scene.studio.film_by_sections:   # parts = the timeline's sections inside the range
+        if scene.timeline_markers:   # parts = the timeline's sections (markers) inside the range
             from . import motion
             runs = [[max(s, frames[0]), min(e, frames[1]), core.safe_name(m.name)]
                     for m, s, e in motion.sections(scene) if e >= frames[0] and s <= frames[1]]

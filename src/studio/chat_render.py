@@ -126,11 +126,6 @@ def draw_inline(layout, context):
     mid = row.row(align=True)
     mid.prop_enum(rq, "mode", 'STILL', text="", icon='IMAGE_DATA')
     mid.prop_enum(rq, "mode", 'ANIM', text="", icon='RENDER_ANIMATION')
-    if rq.mode == 'ANIM':   # a film: its frames and in how many parts (each part also as a video)
-        film_row = layout.row(align=True)
-        film_row.prop(scene, "frame_start", text="From")
-        film_row.prop(scene, "frame_end", text="To")
-        film_row.prop(rq, "film_parts", text="Parts")
     right = row.row(align=True)
     right.ui_units_x = 5.5
     right.enabled = bool(names)       # while one renders: more go into the queue (progress above the chat)

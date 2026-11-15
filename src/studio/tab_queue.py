@@ -97,7 +97,7 @@ class STUDIO_OT_add(Operator):
         item.resolution_x, item.resolution_y = _user_resolution(scene, cam)
         item.percentage = scene.render.resolution_percentage
         item.frame_start, item.frame_end = scene.frame_start, scene.frame_end
-        item.parts = rq.film_parts
+        item.parts = 1   # a film's parts are the timeline's sections
         self.report({'INFO'}, "AI Studio: added %s" % runner.item_label(scene, item))
         p = runner.prefs(context)
         if (p is None or p.auto_render) and not RUN.busy:

@@ -90,9 +90,24 @@ def _count(blocks, start, end):
                if start - 0.5 <= p.co.x <= end + 0.5)
 
 
+_overview_cache = {}
+
+
 def key_overview(scene, start, end, camera=None):
-    """{"Camera": n, "Light": n, "Look": n, "World": n} keys in the range (only those with keys)."""
+    """{"Camera": n, "Light": n, "Look": n, "World": n} keys in the range (only those with keys);
+    counted again at most every 2 s."""
+    import time
     camera = camera or cameras.active_camera(scene)
+    key = (scene.name, start, end, camera.name if camera else "")
+    cached = _overview_cache.get(key)
+    if cached is not None and time.monotonic() - cached[0] < 2.0:
+        return cached[1]
+    result = _key_overview(scene, start, end, camera)
+    _overview_cache[key] = (time.monotonic(), result)
+    return result
+
+
+def _key_overview(scene, start, end, camera):
     cam_blocks = [b for b in (camera, orbit.pivot_of(camera), camera.data if camera else None) if b is not None]
     lights = [o for o in scene.objects if o.type == 'LIGHT']
     from . import background
@@ -273,13 +288,12 @@ def draw_sections(layout, scene):
     box = layout.box()
     head = box.row(align=True)
     head.label(text="Sections", icon='MARKER_HLT')
-    head.prop(scene.studio, "film_by_sections", text="Parts", toggle=True)
     head.operator(STUDIO_OT_section.bl_idname, text="", icon='ADD').action = 'ADD'
     found = sections(scene)
     if not found:
         hint = box.row()
         hint.active = False
-        hint.label(text="+ makes a section from this frame on (a marker in the timeline)")
+        hint.label(text="+ here or in the timeline: a section from this frame on (one video each)")
         return
     frame = scene.frame_current
     for marker, start, end in found:
@@ -305,14 +319,36 @@ def draw_sections(layout, scene):
                   translate=False)
 
 
+def draw_timeline(self, context):
+    """In the timeline's header: + Section (a marker at this frame with the active camera)."""
+    space = context.space_data
+    if getattr(space, "type", "") == 'DOPESHEET_EDITOR' and getattr(space, "mode", "TIMELINE") != 'TIMELINE':
+        return
+    row = self.layout.row(align=True)
+    row.operator(STUDIO_OT_section.bl_idname, text="Section", icon='MARKER_HLT').action = 'ADD'
+
+
+def _timeline_header():
+    return getattr(bpy.types, "TIME_HT_editor_buttons", None) or getattr(bpy.types, "DOPESHEET_HT_header", None)
+
+
 classes = (STUDIO_OT_motion, STUDIO_OT_section)
 
 
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
+    header = _timeline_header()
+    if header is not None:
+        header.append(draw_timeline)
 
 
 def unregister():
+    header = _timeline_header()
+    if header is not None:
+        try:
+            header.remove(draw_timeline)
+        except ValueError:
+            pass
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

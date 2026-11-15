@@ -637,6 +637,13 @@ def _send(text, extra_skills=()):
         skill = skills.find(workdir(), name)
         if skill and all(s["name"] != skill["name"] for s in chosen):
             chosen.append(skill)
+    for skill in skills.auto_for(workdir(), text):   # the message asks for it: on for this message
+        if all(s["name"] != skill["name"] for s in chosen):
+            chosen.append(skill)
+    done_once = [s["name"] for s in chosen if skills.is_once(s) and s["name"] in active_skills]
+    if done_once:                # one-off skills (SORT, CAD …) switch themselves off after this message
+        active_skills[:] = [n for n in active_skills if n not in done_once]
+        skills.save_active(workdir(), active_skills)
     if chosen:
         if not session_id:
             _skills_sent.clear()

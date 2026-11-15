@@ -17,17 +17,27 @@ _REFINED = re.compile(r"_(krea|edit)_\d+$")
 state = {"sort": 'NEW', "filter": 'ALL'}
 _ratings = {}           # folder: (mtime, {file name: stars})
 _previews = None        # bpy.utils.previews collection
+_thumbs = {}            # path: (when, icon id)
 
 
 # ------------------------------------------------------------------ stars
 
+_checked = {}           # folder: when its ratings file was last looked at (panels draw often)
+
+
 def _load(folder):
+    import time
+    now = time.monotonic()
+    cached = _ratings.get(folder)
+    if cached is not None and now - _checked.get(folder, 0.0) < 1.0:
+        return cached[1]
+    _checked[folder] = now
     path = os.path.join(folder, RATINGS)
     try:
         mtime = os.path.getmtime(path)
     except OSError:
+        _ratings[folder] = (0.0, {})
         return {}
-    cached = _ratings.get(folder)
     if cached and cached[0] == mtime:
         return cached[1]
     try:
@@ -58,6 +68,7 @@ def set_rating(path, stars):
     with open(target, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=1, sort_keys=True)
     _ratings[folder] = (os.path.getmtime(target), data)
+    _checked[folder] = 0.0
     return stars
 
 
@@ -120,6 +131,10 @@ def arrange(images):
 def thumb(path):
     """Icon id of a small picture of the render (Blender makes it in the background), 0 if none."""
     global _previews
+    import time
+    hit = _thumbs.get(path)
+    if hit is not None and time.monotonic() - hit[0] < 5.0:
+        return hit[1]
     if not path or not os.path.isfile(path):
         return 0
     try:
@@ -128,6 +143,7 @@ def thumb(path):
             _previews = bpy.utils.previews.new()
         key = "%s|%d" % (path, int(os.path.getmtime(path)))
         item = _previews.get(key) or _previews.load(key, path, 'IMAGE')
+        _thumbs[path] = (time.monotonic(), item.icon_id)
         return item.icon_id
     except (OSError, RuntimeError, KeyError):
         return 0
@@ -139,3 +155,4 @@ def unregister():
         import bpy.utils.previews
         bpy.utils.previews.remove(_previews)
         _previews = None
+    _thumbs.clear()

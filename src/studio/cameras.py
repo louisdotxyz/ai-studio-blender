@@ -72,10 +72,23 @@ def active_camera(scene):
     return cam if cam is not None and cam.type == 'CAMERA' else None
 
 
+_cams_cache = {}   # scene name: (time, object count, camera names): panels draw many times a second
+
+
 def scene_cameras(scene):
     """The cameras of the scene, without the temporary render copies of the queue."""
-    return sorted((o for o in scene.objects if o.type == 'CAMERA' and "studio_temp_camera" not in o),
+    import time
+    now = time.monotonic()
+    objects = scene.objects
+    cached = _cams_cache.get(scene.name)
+    if cached is not None and now - cached[0] < 1.0 and cached[1] == len(objects):
+        found = [objects.get(n) for n in cached[2]]
+        if all(o is not None and o.type == 'CAMERA' for o in found):
+            return found
+    cams = sorted((o for o in objects if o.type == 'CAMERA' and "studio_temp_camera" not in o),
                   key=lambda o: o.name.lower())
+    _cams_cache[scene.name] = (now, len(objects), [o.name for o in cams])
+    return cams
 
 
 def rename_old_collections():
@@ -211,6 +224,11 @@ def _on_load_post(*_args):
             use_millimeters(scene)
         except Exception as ex:
             print("AI Studio: millimeters:", ex)
+        try:
+            from . import background
+            background.ensure_output(background.compositor_tree(scene))
+        except Exception as ex:
+            print("AI Studio: compositor:", ex)
         try:
             hide_by_default(scene)
         except Exception as ex:

@@ -2434,5 +2434,16 @@ def motion_sections():
             bpy.data.objects.remove(pivot)
 
 
+@section
+def skills_switch_themselves():
+    """A message about light turns LIGHT on for it; SORT switches itself off after one use."""
+    skills = mod("skills")
+    core = mod("core")
+    names = [s["name"] for s in skills.auto_for(core.workdir(), "mach das Licht weicher und räum auf")]
+    sort = skills.find(core.workdir(), "sort")
+    check("skills: on by words, SORT once", "light" in names and "sort" in names
+          and (sort is None or skills.is_once(sort)), names)
+
+
 ok = all(results)
 print("FUNCTIONAL_OK" if ok else "FUNCTIONAL_FAIL", "%d/%d" % (sum(results), len(results)))
