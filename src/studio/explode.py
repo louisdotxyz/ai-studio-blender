@@ -17,6 +17,7 @@
 """
 
 import bpy
+from bpy.props import EnumProperty, StringProperty
 from mathutils import Matrix, Vector
 
 from . import cameras
@@ -391,8 +392,8 @@ class STUDIO_OT_explode(bpy.types.Operator):
     bl_label = "Explosion"
     bl_options = {'UNDO', 'INTERNAL'}
 
-    action: bpy.props.EnumProperty(items=ACTIONS, options={'HIDDEN', 'SKIP_SAVE'})
-    group: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    action: EnumProperty(items=ACTIONS, options={'HIDDEN', 'SKIP_SAVE'})
+    group: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
 
     @classmethod
     def description(cls, _context, props):
