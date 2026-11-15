@@ -144,6 +144,8 @@ AUTO = {
     "light": (r"licht|light|lampe|schatten|shadow|beleucht|ausleucht", False),
     "material": (r"material|oberfläche|textur|glanz|metall|glas|lack|farbe des", False),
     "world": (r"\bhdri\b|\bworld\b|himmel|\bsky\b|umgebungslicht", False),
+    "anim": (r"animation|animier|\bschnitt(szene)?\b(?!\s+durch)|kamerafahrt|turntable|keyframe|\bfilm\b|"
+             r"überblend|fade|\bbpm\b|sequencer", False),
 }
 
 

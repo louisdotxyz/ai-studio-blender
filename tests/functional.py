@@ -2403,35 +2403,77 @@ def orbit_keys():
 
 @section
 def motion_sections():
-    """Sections from timeline markers; a turntable preset turns the pivot once around."""
-    motion, orbit = mod("studio.motion"), mod("studio.orbit")
+    """Sections "NN Name" with their own camera; a longer section moves the next one with its keys;
+    a preset with strength, a chain, a fade; the cut scene."""
+    motion, orbit, cut = mod("studio.motion"), mod("studio.orbit"), mod("studio.cut")
     scene = bpy.context.scene
-    keep = (scene.frame_start, scene.frame_end, scene.frame_current)
+    keep = (scene.frame_start, scene.frame_end, scene.frame_current, scene.camera, scene.view_settings.exposure)
     scene.frame_start, scene.frame_end = 1, 100
-    a = scene.timeline_markers.new("Intro", frame=1)
-    b = scene.timeline_markers.new("Hero", frame=41)
-    data = bpy.data.cameras.new("Motion Test")
-    cam = bpy.data.objects.new("Motion Test", data)
+    cam = bpy.data.objects.new("Motion Test", bpy.data.cameras.new("Motion Test"))
     scene.collection.objects.link(cam)
     cam.matrix_world = orbit.orbit_matrix(Vector((0, 0, 0)), 0.0, 0.2, 1.5, Vector((1, 1, 1)))
+    scene.camera = cam
     bpy.context.view_layer.update()
+    made, markers = [cam], []
     try:
+        scene.frame_set(1)
+        markers.append(motion.new_section(scene, "Intro"))
+        scene.frame_set(41)
+        markers.append(motion.new_section(scene, "Hero"))
+        hero = markers[1].camera
+        made += [m.camera for m in markers]
         found = [(m.name, s, e) for m, s, e in motion.sections(scene)]
-        check("sections from markers", found == [("Intro", 1, 40), ("Hero", 41, 100)], found)
-        motion.apply(scene, cam, 'TURNTABLE', 41, 100, 'LINEAR')
-        pivot = orbit.pivot_of(cam)
+        check("sections: NN Name, own camera on a pivot, pass index", found == [("01 Intro", 1, 40), ("02 Hero", 41, 100)]
+              and hero not in (None, cam) and hero.pass_index == 2 and orbit.pivot_of(hero) is not None, found)
+        pivot = orbit.pivot_of(hero)
+        z0 = pivot.rotation_euler.z
+        motion.apply(scene, hero, 'TURNTABLE', 41, 100, 'LINEAR', amount=90)
         scene.frame_set(100)
-        turned = pivot.rotation_euler.z
-        check("turntable: once around", abs(turned - 2 * math.pi) < 0.05, turned)
+        check("preset: 90 degrees", abs(pivot.rotation_euler.z - z0 - math.pi / 2) < 0.01, pivot.rotation_euler.z)
+        check("preset: keys already there are seen", motion.conflicts(scene, hero, 'SWING', 41, 100) >= 2)
+        motion.set_length(scene, "01 Intro", length=50)
+        found = [(m.name, s, e) for m, s, e in motion.sections(scene)]
+        scene.frame_set(110)
+        check("longer section: the next one moves with its keys", found == [("01 Intro", 1, 50), ("02 Hero", 51, 110)]
+              and abs(pivot.rotation_euler.z - z0 - math.pi / 2) < 0.01, (found, pivot.rotation_euler.z))
+        rq = scene.studio
+        for preset, frames, amount in (('HOLD', 10, 0.0), ('TURNTABLE', 0, 180.0)):
+            step = rq.motion_steps.add()
+            step.section, step.preset, step.frames, step.amount = "02 Hero", preset, frames, amount
+        motion.apply_chain(scene, hero, "02 Hero", 51, 110, 'LINEAR')
+        scene.frame_set(61)
+        held = pivot.rotation_euler.z
+        scene.frame_set(110)
+        check("chain: hold, then half around", abs(held - z0) < 0.01 and abs(pivot.rotation_euler.z - z0 - math.pi) < 0.01,
+              (held, pivot.rotation_euler.z))
+        base = scene.view_settings.exposure
+        motion.apply(scene, None, 'FADE_IN', 1, 50, amount=10)
+        scene.frame_set(1)
+        dark = scene.view_settings.exposure
+        scene.frame_set(11)
+        check("fade in from black", dark < base - 5 and abs(scene.view_settings.exposure - base) < 0.01,
+              (dark, scene.view_settings.exposure))
+        made_cut, report = cut.build(scene)
+        check("cut: a scene of its own, sections not rendered yet are named", made_cut is not scene
+              and made_cut.get(cut.SOURCE_KEY) == scene.name and len(report["missing"]) == 2, report)
+        bpy.data.scenes.remove(made_cut)
     finally:
-        scene.timeline_markers.remove(a)
-        scene.timeline_markers.remove(b)
+        for m in markers:
+            scene.timeline_markers.remove(m)
+        scene.studio.motion_steps.clear()
+        scene.studio.cut_items.clear()
+        bag = cut._channelbag(scene)
+        for fc in list(bag.fcurves if bag is not None else []):
+            if fc.data_path == "view_settings.exposure":
+                bag.fcurves.remove(fc)
         scene.frame_start, scene.frame_end = keep[0], keep[1]
         scene.frame_set(keep[2])
-        pivot = orbit.pivot_of(cam)
-        bpy.data.objects.remove(cam)
-        if pivot is not None:
-            bpy.data.objects.remove(pivot)
+        scene.camera, scene.view_settings.exposure = keep[3], keep[4]
+        for obj in made:
+            pivot = orbit.pivot_of(obj)
+            bpy.data.objects.remove(obj)
+            if pivot is not None:
+                bpy.data.objects.remove(pivot)
 
 
 @section

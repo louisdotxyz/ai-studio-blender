@@ -17,11 +17,11 @@ from bpy.types import Operator, Panel
 
 from . import (addons, background, cameras, claude_link, core, env_ui, environment, foreign, hdri,
                light_paint, light_ui, lights, presets_io, render_size, runner, shots, sync, tab_finish, tab_queue,
-               variants_ab, chat_render, render_review, film, migrate, keys, motion, tab_anim, project)
+               variants_ab, chat_render, render_review, film, migrate, keys, motion, cut, tab_anim, project)
 # Loaded for their side effects: the chat finds claude_tools (Claude's studio_* tools) in
 # sys.modules; api and variants are the helpers in execute_python.
 from . import api, baselib, claude_tools, light_items, looks, variants  # noqa: F401
-from .props import (STUDIO_CameraSettings, STUDIO_HdriPin, STUDIO_Item, STUDIO_LightSettings, STUDIO_Look, STUDIO_Shot, STUDIO_Preferences,
+from .props import (STUDIO_CameraSettings, STUDIO_HdriPin, STUDIO_Item, STUDIO_LightSettings, STUDIO_Look, STUDIO_MotionStep, STUDIO_CutItem, STUDIO_Shot, STUDIO_Preferences,
                     STUDIO_Settings, _apply_clipping)
 from .ui_common import STUDIO_TABS, _unpin
 from .keymaps import register_keymaps, unregister_keymaps
@@ -129,6 +129,8 @@ classes = render_setup.classes + (
     STUDIO_PT_frame,
     STUDIO_CameraSettings,
     STUDIO_Item,
+    STUDIO_MotionStep,
+    STUDIO_CutItem,
     STUDIO_Shot,
     STUDIO_HdriPin,
     STUDIO_Look,
@@ -298,6 +300,7 @@ def register():
     film.register()
     keys.register()
     motion.register()
+    cut.register()
     tab_anim.register()
     project.register()
     chat_render.register()
@@ -325,6 +328,7 @@ def unregister():
     render_review.unregister()
     film.unregister()
     keys.unregister()
+    cut.unregister()
     motion.unregister()
     tab_anim.unregister()
     project.unregister()

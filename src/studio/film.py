@@ -250,6 +250,8 @@ def _poll():
             if result:
                 runner.log("film result: %s" % result)
             forget(key)
+            from . import cut
+            cut.on_film_done()
         _seen[key] = kind
     runner.tag_redraw()
     return 2.0 if any(k in {'RENDERING', 'ENCODING'} for _f, _s, k in now) else None

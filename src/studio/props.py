@@ -320,6 +320,35 @@ def _sky_changed(self, context):
     world_modes.on_sky(context.scene)
 
 
+class STUDIO_MotionStep(PropertyGroup):
+    """One step of a section's chain (Animation tab): a preset over some frames."""
+    section: StringProperty(name="Section", options=set())
+    preset: EnumProperty(name="Preset", items=lambda _s, _c: _motion_items(), options=set())
+    frames: IntProperty(name="Frames", description="How long this step lasts (0 = to the end of the section)",
+                        default=24, min=0, soft_max=480, options=set())
+    amount: FloatProperty(name="Amount", description="How strong (degrees, % of the distance or frames)",
+                          default=0.0, options=set())
+    reverse: BoolProperty(name="Other Way", description="The other direction (left, down, from white)",
+                          default=False, options=set())
+
+
+class STUDIO_CutItem(PropertyGroup):
+    """How a section goes into the cut (Animation tab · Cut)."""
+    section: StringProperty(name="Section", options=set())
+    transition: EnumProperty(name="Transition", description="Into the next section", options=set(),
+                             items=(('CUT', "Cut", "A hard cut"), ('CROSS', "Cross", "Blend into the next section"),
+                                    ('BLACK', "Black", "Through black"), ('WHITE', "White", "Through white")))
+    frames: IntProperty(name="Frames", description="How long the transition lasts", default=12, min=1,
+                        max=240, options=set())
+    hold: IntProperty(name="Hold", description="Frames the last image stands still after the section "
+                      "(0 = none); also exported as a PNG", default=0, min=0, soft_max=240, options=set())
+
+
+def _motion_items():
+    from . import motion
+    return motion.PRESET_ITEMS
+
+
 class STUDIO_Shot(PropertyGroup):
     """A shot (Render tab): camera + scene preset + material variant + quality."""
     name: StringProperty(name="Name", default="Shot")
@@ -368,6 +397,8 @@ def _edit_changed(self, context):
 class STUDIO_Settings(PropertyGroup):
     items: CollectionProperty(type=STUDIO_Item)
     shots: CollectionProperty(type=STUDIO_Shot)
+    motion_steps: CollectionProperty(type=STUDIO_MotionStep)
+    cut_items: CollectionProperty(type=STUDIO_CutItem)
     # Output presets (gear menu in the Queue tab)
     still_format: EnumProperty(
         name="Still Format",
@@ -436,9 +467,21 @@ class STUDIO_Settings(PropertyGroup):
         name="Ease", items=(('SMOOTH', "Smooth", "Slow at the start and the end"),
                             ('LINEAR', "Linear", "The same speed all the way (a turntable that loops)")),
         default='SMOOTH', options=set())
-    film_by_sections: BoolProperty(
-        name="Parts = Sections", description="A film renders in the sections of the timeline (one video per "
-        "section, named after it) instead of parts of the same length", default=False, options=set())
+    motion_preset: EnumProperty(name="Preset", items=lambda _s, _c: _motion_items(), options=set(),
+                                update=lambda s, _c: setattr(s, "motion_amount", 0.0))
+    motion_amount: FloatProperty(name="Amount", description="How strong: degrees, % of the distance or frames "
+                                 "(0 = the preset's own)", default=0.0, options=set())
+    motion_reverse: BoolProperty(name="Other Way", description="The other direction (left instead of right, "
+                                 "down instead of up, from white instead of black)", default=False, options=set())
+    motion_from: IntProperty(name="From", description="First frame of the movement (0 = the section's start)",
+                             default=0, min=0, options=set())
+    motion_to: IntProperty(name="To", description="Last frame of the movement (0 = the section's end)",
+                           default=0, min=0, options=set())
+    cut_music: StringProperty(name="Music", description="Sound file under the cut", subtype='FILE_PATH',
+                              options=set())
+    cut_bpm: FloatProperty(name="BPM", description="Beats per minute of the music: beat markers in the cut "
+                           "and section lengths on whole beats (0 = none)", default=0.0, min=0.0, max=300.0,
+                           options=set())
     film_parts: IntProperty(
         name="Parts", description="A film renders in this many parts, one after the other (each part also as "
         "its own video); in its own process, so it goes on when Blender crashes and resumes where it stopped",

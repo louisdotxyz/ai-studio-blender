@@ -890,3 +890,90 @@ def material_slider(name, materials, socket, value=0.5, minimum=0.0, maximum=1.0
     each material through an Attribute node. Returns the materials changed."""
     from . import project
     return project.material_slider(name, materials, socket, value, minimum, maximum)
+
+
+# ---------------------------------------------------------------- animation: sections, motion, cut
+
+def section_add(name, frame=None, from_view=False):
+    """A section from `frame` (default: the current one): marker "NN name" with its own camera
+    P_<name>_01 on a pivot in Camera, starting from the active camera (or the viewport). Returns the
+    marker's name."""
+    from . import motion
+    return motion.new_section(bpy.context.scene, name, frame, from_view=from_view).name
+
+
+def section_frames(name, start=None, length=None, move_keys=True):
+    """Move a section and / or give it `length` frames; the sections after it (and their keys) move along.
+    Returns how many keys moved."""
+    from . import motion
+    return motion.set_length(bpy.context.scene, name, start, length, move_keys)
+
+
+def motion_preset(preset, start=None, end=None, amount=0.0, reverse=False, replace=True, ease='SMOOTH',
+           camera=None, drop_focus=False):
+    """A motion preset (TURNTABLE degrees, SWING ± degrees, PUSH_IN / PULL_OUT % of the distance, CRANE
+    degrees, FOCUS start %, FADE_IN / FADE_OUT frames, HOLD) on the camera's pivot over the frames
+    (default: the current section). replace: keys of this kind in the frames go first. Returns the keys set."""
+    from . import cameras, motion as m
+    scene = bpy.context.scene
+    a, b, _name = m.current_range(scene)
+    cam = bpy.data.objects[camera] if isinstance(camera, str) else camera or cameras.active_camera(scene)
+    return m.apply(scene, cam, preset, a if start is None else start, b if end is None else end, ease, amount,
+                   reverse, replace, drop_focus)
+
+
+def motion_chain(section, steps, ease='SMOOTH', drop_focus=False):
+    """Steps of a section one after the other: [("PULL_OUT", 24, 140), ("HOLD", 12), ("TURNTABLE", 0, 90)]
+    (preset, frames (0 = to the end), amount, reverse). Replaces the section's steps and applies them on
+    the section's camera. Returns the keys set."""
+    from . import motion as m
+    scene = bpy.context.scene
+    found = m.find(scene, section)
+    if found is None:
+        raise ValueError("No section %s" % section)
+    items = scene.studio.motion_steps
+    for i in reversed(range(len(items))):
+        if items[i].section == section:
+            items.remove(i)
+    for spec in steps:
+        step = items.add()
+        step.section, step.preset = section, spec[0]
+        step.frames = int(spec[1]) if len(spec) > 1 else 0
+        step.amount = float(spec[2]) if len(spec) > 2 else 0.0
+        step.reverse = bool(spec[3]) if len(spec) > 3 else False
+    marker, start, end = found
+    return m.apply_chain(scene, marker.camera or scene.camera, section, start, end, ease, drop_focus)
+
+
+def key_pose(from_view=True):
+    """The viewport's view (or where the camera is) as a key on the active camera at this frame, with the lens."""
+    from . import cameras, motion as m
+    scene = bpy.context.scene
+    return m.key_pose(scene, cameras.active_camera(scene), from_view=from_view)
+
+
+def cut_build(transitions=None):
+    """The cut scene "Schnitt" from the rendered sections. transitions: {section: (kind, frames, hold)} with
+    kind CUT / CROSS / BLACK / WHITE. Returns {"scene", "sections", "missing", "stills"}."""
+    from . import cut
+    scene = bpy.context.scene
+    for section, spec in (transitions or {}).items():
+        item = cut.settings(scene, section)
+        item.transition = spec[0]
+        if len(spec) > 1:
+            item.frames = int(spec[1])
+        if len(spec) > 2:
+            item.hold = int(spec[2])
+    made, report = cut.build(scene)
+    return dict(report, scene=made.name)
+
+
+def cut_export(edl=False):
+    """The cut as MP4 (H.264 high) in the background; edl=True also writes an EDL. Returns the paths."""
+    from . import cut
+    scene = bpy.context.scene
+    video, log = cut.export(scene)
+    out = {"video": video, "log": log}
+    if edl:
+        out["edl"] = cut.edl(scene)
+    return out

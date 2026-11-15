@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The Animation tab: everything for a film in one place, top to bottom in the order of the work:
+"""The Animation tab: what needs the camera and the viewport, top to bottom in the order of the work:
 
-1. Sections: the timeline's markers (+ here or in the timeline's header), each with its camera, length
-   and keys; go, quick film, film.
-2. Motion: a finished movement over the current section (turntable, push in …), smooth or linear.
+1. Sections: the timeline's markers "NN Name" (+ here or in the timeline's header), each with its own
+   camera, frames (click: move / lengthen, the following sections move along) and keys.
+2. Motion: a preset with strength and direction over chosen frames, a chain of steps per section,
+   the viewport's view kept as a key.
 3. Check: a viewport preview of the section in seconds (OpenGL, half size, played right away).
 4. Film: ⌘E or the button; it renders in its own process, one video per section.
+5. Cut: the rendered sections in the Video Sequencer (cut.py; its own sidebar there).
 """
 
 import os
@@ -13,7 +15,7 @@ import os
 import bpy
 from bpy.types import Operator, Panel
 
-from . import cameras, film, motion
+from . import cut, film, motion
 from .ui_common import _SidebarPanel, _unpin, section
 
 ANIM_TAB_ORDER = 5
@@ -84,6 +86,7 @@ class STUDIO_PT_anim(_SidebarPanel, Panel):
         head.operator(motion.STUDIO_OT_section.bl_idname, text="Section", icon='MARKER_HLT').action = 'ADD'
         head.operator(STUDIO_OT_anim_preview.bl_idname, text="Preview", icon='PLAY')
         head.operator("studio.add", text="Film", icon='RENDER_ANIMATION').mode = 'ANIM'
+        head.operator(cut.STUDIO_OT_cut.bl_idname, text="Cut", icon='SEQUENCE').action = 'OPEN'
         info = layout.row()
         info.active = False
         info.label(text="%s · frames %d–%d · %.1f s · %s" % (
@@ -96,20 +99,6 @@ class STUDIO_PT_anim(_SidebarPanel, Panel):
         box, _head, is_open = section(layout, "anim_motion", "Motion", 'ANIM')
         if is_open:
             motion.draw_presets(box, scene)
-
-        box, head, is_open = section(layout, "anim_keys", "Keys at This Frame", 'DECORATE_KEYFRAME',
-                                     default_open=False)
-        if is_open:
-            grid = box.grid_flow(row_major=True, columns=2, even_columns=True, align=True)
-            for what, label, icon in (('ORBIT', "Camera", 'CAMERA_DATA'), ('LIGHT', "Open Light", 'LIGHT'),
-                                      ('LOOK', "Look", 'NODE_COMPOSITING'), ('WORLD', "World", 'WORLD')):
-                grid.operator("studio.key", text=label, icon=icon).what = what
-            cam = cameras.active_camera(scene)
-            overview = motion.key_overview(scene, scene.frame_start, scene.frame_end, cam)
-            sub = box.row()
-            sub.active = False
-            sub.label(text="Film: " + ("  ".join("◆ %s %d" % kv for kv in overview.items()) if overview
-                                       else "no keys yet"), translate=False)
 
 
 classes = (STUDIO_OT_anim_preview, STUDIO_PT_anim)
