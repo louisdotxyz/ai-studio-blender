@@ -6,6 +6,7 @@ The extension must be installed and enabled in that profile. Prints one line per
 and FUNCTIONAL_OK / FUNCTIONAL_FAIL at the end. Renders are tiny (Cycles, few samples).
 """
 
+import faulthandler
 import json
 import math
 import os
@@ -13,6 +14,8 @@ import sys
 import tempfile
 import time
 import traceback
+
+faulthandler.enable(all_threads=True)   # a crash prints where it happened
 
 import bpy
 from mathutils import Vector
