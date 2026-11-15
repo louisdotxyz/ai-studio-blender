@@ -259,7 +259,7 @@ DE = {
     'Make a soft studio light from the front left and render a preview': 'Mach ein weiches Studiolicht von vorne links und rendere eine Vorschau',
     "Give the housing the base material 'Aluminium anodized' and show me three colors": "Gib dem Gehäuse das Grundmaterial 'Alu eloxiert' und zeig mir drei Farben",
     'Import the newest GLB from Downloads and take the materials over from the old version': 'Importiere das neueste GLB aus Downloads und übernimm die Materialien der alten Version',
-    '⌘R: render High Quality, ⇧⌘R: Low Quality, ⇧⌘E: view the render': '⌘R: HQ rendern, ⇧⌘R: Vorschau, ⇧⌘E: Render ansehen',
+    '⌘R: render an image, ⌘E: a film, ⇧⌘R: image in Low Quality, ⇧⌘E: view the render': '⌘R: Bild rendern, ⌘E: Film, ⇧⌘R: Bild in Low Quality, ⇧⌘E: Render ansehen',
     'Material library: click switches all objects with the current material': 'Material-Library: Klick tauscht alle Objekte mit dem aktuellen Material',
     'Shift-click: only the selection · Ctrl-click: select its objects': 'Shift-Klick: nur die Auswahl · Strg-Klick: seine Objekte auswählen',
     'Right-click a material: favorite, rename, delete': 'Rechtsklick auf ein Material: Favorit, umbenennen, löschen',

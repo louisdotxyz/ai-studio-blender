@@ -54,14 +54,19 @@ class STUDIO_OT_cancel(Operator):
 class STUDIO_OT_add(Operator):
     bl_idname = "studio.add"
     bl_label = "Add Camera"
-    bl_description = ("Adds the active camera as it is now and renders it (⌘R High Quality, ⇧⌘R Low Quality, "
-                      "⇧⌘E shows the image). The same camera can be added several times (move it in between)")
+    bl_description = ("Renders the active camera as it is now: ⌘R an image, ⌘E a film (the quality chosen in the "
+                      "chat), ⇧⌘R an image in Low Quality, ⇧⌘E shows the image")
     bl_options = {'UNDO'}
 
     quality: EnumProperty(
         items=(('DEFAULT', "As Chosen", "The quality chosen in the Queue tab"),
                ('HIGH', "High Quality", ""),
                ('LOW', "Low Quality", "")),
+        default='DEFAULT', options={'SKIP_SAVE'})
+    mode: EnumProperty(
+        items=(('DEFAULT', "As Chosen", "Still or film as chosen in the chat"),
+               ('STILL', "Image", "One image (⌘R)"),
+               ('ANIM', "Film", "The frame range as a film (⌘E)")),
         default='DEFAULT', options={'SKIP_SAVE'})
     camera: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})    # this camera instead of the active one
     batch: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})     # "Batch_03": into that folder, numbered
@@ -82,7 +87,7 @@ class STUDIO_OT_add(Operator):
         item.uid = rq.next_uid
         rq.next_uid += 1
         item.quality = rq.quality if self.quality == 'DEFAULT' else self.quality
-        item.mode = rq.mode
+        item.mode = rq.mode if self.mode == 'DEFAULT' else self.mode
         item.batch = self.batch
         cam.studio_camera.queue_count += 1
         item.number = cam.studio_camera.queue_count

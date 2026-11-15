@@ -232,7 +232,7 @@ class CLAUDE_PT_help(bpy.types.Panel):
         box = layout.box()
         box.label(text="Good to Know", icon='INFO')
         col = box.column(align=True)
-        for line in ("⌘R: render High Quality, ⇧⌘R: Low Quality, ⇧⌘E: view the render",
+        for line in ("⌘R: render an image, ⌘E: a film, ⇧⌘R: image in Low Quality, ⇧⌘E: view the render",
                      "Material library: click switches all objects with the current material",
                      "Shift-click: only the selection · Ctrl-click: select its objects",
                      "Right-click a material: favorite, rename, delete",

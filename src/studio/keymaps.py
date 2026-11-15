@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Shortcuts: ⌘R High Quality, ⇧⌘R Low Quality, ⇧⌘E view the newest image."""
+"""Shortcuts: ⌘R renders an image, ⌘E a film (both in the quality chosen in the chat), ⇧⌘R an image in
+Low Quality, ⇧⌘E views the newest image."""
 
 import bpy
 
@@ -25,13 +26,14 @@ EDITOR_KEYMAPS = (
 )
 
 
-# (operator, key, modifier keys with ⌘, operator properties, label):
-# ⌘R High Quality, ⇧⌘R Low Quality, ⇧⌘E view the newest image.
+# (operator, key, modifier keys with ⌘, operator properties, label)
 SHORTCUTS = (
-    ("studio.add", 'R', {}, {"quality": 'HIGH'}, "Render High Quality"),
-    ("studio.add", 'R', {"shift": True}, {"quality": 'LOW'}, "Render Low Quality"),
+    ("studio.add", 'R', {}, {"mode": 'STILL'}, "Render Image"),
+    ("studio.add", 'E', {}, {"mode": 'ANIM'}, "Render Film"),
+    ("studio.add", 'R', {"shift": True}, {"mode": 'STILL', "quality": 'LOW'}, "Render Image, Low Quality"),
     ("studio.show_render", 'E', {"shift": True}, {}, "View Render"),
 )
+_KEYS = {key for _i, key, _m, _p, _l in SHORTCUTS}
 
 
 _SHORTCUT_IDS = {idname for idname, *_rest in SHORTCUTS}
@@ -46,7 +48,7 @@ def _shortcut_keymaps():
         for km in (kc.keymaps if kc else ()):
             if km.is_modal or km.region_type != 'WINDOW' or (km.name, km.space_type) in found:
                 continue
-            if any(k.type == 'R' and k.oskey and k.idname not in _SHORTCUT_IDS
+            if any(k.type in _KEYS and k.oskey and k.idname not in _SHORTCUT_IDS
                    for k in km.keymap_items):
                 found.append((km.name, km.space_type))
     return found
