@@ -283,14 +283,14 @@ def check(objects, floor=True):
     high = Vector(tuple(max(c[i] for c in corners) for i in range(3)))
     size = high - low
     tris = sum(sum(len(p.vertices) - 2 for p in o.data.polygons) for o in meshes)
-    lines = ["%d parts, %.3f × %.3f × %.3f m, %s triangles" % (len(meshes), size.x, size.y, size.z,
+    lines = ["%d parts, %.0f × %.0f × %.0f mm, %s triangles" % (len(meshes), size.x * 1000, size.y * 1000, size.z * 1000,
                                                                format(tris, ",").replace(",", "'"))]
     if max(size) > 20:
         lines.append("Very large: was it exported in mm? (scale 0.001)")
     elif max(size) < 0.005:
         lines.append("Very small: check the unit")
     if floor and abs(low.z) > 0.001:
-        lines.append("Lowest point at Z = %.3f m (not on the floor)" % low.z)
+        lines.append("Lowest point at Z = %.1f mm (not on the floor)" % (low.z * 1000))
     generic = [o.name for o in meshes if re.match(r"^(mesh|object|body|part|solid|körper)\b", o.name, re.I)]
     if generic:
         lines.append("%d parts with generic names (e.g. %s): name them in the CAD program" % (len(generic), generic[0]))

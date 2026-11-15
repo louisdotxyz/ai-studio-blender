@@ -150,6 +150,16 @@ def set_cameras_visible(scene, visible):
             layer.hide_viewport = False
 
 
+def use_millimeters(scene):
+    """Every length in millimeters (camera distance, focus, light size, object size …), like in CAD.
+    Only the display: the scene's scale stays."""
+    unit = scene.unit_settings
+    if unit.system != 'METRIC':
+        unit.system = 'METRIC'
+    if unit.length_unit != 'MILLIMETERS':
+        unit.length_unit = 'MILLIMETERS'
+
+
 def hide_by_default(scene):
     """Once per scene: hide all cameras."""
     rs = scene.studio
@@ -197,6 +207,10 @@ def _on_load_post(*_args):
     except Exception as ex:
         print("AI Studio: names:", ex)
     for scene in bpy.data.scenes:
+        try:
+            use_millimeters(scene)
+        except Exception as ex:
+            print("AI Studio: millimeters:", ex)
         try:
             hide_by_default(scene)
         except Exception as ex:
