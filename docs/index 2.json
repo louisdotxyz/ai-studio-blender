@@ -1,0 +1,38 @@
+{
+  "version": "v1",
+  "blocklist": [],
+  "assetlib_auth_method": "PER_LIBRARY",
+  "data": [
+    {
+      "schema_version": "1.0.0",
+      "id": "AI_Studio",
+      "name": "AI Studio",
+      "tagline": "Part of ID Toolkit: render, CAD hand-over and a Claude chat",
+      "version": "3.6.0",
+      "type": "add-on",
+      "maintainer": "louisdotxyz",
+      "license": [
+        "SPDX:GPL-3.0-or-later"
+      ],
+      "blender_version_min": "5.0.0",
+      "website": "https://github.com/louisdotxyz/ai-studio-blender",
+      "permissions": {
+        "network": "Claude Code online; MCP, Live Connection, LM Studio on 127.0.0.1",
+        "files": "Chats, backups, renders and HDRIs in folders you choose",
+        "clipboard": "Paste images and copy answers"
+      },
+      "tags": [
+        "3D View",
+        "Render",
+        "User Interface"
+      ],
+      "platforms": [
+        "macos-arm64",
+        "macos-x64"
+      ],
+      "archive_url": "./AI_Studio-3.6.0.zip",
+      "archive_size": 488533,
+      "archive_hash": "sha256:9df576c5e232aec0cb0ec3b9ffca31897ba99205ee04ae9da42c57877b260614"
+    }
+  ]
+}
