@@ -2474,9 +2474,10 @@ def motion_sections():
         scene.frame_set(11)
         check("fade in from black", dark < base - 5 and abs(scene.view_settings.exposure - base) < 0.01,
               (dark, scene.view_settings.exposure))
+        bpy.data.scenes.new("schnitt")       # the user already has a scene for editing: the cut goes there
         made_cut, report = cut.build(scene)
-        check("cut: a scene of its own, sections not rendered yet are named", made_cut is not scene
-              and made_cut.get(cut.SOURCE_KEY) == scene.name and len(report["missing"]) == 2, report)
+        check("cut: into the user's editing scene, sections not rendered yet are named", made_cut.name == "schnitt"
+              and made_cut.get(cut.SOURCE_KEY) == scene.name and len(report["missing"]) == 2, (made_cut.name, report))
         # a rendered film (its frames and job.json as film.py writes them), then the cut with a cross and a hold
         anim = os.path.join(TMP, "anim")
         film_dir = os.path.join(anim, "Film_high_01")
@@ -2520,6 +2521,24 @@ def motion_sections():
             bpy.data.objects.remove(obj)
             if pivot is not None:
                 bpy.data.objects.remove(pivot)
+
+
+@section
+def film_fixes():
+    """A film names its camera even if it is the scene's now; a new film moves older frames away."""
+    core, film = mod("studio.core"), mod("studio.film")
+    scene = bpy.context.scene
+    plan = core.PlanOverrides(scene)
+    plan.set(scene, "camera", scene.camera)
+    check("plan: the camera always", any(p == "camera" for p, _v in plan.as_list()), plan.as_list())
+    folder = os.path.join(TMP, "film_again")
+    os.makedirs(folder, exist_ok=True)
+    for n in (1, 2):
+        open(os.path.join(folder, "Hero_%04d.png" % n), "w").write("old")
+    moved = film._clear_old_frames(folder, "Hero")
+    archived = os.listdir(os.path.join(TMP, "archiv"))
+    check("new film: older frames go to archiv", moved == 2 and not any(n.endswith(".png") for n in os.listdir(folder))
+          and len(archived) == 1, (moved, archived))
 
 
 @section

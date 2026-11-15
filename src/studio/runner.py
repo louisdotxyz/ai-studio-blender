@@ -612,6 +612,11 @@ class Runner:
                 return item
         return None
 
+    def _is_film(self, scene, item):
+        if item.mode in {'STILL', 'ANIM'}:
+            return item.mode == 'ANIM'
+        return bool(self.default_animation) if self.default_animation is not None else scene.studio.mode == 'ANIM'
+
     @staticmethod
     def _removed(scene, uid):
         return not any(item.uid == uid for item in scene.studio.items)
@@ -629,6 +634,11 @@ class Runner:
             if item is None:
                 self._finish()
                 return
+            if self._is_film(scene, item):
+                from . import film
+                if film.running_here():   # films strictly one after the other (one GPU, one order)
+                    self.status = "waits for the film before"
+                    return
             self._start_render(scene, item)
         elif self.phase == 'RENDER':
             self._watch(scene)
@@ -697,12 +707,16 @@ class Runner:
         stem = os.path.basename(core.anim_frame_pattern(folder, camera.name, name)).rstrip("_")
         video = scene.studio.anim_format if scene.studio.anim_format in film.VIDEOS else None
         job = dict(job, camera=None)    # the real camera with its keys (no still copy at one place)
+        overrides = [o for o in job["overrides"] if o[0] != "camera"]
+        job["overrides"] = [["camera", {"object": camera.name}]] + overrides
         if scene.timeline_markers:   # parts = the timeline's sections (markers) inside the range
             from . import motion
             runs = [[max(s, frames[0]), min(e, frames[1]), core.safe_name(m.name)]
                     for m, s, e in motion.sections(scene) if e >= frames[0] and s <= frames[1]]
             if runs:
                 job["runs"] = runs
+            if len(runs) > 1:          # several sections: each with its own camera (Blender switches)
+                job["overrides"] = [o for o in job["overrides"] if not o[0].startswith("timeline_markers[")]
         try:
             film.start(scene, job, folder, stem, frames, item.parts or 1, video, label)
         except Exception as ex:

@@ -130,10 +130,26 @@ def cut_scene(scene=None, create=False):
         return scene
     cut = next((s for s in bpy.data.scenes if s.get(SOURCE_KEY) == scene.name), None)
     if cut is None and create:
-        name = CUT_SCENE if CUT_SCENE not in bpy.data.scenes else "%s %s" % (CUT_SCENE, scene.name)
-        cut = bpy.data.scenes.new(name)
+        cut = _editing_scene(scene)
+        if cut is None:
+            name = CUT_SCENE if CUT_SCENE not in bpy.data.scenes else "%s %s" % (CUT_SCENE, scene.name)
+            cut = bpy.data.scenes.new(name)
         cut[SOURCE_KEY] = scene.name
     return cut
+
+
+def _editing_scene(scene):
+    """A scene the user already edits in: the one open in a Video Editing window, else one named like a
+    cut ("Schnitt", "schnitt", "Cut", "Edit") – not the film's own scene, not another film's cut."""
+    free = [s for s in bpy.data.scenes if s is not scene and not s.get(SOURCE_KEY)]
+    wm = bpy.context.window_manager
+    for window in (wm.windows if wm else ()):
+        if "video" in window.workspace.name.lower() and window.scene in free:
+            return window.scene
+    for s in free:
+        if s.name.lower().split(".")[0].strip() in {"schnitt", "cut", "edit", "video", "video editing"}:
+            return s
+    return None
 
 
 def source_scene(cut):
@@ -296,7 +312,48 @@ def refresh(scene):
                     for element, name in zip(strip.elements, names):
                         element.filename = name
                     changed += 1
+    _reload(cut)
     return changed
+
+
+def _reload(cut):
+    """The sequencer reads the strips' files again (a section rendered again under the same name)."""
+    for strip in ours(cut):
+        try:
+            if hasattr(strip, "directory"):
+                strip.directory = strip.directory
+            elif hasattr(strip, "filepath"):
+                strip.filepath = strip.filepath
+        except (AttributeError, RuntimeError):
+            pass
+    wm = bpy.context.window_manager
+    for window in (wm.windows if wm else ()):
+        for area in window.screen.areas:
+            if area.type == 'SEQUENCE_EDITOR':
+                try:
+                    with bpy.context.temp_override(window=window, area=area, scene=cut):
+                        bpy.ops.sequencer.refresh_all()
+                except (RuntimeError, TypeError):
+                    pass
+                return
+
+
+def still_for_labels(cut, strip, frame=None):
+    """The image of a section strip at `frame` (default: the playhead, else its last frame) as a PNG
+    in the cut folder: "<section> Standbild.png" (for labels in Keynote). Returns the path."""
+    frame = cut.frame_current if frame is None else frame
+    elements = list(strip.elements)
+    if not elements:
+        raise ValueError("The strip has no images")
+    index = int(frame - strip.frame_start) if strip.frame_final_start <= frame < strip.frame_final_end \
+        else len(elements) - 1
+    index = max(0, min(len(elements) - 1, index))
+    source_path = os.path.join(bpy.path.abspath(strip.directory), elements[index].filename)
+    os.makedirs(cut_folder(), exist_ok=True)
+    name = re.sub(r"[^\w\- ]", "_", _get(strip, SECTION_KEY) or strip.name)
+    target = os.path.join(cut_folder(), "%s Standbild.png" % name)
+    shutil.copyfile(source_path, target)
+    return target
 
 
 def beat_frames(scene):
@@ -330,7 +387,8 @@ def export(scene, path=None):
     if cut is None:
         raise ValueError("Build the cut first")
     folder = cut_folder()
-    work = os.path.join(folder, ".export")
+    from . import film
+    work = os.path.join(folder, film.FILM_DIR)       # like a film: its bar shows the progress
     os.makedirs(work, exist_ok=True)
     path = path or os.path.join(folder, "%s_%s" % (scene.name, CUT_SCENE))
     render = cut.render
@@ -359,16 +417,32 @@ def export(scene, path=None):
         if keep[2] is not None:
             images.media_type = keep[2]
         render.use_file_extension = keep[3]
+    with open(os.path.join(work, "job.json"), "w", encoding="utf-8") as f:
+        json.dump({"scene": cut.name, "out": path, "frames": [cut.frame_start, cut.frame_end]}, f)
+    status = os.path.join(work, "status.json")
+    total = cut.frame_end - cut.frame_start + 1
     log = os.path.join(work, "log.txt")
     with open(log, "w", encoding="utf-8") as f:
-        script = ("import bpy, glob, os, re\n"            # render, then <path>0001-0108.mp4 → <path>.mp4
-                  "bpy.ops.render.render(animation=True)\n"
-                  "p = %r\n"
-                  "made = [f for f in glob.glob(glob.escape(p) + '*') if re.fullmatch(r'\\d+-\\d+\\.mp4', f[len(p):])]\n"
-                  "if made: os.replace(max(made, key=os.path.getmtime), p + '.mp4')\n" % path)
-        subprocess.Popen([bpy.app.binary_path, "-b", blend, "--factory-startup", "-S", cut.name,
-                          "--python-expr", script],
-                         stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
+        script = (                                         # render with progress, then <path>0001-0108.mp4 → .mp4
+            "import bpy, glob, json, os, re, time\n"
+            "S, T, P = %r, %d, %r\n"
+            "t0 = time.time()\n"
+            "def put(**v):\n"
+            "    v.update(updated=time.time(), pid=os.getpid(), total=T, parts=1, part=1, started=t0)\n"
+            "    json.dump(v, open(S + '.tmp', 'w')); os.replace(S + '.tmp', S)\n"
+            "n = [0]\n"
+            "def step(*a):\n"
+            "    n[0] += 1; put(state='rendering', done=n[0], per_frame=(time.time() - t0) / n[0])\n"
+            "bpy.app.handlers.render_write.append(step)\n"
+            "put(state='rendering', done=0)\n"
+            "bpy.ops.render.render(animation=True)\n"
+            "made = [f for f in glob.glob(glob.escape(P) + '*') if re.fullmatch(r'\\d+-\\d+\\.mp4', f[len(P):])]\n"
+            "if made: os.replace(max(made, key=os.path.getmtime), P + '.mp4')\n"
+            "put(state='done', done=T, finished=time.time())\n" % (status, total, path))
+        proc = subprocess.Popen([bpy.app.binary_path, "-b", blend, "--factory-startup", "-S", cut.name,
+                                 "--python-expr", script],
+                                stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
+    film.register(work, folder, "Cut %s" % scene.name, proc.pid)
     return path + ".mp4", log
 
 
@@ -438,7 +512,9 @@ STRIP_ACTIONS = (
     ('GO', "Go to Section", "Back to the 3D scene, at this section (its camera, the timeline on it)"),
     ('RENDER', "Render Again", "Render this section again in High Quality; the strip takes the new frames"),
     ('LENGTH', "Take Length", "This strip's length becomes the section's length (the sections after it move "
-                              "along with their keys); then render it again"))
+                              "along with their keys); then render it again"),
+    ('STILL', "Still for Labels", "The image under the playhead (else the strip's last) as a PNG in the cut folder, "
+                                  "\"<section> Standbild.png\", for labels in Keynote"))
 
 
 class STUDIO_OT_cut(Operator):
@@ -512,6 +588,18 @@ class STUDIO_OT_cut_strip(Operator):
             self.report({'WARNING'}, "No section %s" % self.section)
             return {'CANCELLED'}
         marker, start, end = found
+        if self.action == 'STILL':
+            strip = next((s for s in ours(cut) if _get(s, SECTION_KEY) == self.section
+                          and _get(s, KIND_KEY) == "SECTION"), None)
+            if strip is None:
+                return {'CANCELLED'}
+            try:
+                path = still_for_labels(cut, strip)
+            except (ValueError, OSError) as ex:
+                self.report({'WARNING'}, str(ex))
+                return {'CANCELLED'}
+            self.report({'INFO'}, "Still: %s" % path)
+            return {'FINISHED'}
         if self.action == 'GO':
             context.window.scene = main
             space = bpy.data.workspaces.get("Layout")
@@ -609,6 +697,8 @@ class STUDIO_PT_cut(Panel):
                 op = row.operator(STUDIO_OT_cut_strip.bl_idname, text={'GO': "Go", 'RENDER': "Render",
                                                                        'LENGTH': "Length"}[action], icon=icon)
                 op.action, op.section = action, section
+            op = box.operator(STUDIO_OT_cut_strip.bl_idname, text="Still for Labels", icon='IMAGE_DATA')
+            op.action, op.section = 'STILL', section
 
         box = layout.box()
         box.label(text="Transitions · Holds", icon='SEQ_STRIP_DUPLICATE')
@@ -625,6 +715,8 @@ class STUDIO_PT_cut(Panel):
         row.scale_y = 1.2
         row.operator(STUDIO_OT_cut.bl_idname, text="Export MP4", icon='RENDER_ANIMATION').action = 'EXPORT'
         row.operator(STUDIO_OT_cut.bl_idname, text="EDL", icon='TEXT').action = 'EDL'
+        from . import film
+        film.draw(layout)
 
 
 def on_film_done():

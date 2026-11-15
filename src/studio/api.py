@@ -977,3 +977,31 @@ def cut_export(edl=False):
     if edl:
         out["edl"] = cut.edl(scene)
     return out
+
+
+def render_status():
+    """What renders and what is ready, for checking renders without own processes:
+    {"busy", "message", "queue": [labels], "current": {"label", "path", "progress"} or None,
+     "films": [{"label", "state", "part", "parts", "frame", "done", "total", "seconds_left", "text", "folder"}],
+     "finished": [{"label", "video", "sections": [[name, video]], "folder"}]} (films of this file)."""
+    from . import film, runner
+    scene = bpy.context.scene
+    run = runner.RUN
+    current = None
+    if run.current:
+        current = {"label": run.current.get("camera"), "path": run.current.get("path"),
+                   "progress": round(runner.progress_fraction(), 3) if hasattr(runner, "progress_fraction") else None}
+    films = []
+    for entry, st, kind in film.films_here():
+        if kind == 'DONE':
+            continue
+        left = film.time_left(st)
+        films.append({"label": entry.get("label", ""), "state": kind, "part": st.get("part"), "parts": st.get("parts"),
+                      "frame": st.get("frame"), "done": st.get("done", 0), "total": st.get("total", 0),
+                      "seconds_left": round(left) if left else None, "text": film.text(entry, st, kind),
+                      "folder": entry.get("folder", "")})
+    finished = [{"label": f["label"], "video": f["video"], "sections": [list(x) for x in f["sections"]],
+                 "folder": f["folder"]} for f in film.FINISHED if film.mine(f)]
+    return {"busy": run.busy, "message": run.message, "current": current,
+            "queue": [runner.item_label(scene, i) for i in scene.studio.items if i.camera],
+            "films": films, "finished": finished}

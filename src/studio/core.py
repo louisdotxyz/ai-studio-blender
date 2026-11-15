@@ -386,7 +386,9 @@ class PlanOverrides(Overrides):
         pass
 
     def set(self, scene, path, value):
-        if path not in self.plan and super().get(scene, path) == value:
+        # the camera always: the scene's camera can change before the job runs (camera markers
+        # switch it while the timeline plays), so "the same as now" is no reason to leave it out
+        if path not in self.plan and path != "camera" and super().get(scene, path) == value:
             return
         self.plan[path] = value
 

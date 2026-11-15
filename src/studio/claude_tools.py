@@ -9,6 +9,7 @@ Handlers run on Blender's main thread and return text.
 """
 
 import json
+import time
 
 import bpy
 
@@ -133,13 +134,29 @@ def _queue(args):
         runner.RUN.cancel()
         return "Queue cancelled."
     if action == "wait":
-        # Answer only when the queue is done: no polling, Blender stays usable meanwhile.
+        # Answer only when everything is rendered, films included (they run in their own process):
+        # no polling, Blender stays usable meanwhile.
+        from . import film
+        since = time.time()
+
         def done():
-            return None if runner.RUN.busy else "Queue done: " + (runner.RUN.message or "nothing to render")
-        return done() or {"wait": done, "label": "waiting for the render queue"}
+            if runner.RUN.busy or film.running_here():
+                return None
+            lines = ["Queue done: " + (runner.RUN.message or "nothing to render")]
+            for entry in film.FINISHED:
+                if entry["when"] >= since - 1 and film.mine(entry):
+                    lines.append("Film %s: %s" % (entry["label"], entry["video"] or entry["folder"]))
+                    lines += ["  section %s: %s" % (name, video) for name, video in entry["sections"]]
+            return "\n".join(lines)
+        return done() or {"wait": done, "label": "waiting for the render queue and its films"}
+    status = api.render_status()
     lines = [f"Rendering: {'yes' if runner.RUN.busy else 'no'}"
              + (f" – {runner.RUN.message}" if runner.RUN.message else "")]
     lines += [f"- {runner.item_label(scene, item)}" for item in rq.items if item.camera]
+    for f in status["films"]:
+        lines.append("Film %s: %s" % (f["label"], f["text"]))
+    for f in status["finished"]:
+        lines.append("Finished %s: %s" % (f["label"], f["video"] or f["folder"]))
     cams = [o.name for o in scene.objects if o.type == 'CAMERA' and runner.TEMP_KEY not in o]
     lines.append("Cameras in the scene: " + (", ".join(cams) or "none"))
     return "\n".join(lines)

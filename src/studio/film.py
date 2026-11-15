@@ -99,6 +99,14 @@ def start(scene, job, folder, stem, frames, parts, video, label):
     from . import runner
     film_dir = os.path.join(folder, FILM_DIR)
     os.makedirs(film_dir, exist_ok=True)
+    moved = _clear_old_frames(folder, stem)
+    if moved:
+        runner.log("film %s: %d older frames moved to archiv" % (label, moved))
+    for name in ("status.json",):          # a new film: no progress from an earlier one
+        try:
+            os.remove(os.path.join(film_dir, name))
+        except OSError:
+            pass
     runner.RUN.preparing = True   # the save handlers must not take this copy for the user's save
     try:
         bpy.ops.wm.save_as_mainfile(filepath=os.path.join(film_dir, "scene.blend"), copy=True, compress=False,
@@ -159,6 +167,49 @@ def films_here():
 
 def running():
     return [f for f in films() if f[2] in {'RENDERING', 'ENCODING'}]
+
+
+def running_here():
+    """The films of this file that render or encode now (fresh: the queue decides on it)."""
+    return [f for f in films(fresh=True) if f[2] in {'RENDERING', 'ENCODING'} and mine(f[0])]
+
+
+FINISHED = []      # films finished while this Blender ran: {"label", "video", "sections", "folder", "when"}
+
+
+def results(folder):
+    """(whole video or "", [(section, video)]) of a film's folder."""
+    import glob
+    import re
+    try:
+        with open(os.path.join(folder, FILM_DIR, "job.json"), encoding="utf-8") as f:
+            stem = os.path.basename(json.load(f)["out"])
+    except (OSError, ValueError, KeyError):
+        stem = ""
+    videos = sorted(glob.glob(os.path.join(glob.escape(folder), "*.mp4")) +
+                    glob.glob(os.path.join(glob.escape(folder), "*.mov")))
+    names = [(os.path.splitext(os.path.basename(v))[0], v) for v in videos]
+    whole = next((v for n, v in names if n == stem or re.fullmatch(re.escape(stem) + r"\d+-\d+", n)), "")
+    parts = [(n[len(stem) + 1:] if stem and n.startswith(stem + "_") else n, v) for n, v in names if v != whole]
+    return whole, parts
+
+
+def _clear_old_frames(folder, stem):
+    """A new film into a folder that has frames already (a name used again): they go to archiv first,
+    else Blender would keep them (frames that are there are skipped so a film can resume)."""
+    try:
+        old = [n for n in os.listdir(folder) if n.startswith(stem + "_") and n.lower().endswith(
+            (".png", ".jpg", ".jpeg", ".exr", ".tif", ".tiff", ".webp"))]
+    except OSError:
+        return 0
+    if not old:
+        return 0
+    target = os.path.join(os.path.dirname(folder), "archiv", "%s %s" % (os.path.basename(folder),
+                                                                      time.strftime("%Y-%m-%d %H%M%S")))
+    os.makedirs(target, exist_ok=True)
+    for name in old:
+        os.replace(os.path.join(folder, name), os.path.join(target, name))
+    return len(old)
 
 
 def time_left(st):
@@ -235,6 +286,15 @@ def needs_video(film_dir):
             and not any(f["dir"] == film_dir for f in _load()))
 
 
+def register(film_dir, folder, label, pid):
+    """Another process that writes status.json like a film (the cut's export): its bar, its result."""
+    entry = {"dir": film_dir, "folder": folder, "label": label, "pid": pid, "added": time.time(),
+             "blend": bpy.data.filepath}
+    _save([f for f in _load() if f["dir"] != film_dir] + [entry])
+    _ensure_timer()
+    return entry
+
+
 def make_video(film_dir, label="Video"):
     """Make the videos of a finished film (its frames are all there, so only the encoding runs)."""
     entry = {"dir": film_dir, "folder": os.path.dirname(film_dir), "label": label, "pid": _launch(film_dir),
@@ -287,6 +347,10 @@ def _poll():
             result = _video_or_frame(film)
             if result:
                 runner.log("film result: %s" % result)
+            whole, parts = results(film.get("folder") or os.path.dirname(key))
+            FINISHED.append({"label": film.get("label", ""), "video": whole, "sections": parts,
+                             "folder": film.get("folder", ""), "when": time.time(), "blend": film.get("blend", "")})
+            del FINISHED[:-20]
             forget(key)
             from . import cut
             cut.on_film_done()

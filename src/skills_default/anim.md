@@ -23,8 +23,11 @@ before the next one. Its camera is marker.camera (own camera P_<name>_01 on a pi
 - api.motion_chain("02 Hero", [("PULL_OUT", 24, 140), ("HOLD", 12), ("TURNTABLE", 0, 90)]): steps one after
   the other (frames 0 = to the end). The steps show in the Animation tab.
 - api.key_pose(): the viewport's view as a key at this frame (with the lens).
-- Render: ⌘E or the Film button; one video per section in its own process. Check with a viewport preview
-  (studio.anim_preview) before rendering High Quality.
+- Render: ⌘E, Film LQ/HQ or a section's LQ/HQ; films run in their own process strictly one after the
+  other (the queue waits). Check with a viewport preview (studio.anim_preview) before High Quality.
+  api.render_status() says what renders (part, frame, seconds left) and the finished videos' paths;
+  studio_render_queue 'wait' answers only when the films are done, with their paths. Never start own
+  background renders to check a film.
 - Cut: api.cut_build({"01 Intro": ("CROSS", 12, 0), "02 Hero": ("BLACK", 8, 24)}) makes the scene "Schnitt"
   in the Video Sequencer (transition into the next section, frames, hold frames + PNG still). Our strips
   are replaced, the user's own stay; re-rendered sections update by themselves. Music + BPM:
