@@ -134,7 +134,7 @@ def _sha1(path):
 # match …), so a forgotten SORT does not tidy every following answer. A skill's own front matter can
 # set "when: <regex>" and "once: yes/no".
 AUTO = {
-    "sort": (r"aufr[äa]um|tidy|clean ?up|sortier|ordnung", True),
+    "sort": (r"aufr[äa]um|r[äa]um\w*( \w+){0,3} auf\b|tidy|clean ?up|sortier|ordnung", True),
     "cad": (r"\bcad\b|\bstep\b|onshape|neue version|cad-auftrag", True),
     "photo-match": (r"foto nachstell|wie auf dem (foto|bild)|in das foto|ins foto|match.*photo|photo match", True),
     "environment": (r"raum (bauen|erstellen)|room from|baue? (einen|den) raum|umgebung bauen", True),
