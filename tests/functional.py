@@ -2501,13 +2501,13 @@ def motion_sections():
         keep_seq = scene.render.use_sequencer
         cut._anim_folder = lambda: anim
         try:
-            made, report = cut.build(scene)
+            built, report = cut.build(scene)
             intro = cut.section_strip(scene, "01 Intro")
             check("strips in the same scene, where the frames are, Low Quality scaled up, 3D still renders",
-                  made is scene and intro is not None and intro.frame_final_start == 1
+                  built is scene and intro is not None and intro.frame_final_start == 1
                   and intro.frame_final_duration == 50 and not scene.render.use_sequencer
                   and abs(intro.transform.scale_x - scene.render.resolution_x / 4) < 1e-3 and not report["missing"],
-                  (made.name, intro and intro.frame_final_start, report))
+                  (built.name, intro and intro.frame_final_start, report))
             st = cut.frame_status("02 Hero", 51, 110, fresh=True)
             check("a section's frames: done, LQ", st["done"] == 60 and st["quality"] == "LOW"
                   and cut.status_text(st) == "LQ", st)
