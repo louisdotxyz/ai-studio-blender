@@ -1,0 +1,23 @@
+{
+ "name": "EXAMPLE_BOX",
+ "step": "step/BOX.step",
+ "exclude": "Feet|Grille",
+ "material": {
+  "E": 8000.0,
+  "nu": 0.3,
+  "rho": 5.8e-10
+ },
+ "mesh_mm": 12,
+ "modes": 20,
+ "threads": 8,
+ "drivers": [
+  {
+   "label": "15in woofer",
+   "baffle": "Baffle",
+   "flange_r": 196,
+   "mass_kg": 7.5,
+   "cg_mm": 90,
+   "axial_mm": 30
+  }
+ ]
+}

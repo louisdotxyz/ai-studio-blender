@@ -4,7 +4,8 @@ Onshape has no connector. Work in the browser pane of the Claude desktop app wit
 REST API of that session. `onshape-helpers.js` (next to this file) wraps the common calls as `window.OS`.
 
 ## Start
-1. Open `https://cad.onshape.com/documents`. Signed out (no `XSRF-TOKEN` cookie, "Sign in" page) → ask the user
+1. Open `https://cad.onshape.com/documents` (Enterprise accounts: their own domain, e.g. `https://zhdk.onshape.com`;
+   the cookie there is `XSRF-TOKEN-<id>` and the header must be `X-XSRF-TOKEN-<id>`, the helpers do this). Signed out (no `XSRF-TOKEN` cookie, "Sign in" page) → ask the user
    to sign in in the browser pane. `OS.session()` says it clearly.
 2. Run `onshape-helpers.js` with the JavaScript tool (again after every navigation). `OS.info()` gives document,
    workspace and element of the open tab.
@@ -25,6 +26,11 @@ REST API of that session. `onshape-helpers.js` (next to this file) wraps the com
   with `{documentIdSource, workspaceIdSource, elementIdSource, anotherDocument: false}`; rename via
   `/v6/metadata/d/{d}/w/{w}/e/{e}`.
 - Parameter ids of standard features: `GET …/featurespecs`.
+- STEP/Parasolid export: `POST /partstudios/d/{d}/w/{w}/e/{e}/translations` (unversioned) with
+  `{formatName: "STEP", storeInDocument: false, stepUnit: "MILLIMETER", partIds: "<id,id>"}`, poll
+  `/v6/translations/{id}`, download `/v6/documents/d/{d}/externaldata/{resultId}` → `OS.exportSTEP`.
+  To get the file onto the disk: `OS.saveFile({port, token, folder: "<absolute path in home>"}, "x.step", blob)`
+  through Blender's `/cad` endpoint (allowed: .step .stp .stl .glb .gltf .json .3mf .obj .png .jpg).
 
 ### Native features
 - Insert with `OS.addFeatures([...])` (`{btType: 'BTFeatureDefinitionCall-1406', feature}`); status must be `OK`

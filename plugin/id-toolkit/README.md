@@ -15,7 +15,7 @@ Claude-App. Am Ende einmal die Claude-App mit **Cmd+Q** beenden und neu öffnen.
 | Skill | Wofür |
 |---|---|
 | **setup** | Einrichtung in einem Schritt, prüft auch, ob alles läuft |
-| **cad** | Teile parametrisch bauen und prüfen: Onshape (im Browser der Claude-App, nichts zu installieren), Rhino oder Fusion, sonst Code-CAD (STEP) |
+| **cad** | Teile parametrisch bauen und prüfen: Onshape (im Browser der Claude-App, nichts zu installieren, auch Enterprise-Domains), Rhino oder Fusion, sonst Code-CAD (STEP). Neu: Modalanalyse (FEA mit gmsh + CalculiX) mit Animationen im Wärmebild-Look |
 | **cad-to-blender** | CAD-Versionen direkt ins offene Blender, Materialien, Prüfbilder, Änderungsaufträge zurück an den CAD-Chat |
 | **blender** | Im offenen Blender arbeiten und rendern: Kamera, Licht, Materialien, Vorschau → finales Bild |
 
