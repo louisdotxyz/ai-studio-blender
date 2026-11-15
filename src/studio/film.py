@@ -107,7 +107,7 @@ def start(scene, job, folder, stem, frames, parts, video, label):
     data = {"scene": scene.name, "overrides": job["overrides"], "camera": job.get("camera"),
             "variant": job.get("variant") or [], "frames": list(frames), "parts": int(max(1, parts)),
             "pattern": os.path.join(folder, stem + "_"), "out": os.path.join(folder, stem),
-            "video": VIDEOS.get(video), "devices": runner._device_settings()}
+            "video": VIDEOS.get(video), "devices": runner._device_settings(), "runs": job.get("runs")}
     with open(os.path.join(film_dir, "job.json"), "w", encoding="utf-8") as f:
         json.dump(data, f, indent=1)
     entry = {"dir": film_dir, "folder": folder, "label": label, "pid": _launch(film_dir),
@@ -205,15 +205,21 @@ def forget(film_dir):
 
 
 def _video_or_frame(film):
-    folder = film.get("folder") or os.path.dirname(film["dir"])
+    """The film's video (<name>.mp4/.mov), else its last frame."""
     try:
-        names = sorted(os.listdir(folder))
+        with open(os.path.join(film["dir"], "job.json"), encoding="utf-8") as f:
+            out = json.load(f)["out"]
+    except (OSError, ValueError, KeyError):
+        return ""
+    for ext in (".mp4", ".mov"):
+        if os.path.isfile(out + ext):
+            return out + ext
+    folder = os.path.dirname(out)
+    try:
+        frames = sorted(n for n in os.listdir(folder) if n.lower().endswith((".png", ".jpg", ".exr")))
     except OSError:
         return ""
-    videos = [n for n in names if n.lower().endswith((".mp4", ".mov")) and "_part_" not in n]
-    frames = [n for n in names if n.lower().endswith((".png", ".jpg", ".exr"))]
-    pick = videos[-1] if videos else frames[-1] if frames else ""
-    return os.path.join(folder, pick) if pick else ""
+    return os.path.join(folder, frames[-1]) if frames else ""
 
 
 _seen = {}

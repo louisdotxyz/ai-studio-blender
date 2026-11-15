@@ -1628,11 +1628,11 @@ def product_render_setup():
     said = rs.apply(scene)
     check("product setup: Cycles, GPU, AgX, mm, denoise", scene.render.engine == 'CYCLES'
           and scene.cycles.device == 'GPU' and scene.view_settings.view_transform == 'AgX'
-          and scene.unit_settings.length_unit == 'MILLIMETERS' and scene.cycles.use_denoising
+          and scene.cycles.use_denoising
           and scene.cycles.samples == 512 and scene.cycles.max_bounces == 12, said)
     check("product setup: Metal for Cycles on this Mac", cprefs.compute_device_type == 'METAL'
           and any(d.use and d.type != 'CPU' for d in cprefs.devices), cprefs.compute_device_type)
-    check("product setup explains itself", len(said) >= 8 and any("millimeters" in s for s in said))
+    check("product setup explains itself", len(said) >= 6, said)
     rs.apply(scene)   # pressed twice: Undo still goes back to the very first state
     undone = rs.undo(scene)
     now = (scene.render.engine, scene.cycles.samples, scene.view_settings.view_transform,
@@ -2399,6 +2399,39 @@ def orbit_keys():
         scene.frame_set(keep)
         bpy.data.objects.remove(cam)
         bpy.data.objects.remove(pivot)
+
+
+@section
+def motion_sections():
+    """Sections from timeline markers; a turntable preset turns the pivot once around."""
+    motion, orbit = mod("studio.motion"), mod("studio.orbit")
+    scene = bpy.context.scene
+    keep = (scene.frame_start, scene.frame_end, scene.frame_current)
+    scene.frame_start, scene.frame_end = 1, 100
+    a = scene.timeline_markers.new("Intro", frame=1)
+    b = scene.timeline_markers.new("Hero", frame=41)
+    data = bpy.data.cameras.new("Motion Test")
+    cam = bpy.data.objects.new("Motion Test", data)
+    scene.collection.objects.link(cam)
+    cam.matrix_world = orbit.orbit_matrix(Vector((0, 0, 0)), 0.0, 0.2, 1.5, Vector((1, 1, 1)))
+    bpy.context.view_layer.update()
+    try:
+        found = [(m.name, s, e) for m, s, e in motion.sections(scene)]
+        check("sections from markers", found == [("Intro", 1, 40), ("Hero", 41, 100)], found)
+        motion.apply(scene, cam, 'TURNTABLE', 41, 100, 'LINEAR')
+        pivot = orbit.pivot_of(cam)
+        scene.frame_set(100)
+        turned = pivot.rotation_euler.z
+        check("turntable: once around", abs(turned - 2 * math.pi) < 0.05, turned)
+    finally:
+        scene.timeline_markers.remove(a)
+        scene.timeline_markers.remove(b)
+        scene.frame_start, scene.frame_end = keep[0], keep[1]
+        scene.frame_set(keep[2])
+        pivot = orbit.pivot_of(cam)
+        bpy.data.objects.remove(cam)
+        if pivot is not None:
+            bpy.data.objects.remove(pivot)
 
 
 ok = all(results)

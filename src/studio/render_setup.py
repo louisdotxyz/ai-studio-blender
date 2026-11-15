@@ -32,9 +32,6 @@ SETTINGS = [
     ("cycles.sample_clamp_indirect", 10.0, "No single bright dots (fireflies)"),
     ("view_settings.view_transform", 'AgX', "AgX colors: bright parts stay natural instead of white"),
     ("view_settings.look", 'None', None),
-    ("unit_settings.system", 'METRIC', None),
-    ("unit_settings.length_unit", 'MILLIMETERS', "Lengths shown in millimeters, like in CAD"),
-    ("unit_settings.scale_length", 1.0, None),
 ]
 
 
@@ -159,7 +156,7 @@ class STUDIO_OT_product_setup(bpy.types.Operator):
     bl_idname = "studio.product_setup"
     bl_label = "Set Up for Product Renders"
     bl_description = ("Sets Blender up for product images in one go: Cycles on the graphics chip, samples for "
-                      "preview and final image, no noise, natural colors (AgX), millimeters, enough light "
+                      "preview and final image, no noise, natural colors (AgX), enough light "
                       "bounces for glass and metal. Undo puts everything back")
     bl_options = {'UNDO'}
 

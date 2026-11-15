@@ -419,6 +419,12 @@ class STUDIO_PT_camera(_SidebarPanel, Panel):
             col.prop(rq, "orbit_side_offset")
             col.prop(rq, "orbit_up_offset")
 
+        # Motion: a finished movement over the current section (or the whole film)
+        box, _head, is_open = section(layout, "motion", "Motion", 'ANIM', default_open=False)
+        if is_open:
+            from . import motion
+            motion.draw_presets(box, scene)
+
         # Backdrop: what the camera sees behind the product, and the floor it stands on
         box, _head, is_open = section(layout, "backdrop", "Backdrop", 'IMAGE_BACKGROUND')
         if is_open:

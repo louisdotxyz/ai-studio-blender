@@ -783,6 +783,11 @@ class STUDIO_PT_render_queue(_SidebarPanel, Panel):
             if RUN.message and not RUN.busy:
                 col_run.label(text=RUN.message, icon='INFO')
 
+        # Sections of the film (markers in the timeline): camera, length, keys, preview, render
+        if rq.mode == 'ANIM' or len(scene.timeline_markers):
+            from . import motion
+            motion.draw_sections(layout, scene)
+
         # The preview: the entry that renders now (its quick draft, then the image) or the render you
         # picked; ◀ ▶ through all renders, the magnifier opens it big, [A] [B] and Compare next to it.
         images = runner.queue_images(scene)

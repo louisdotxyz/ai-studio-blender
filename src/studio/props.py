@@ -428,6 +428,13 @@ class STUDIO_Settings(PropertyGroup):
         default='STILL',
         options=set(),
     )
+    motion_ease: EnumProperty(
+        name="Ease", items=(('SMOOTH', "Smooth", "Slow at the start and the end"),
+                            ('LINEAR', "Linear", "The same speed all the way (a turntable that loops)")),
+        default='SMOOTH', options=set())
+    film_by_sections: BoolProperty(
+        name="Parts = Sections", description="A film renders in the sections of the timeline (one video per "
+        "section, named after it) instead of parts of the same length", default=False, options=set())
     film_parts: IntProperty(
         name="Parts", description="A film renders in this many parts, one after the other (each part also as "
         "its own video); in its own process, so it goes on when Blender crashes and resumes where it stopped",

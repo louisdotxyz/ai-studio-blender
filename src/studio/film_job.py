@@ -197,7 +197,13 @@ def main():
     for f, path in paths.items():         # a frame that was cut off (empty placeholder): render again
         if os.path.exists(path) and not _done(path):
             os.remove(path)
-    runs = split(frames, job.get("parts", 1))
+    names = []
+    if job.get("runs"):                    # the timeline's sections: one part (and video) each
+        runs = [[f for f in frames if a <= f <= b] for a, b, _n in job["runs"]]
+        names = [n for (_a, _b, n), run in zip(job["runs"], runs) if run]
+        runs = [r for r in runs if r]
+    else:
+        runs = split(frames, job.get("parts", 1))
     times = []
     status(state="rendering", parts=len(runs), part=1, total=len(frames),
            done=sum(1 for p in paths.values() if _done(p)), started=_state.get("started", time.time()))
@@ -224,7 +230,8 @@ def main():
             raise RuntimeError("Frames missing after part %d: %s" % (n, missing[:5]))
         if job.get("video") and len(runs) > 1:
             status(state="encoding")
-            encode(scene, [paths[f] for f in run], "%s_part_%02d" % (base, n), job["video"])
+            part_name = names[n - 1] if n - 1 < len(names) else "part_%02d" % n
+            encode(scene, [paths[f] for f in run], "%s_%s" % (base, part_name), job["video"])
             status(state="rendering")
     if job.get("video"):
         status(state="encoding")
