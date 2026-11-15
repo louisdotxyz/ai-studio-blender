@@ -96,11 +96,11 @@ def source(scene_name, start, end, found=None):
 # ------------------------------------------------------------------ the cut scene
 
 def _strips(sed):
-    return getattr(sed, "strips", None) or sed.sequences
+    return sed.strips if hasattr(sed, "strips") else sed.sequences        # an empty collection is falsy
 
 
 def _all(sed):
-    return list(getattr(sed, "strips_all", None) or sed.sequences_all)
+    return list(sed.strips_all if hasattr(sed, "strips_all") else sed.sequences_all)
 
 
 def _get(strip, key, default=""):

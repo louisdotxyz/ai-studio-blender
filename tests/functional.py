@@ -6,6 +6,7 @@ The extension must be installed and enabled in that profile. Prints one line per
 and FUNCTIONAL_OK / FUNCTIONAL_FAIL at the end. Renders are tiny (Cycles, few samples).
 """
 
+import json
 import math
 import os
 import sys
@@ -2456,7 +2457,32 @@ def motion_sections():
         made_cut, report = cut.build(scene)
         check("cut: a scene of its own, sections not rendered yet are named", made_cut is not scene
               and made_cut.get(cut.SOURCE_KEY) == scene.name and len(report["missing"]) == 2, report)
-        bpy.data.scenes.remove(made_cut)
+        # a rendered film (its frames and job.json as film.py writes them), then the cut with a cross and a hold
+        anim = os.path.join(TMP, "anim")
+        film_dir = os.path.join(anim, "Film_high_01")
+        os.makedirs(os.path.join(film_dir, ".film"), exist_ok=True)
+        img = bpy.data.images.new("cut frame", 4, 4)
+        img.filepath_raw, img.file_format = os.path.join(film_dir, "f_0001.png"), 'PNG'
+        img.save()
+        bpy.data.images.remove(img)
+        import shutil
+        for f in range(2, 111):
+            shutil.copyfile(os.path.join(film_dir, "f_0001.png"), os.path.join(film_dir, "f_%04d.png" % f))
+        with open(os.path.join(film_dir, ".film", "job.json"), "w") as f:
+            json.dump({"scene": scene.name, "frames": [1, 110], "pattern": os.path.join(film_dir, "f_")}, f)
+        keep_folder = cut._anim_folder
+        cut._anim_folder = lambda: anim
+        try:
+            first, second = cut.settings(scene, "01 Intro"), cut.settings(scene, "02 Hero")
+            first.transition, first.frames, second.hold = 'CROSS', 6, 4
+            made_cut, report = cut.build(scene)
+            kinds = sorted(cut._get(s, cut.KIND_KEY) for s in cut.ours(made_cut))
+            check("cut: sections, a cross, a hold and its still", kinds == ["CROSS", "HOLD", "SECTION", "SECTION"]
+                  and made_cut.frame_end == 50 + 60 - 6 + 4 and len(report["stills"]) == 1
+                  and os.path.isfile(report["stills"][0]), (kinds, made_cut.frame_end, report))
+        finally:
+            cut._anim_folder = keep_folder
+            bpy.data.scenes.remove(made_cut)
     finally:
         for m in markers:
             scene.timeline_markers.remove(m)

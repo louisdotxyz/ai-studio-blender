@@ -132,7 +132,7 @@ def encode(scene, paths, out, video):
     enc = bpy.data.scenes.new("Studio Encode")
     try:
         sed = enc.sequence_editor_create()
-        strips = getattr(sed, "strips", None) or sed.sequences
+        strips = sed.strips if hasattr(sed, "strips") else sed.sequences   # empty collections are falsy
         strip = strips.new_image(name="frames", filepath=paths[0], channel=1, frame_start=1)
         for path in paths[1:]:
             strip.elements.append(os.path.basename(path))
