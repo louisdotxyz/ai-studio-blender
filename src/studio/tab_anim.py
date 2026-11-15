@@ -15,7 +15,7 @@ import os
 import bpy
 from bpy.types import Operator, Panel
 
-from . import cut, film, motion
+from . import cut, explode, film, motion
 from .ui_common import _SidebarPanel, _unpin, section
 
 ANIM_TAB_ORDER = 5
@@ -85,6 +85,10 @@ class STUDIO_PT_anim(_SidebarPanel, Panel):
         box, _head, is_open = section(layout, "anim_motion", "Motion", 'ANIM')
         if is_open:
             motion.draw_presets(box, scene)
+
+        box, _head, is_open = section(layout, "anim_explode", "Explosion", 'MOD_EXPLODE', default_open=False)
+        if is_open:
+            explode.draw(box, scene)
 
         box = layout.box()
         box.label(text="Render", icon='RENDER_ANIMATION')

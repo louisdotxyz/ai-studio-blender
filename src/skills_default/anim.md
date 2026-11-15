@@ -33,3 +33,8 @@ before the next one. Its camera is marker.camera (own camera P_<name>_01 on a pi
   are replaced, the user's own stay; re-rendered sections update by themselves. Music + BPM:
   scene.studio.cut_music / cut_bpm, then studio.cut(action='SNAP') puts sections on whole beats (ask first,
   it moves keys). api.cut_export(edl=False) writes the MP4 in the background.
+- Explosion view: api.explode_group("Lampenkopf", [parts]) gives a handle "Griff | Lampenkopf"; the parts
+  follow it only while scene["Explosion"] > 0 (0 = exactly as in CAD). Place groups by moving / turning
+  their handles with the explosion open, never the parts themselves. api.explode_arrange(names, flat,
+  upright, in_row) turns groups flat to the camera and puts them in a row; api.explode_key_section("02
+  Explosion") keys it open in that section and closed after it; api.realign_hooks() after new origins.

@@ -2542,6 +2542,39 @@ def film_fixes():
 
 
 @section
+def explosion_view():
+    """A group follows its handle only with the explosion open; closed, the parts are as in CAD."""
+    explode = mod("studio.explode")
+    scene = bpy.context.scene
+    parts = []
+    for x in (0.0, 0.3):
+        obj = bpy.data.objects.new("Explode Part %.1f" % x, bpy.data.meshes.new("Explode Part"))
+        scene.collection.objects.link(obj)
+        obj.location = (x, 0, 0)
+        parts.append(obj)
+    bpy.context.view_layer.update()
+    keep = scene.get(explode.PROP)
+    try:
+        handle = explode.make_group(scene, "Test Group", parts)
+        explode.set_value(scene, 1.0)
+        handle.location.z += 0.5
+        explode.set_value(scene, 1.0)
+        opened = parts[1].matrix_world.translation.z
+        explode.set_value(scene, 0.0)
+        closed = parts[1].matrix_world.translation.z
+        check("explosion: open the group follows its handle, closed it is as in CAD",
+              abs(opened - 0.5) < 1e-4 and abs(closed) < 1e-4 and not explode.moved_parts(scene), (opened, closed))
+    finally:
+        explode.remove_group(scene, "Test Group")
+        for obj in parts:
+            bpy.data.objects.remove(obj)
+        if keep is None:
+            scene.pop(explode.PROP, None)
+        else:
+            scene[explode.PROP] = keep
+
+
+@section
 def still_film_switch():
     """Still shows Refine, Film the Animation tab; a hidden tab shows its neighbour."""
     ui = mod("studio.ui_common")

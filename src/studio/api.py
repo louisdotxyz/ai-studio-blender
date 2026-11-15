@@ -1005,3 +1005,46 @@ def render_status():
     return {"busy": run.busy, "message": run.message, "current": current,
             "queue": [runner.item_label(scene, i) for i in scene.studio.items if i.camera],
             "films": films, "finished": finished}
+
+
+# ---------------------------------------------------------------- explosion view
+
+def explode_group(name, objects):
+    """A group of parts with a handle "Griff | <name>"; the parts follow it at scene["Explosion"] > 0
+    (0 = exactly as in CAD). objects: names or objects. Returns the handle's name."""
+    from . import explode
+    objs = [bpy.data.objects[o] if isinstance(o, str) else o for o in objects]
+    return explode.make_group(bpy.context.scene, name, objs).name
+
+
+def explode_arrange(names=None, flat=True, upright=False, in_row=True, camera=None):
+    """Arrange groups for the camera: each flat to it (upright: longest side up), then side by side."""
+    from . import cameras, explode
+    scene = bpy.context.scene
+    cam = bpy.data.objects[camera] if isinstance(camera, str) else camera or cameras.active_camera(scene)
+    names = names or list(explode.groups(scene))
+    if flat or upright:
+        for name in names:
+            explode.face_camera(scene, name, cam, upright=upright)
+    return explode.row(scene, names, cam) if in_row else len(names)
+
+
+def explode_key_section(section=None, open_frames=24):
+    """scene["Explosion"] keys in a section: closed at its start, open after open_frames, closed after it."""
+    from . import explode, motion
+    scene = bpy.context.scene
+    if section:
+        found = motion.find(scene, section)
+        if found is None:
+            raise ValueError("No section %s" % section)
+        _m, start, end = found
+    else:
+        start, end, _n = motion.current_range(scene)
+    explode.key_section(scene, start, end, open_frames)
+
+
+def realign_hooks(objects=None):
+    """Hooks point at their targets again (after a part or its target got a new origin)."""
+    from . import explode
+    objs = [bpy.data.objects[o] if isinstance(o, str) else o for o in (objects or bpy.context.scene.objects)]
+    return explode.realign_hooks(objs)
