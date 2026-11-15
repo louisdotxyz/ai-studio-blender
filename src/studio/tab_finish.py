@@ -750,9 +750,9 @@ class STUDIO_PT_finish(_SidebarPanel, Panel):
         tab_head(layout, STUDIO_MT_edit_presets.bl_idname, "Adjustments", STUDIO_OT_edit_save_preset.bl_idname,
                  STUDIO_PT_finish_settings.__name__, icon='IMAGE_DATA')
         path = _draw_image(layout, context)
-        _draw_krea(layout, context, path)
-        draw_look(layout, context)
-        _draw_adjust(layout, context, path)
+        draw_look(layout, context)            # 1. the look (and every effect in the compositor)
+        _draw_adjust(layout, context, path)   # 2. adjustments of the finished image
+        _draw_krea(layout, context, path)     # 3. Krea
 
 
 def draw_look(layout, context):

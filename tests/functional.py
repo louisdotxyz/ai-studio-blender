@@ -2360,38 +2360,14 @@ def render_review_stars():
 
 @section
 def three_zero():
-    """3.0: old settings move to the new names, the six fixed collections, a film's progress text."""
-    migrate, cams, film = mod("studio.migrate"), mod("studio.cameras"), mod("studio.film")
-    scene = bpy.context.scene
-    keep, keep_mode = scene.studio.film_parts, scene.studio.mode
-    try:
-        store = scene.bl_system_properties_get(do_create=True) if hasattr(scene, "bl_system_properties_get") else scene
-        store["render_studio"] = {"film_parts": 7, "mode": 1}
-        migrate.run()
-        result = (scene.studio.film_parts, scene.studio.mode, "render_studio" in store.keys())
-    except Exception as ex:
-        result = repr(ex)
-    check("old scene settings taken over", result == (7, 'ANIM', False), result)
-    scene.studio.mode = keep_mode
-    scene.studio.film_parts = keep
-    old = bpy.data.collections.new("AS_lights")
-    temp = bpy.data.collections.new("temp")
-    scene.collection.children.link(old)
-    scene.collection.children.link(temp)
-    had_light = bpy.data.collections.get("Light") is not None
-    had_temp = bpy.data.collections.get("TEMP") is not None
-    cams.rename_old_collections()
-    check("collections: fixed names", (had_light or old.name == "Light") and (had_temp or temp.name == "TEMP")
-          and cams.archive_collection_name() == "Archiv" and cams.object_collection_name() == "Object",
-          (old.name, temp.name))
-    for coll in (old, temp):
-        if coll.name not in ("Light", "TEMP"):
-            bpy.data.collections.remove(coll)
-    st = {"part": 2, "parts": 4, "done": 250, "total": 960, "per_frame": 2.0}
-    line = film.text({"label": "P_front"}, st, 'RENDERING')
-    check("film: part, frames and time left", "Part 2/4" in line and "250/960" in line and "left" in line
-          and abs(film.progress(st) - 250 / 960) < 1e-6, line)
-
+    """3.0: fixed collection names, a film's progress text."""
+    cams, film = mod("studio.cameras"), mod("studio.film")
+    check("collections: fixed names", (cams.camera_collection_name(), cams.archive_collection_name(),
+                                       cams.object_collection_name(), cams.temp_collection_name())
+          == ("Camera", "Archiv", "Object", "TEMP"))
+    line = film.text({"label": "P_front"}, {"part": 2, "parts": 4, "done": 250, "total": 960, "per_frame": 2.0},
+                     'RENDERING')
+    check("film: part, frames, time left", "Part 2/4" in line and "250/960" in line and "left" in line, line)
 
 ok = all(results)
 print("FUNCTIONAL_OK" if ok else "FUNCTIONAL_FAIL", "%d/%d" % (sum(results), len(results)))

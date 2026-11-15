@@ -2,7 +2,7 @@
 """Look: the finish of the image (Camera tab).
 
 Exposure and white balance are Blender's own (Color Management of the scene). Saturation, glow, contrast
-and vignette are nodes of our own ("AS Look …") right in front of the compositor output, after everything
+and vignette are nodes of our own ("Studio Look …") right in front of the compositor output, after everything
 else (also the background color). A neutral value takes an effect out again; with all of them neutral
 nothing of ours is left in the tree. (Render Raw does not run in the Blender 5 compositor.)
 """
@@ -12,7 +12,7 @@ from bpy.props import StringProperty
 
 from . import background
 
-PREFIX = "AS Look"
+PREFIX = "Studio Look"
 GLOW, CONTRAST, VIGNETTE = PREFIX + " Glow", PREFIX + " Contrast", PREFIX + " Vignette"
 SATURATION = PREFIX + " Saturation"
 
@@ -205,3 +205,45 @@ def draw(layout, scene, live=None, menu=None):
     col.prop(rq, "look_glow", slider=True)
     col.prop(rq, "look_contrast", slider=True)
     col.prop(rq, "look_vignette", slider=True)
+    draw_effects(box, scene)
+
+
+# Nodes every compositor has (not effects)
+_PLAIN = {'NodeGroupInput', 'NodeGroupOutput', 'CompositorNodeComposite', 'CompositorNodeViewer',
+          'CompositorNodeRLayers', 'NodeReroute', 'NodeFrame'}
+
+
+def effects(scene):
+    """The compositor's other effects (Glare, Lens Distortion … e.g. added by Claude), not ours."""
+    tree = background.compositor_tree(scene)
+    if tree is None:
+        return []
+    return [n for n in tree.nodes if n.bl_idname not in _PLAIN
+            and not n.name.startswith((PREFIX, background.PREFIX))]
+
+
+def draw_effects(layout, scene):
+    """Every other effect in the compositor: on/off and its values (the unconnected number inputs)."""
+    nodes = effects(scene)
+    if not nodes:
+        return
+    layout.separator(factor=0.5)
+    layout.label(text="Effects", icon='SHADERFX')
+    for node in nodes:
+        col = layout.column(align=True)
+        head = col.row(align=True)
+        head.prop(node, "mute", text="", icon='HIDE_ON' if node.mute else 'HIDE_OFF', invert_checkbox=True,
+                  emboss=False)
+        head.label(text=node.label or node.name, translate=False)
+        body = col.column(align=True)
+        body.active = not node.mute
+        base = bpy.types.Node.bl_rna.properties.keys()
+        for prop in node.bl_rna.properties:      # Glare type, quality … (settings of this node kind)
+            if prop.identifier not in base and prop.type in {'ENUM', 'BOOLEAN', 'FLOAT', 'INT'} \
+                    and not prop.is_readonly and getattr(prop, "array_length", 0) == 0:
+                body.prop(node, prop.identifier)
+        for socket in node.inputs:
+            if socket.is_linked or not socket.enabled or getattr(socket, "hide_value", False):
+                continue
+            if socket.type in {'VALUE', 'INT', 'BOOLEAN', 'MENU'} or (socket.type == 'RGBA'):
+                body.prop(socket, "default_value", text=socket.name)

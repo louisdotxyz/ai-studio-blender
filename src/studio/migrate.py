@@ -127,9 +127,12 @@ def run():
         if getattr(tree, "library", None) is not None:
             continue
         for node in tree.nodes:
-            if node.name.startswith(OLD_NODE):
-                node.name = NEW_NODE + node.name[len(OLD_NODE):]
-                moved += 1
+            for old in (OLD_NODE, "AS Look"):
+                if node.name.startswith(old):
+                    node.name = (NEW_NODE + node.name[len(OLD_NODE):] if old == OLD_NODE
+                                 else "Studio Look" + node.name[len(old):])
+                    moved += 1
+                    break
     for image in bpy.data.images:
         if image.name.startswith(OLD_IMAGE) and image.library is None:
             image.name = NEW_IMAGE + image.name[len(OLD_IMAGE):]
