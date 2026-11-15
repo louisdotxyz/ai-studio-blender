@@ -6,7 +6,7 @@ import os
 import time
 
 import bpy
-from bpy.props import (EnumProperty, FloatProperty, IntProperty, StringProperty)
+from bpy.props import (BoolProperty, EnumProperty, FloatProperty, IntProperty, StringProperty)
 from bpy.types import Menu, Operator, Panel
 
 from . import core, runner, shots
@@ -70,9 +70,12 @@ class STUDIO_OT_add(Operator):
         default='DEFAULT', options={'SKIP_SAVE'})
     camera: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})    # this camera instead of the active one
     batch: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})     # "Batch_03": into that folder, numbered
+    switch: BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})      # the shortcuts: Still / Film follows
 
     def execute(self, context):
         rq = context.scene.studio
+        if self.switch and self.mode in {'STILL', 'ANIM'} and rq.mode != self.mode:
+            rq.mode = self.mode
         # The camera bar's camera, not the viewport selection: cameras are usually
         # hidden, and hidden objects cannot be selected.
         cam = context.scene.objects.get(self.camera) if self.camera else active_camera(context.scene)
@@ -473,6 +476,97 @@ def _stars(row, path):
         op.path, op.stars = path, n
 
 
+_films_seen = [0.0, "", []]      # when, scene, [film dicts]: panels draw often
+
+
+def film_results(scene):
+    """The scene's films, newest first: {folder, film_dir, frames, quality (2 = High), whole (video or ""),
+    sections [(name, video)], thumb (a middle frame), state}."""
+    import glob
+    import json
+    now = time.monotonic()
+    if now - _films_seen[0] < 2.0 and _films_seen[1] == scene.name:
+        return _films_seen[2]
+    from . import cut, film
+    out = []
+    for _when, quality, (a, b), pattern in cut.films(scene.name)[:8]:
+        folder = os.path.dirname(pattern)
+        film_dir = os.path.join(folder, film.FILM_DIR)
+        try:
+            with open(os.path.join(film_dir, "job.json"), encoding="utf-8") as f:
+                stem = os.path.basename(json.load(f)["out"])
+        except (OSError, ValueError, KeyError):
+            stem = ""
+        videos = sorted(glob.glob(os.path.join(glob.escape(folder), "*.mp4")) +
+                        glob.glob(os.path.join(glob.escape(folder), "*.mov")))
+        import re
+        names = [(os.path.splitext(os.path.basename(v))[0], v) for v in videos]
+        whole = next((v for n, v in names if n == stem or re.fullmatch(re.escape(stem) + r"\d+-\d+", n)), "")
+        parts = [(n[len(stem) + 1:] if stem and n.startswith(stem + "_") else n, v) for n, v in names if v != whole]
+        out.append({"folder": folder, "film_dir": film_dir, "frames": (a, b), "quality": quality,
+                    "whole": whole, "sections": parts, "thumb": cut._frame_path(pattern, (a + b) // 2) or "",
+                    "state": film.read_status({"dir": film_dir}).get("state", ""),
+                    "old": film.needs_video(film_dir)})
+    _films_seen[:] = [now, scene.name, out]
+    return out
+
+
+def _convert_old_films():
+    """A finished film without a video (before 3.7): make it, one at a time (a timer, not in draw)."""
+    from . import film
+    if any(k == 'ENCODING' or k == 'RENDERING' for _f, _s, k in film.films()):
+        return None
+    scene = bpy.context.scene
+    for entry in (film_results(scene) if scene is not None else []):
+        if entry["old"]:
+            film.make_video(entry["film_dir"], "Video " + os.path.basename(entry["folder"]))
+            _films_seen[0] = 0.0
+            break
+    return None
+
+
+def _draw_films(layout, scene):
+    """Film mode: every film of this scene to watch: a picture, the whole film and each section."""
+    found = film_results(scene)
+    if not found:
+        sub = layout.row()
+        sub.active = False
+        sub.label(text="No films yet: ⌘E or Render Film in the Animation tab", icon='INFO')
+        return
+    if any(f["old"] for f in found) and not bpy.app.timers.is_registered(_convert_old_films):
+        bpy.app.timers.register(_convert_old_films, first_interval=0.5)
+    from . import render_review
+    for entry in found:
+        a, b = entry["frames"]
+        box = layout.box()
+        head = box.row(align=True)
+        head.label(text="%s · %s · %.1f s" % (os.path.basename(entry["folder"]),
+                                              "HQ" if entry["quality"] == 2 else "LQ",
+                                              motion_seconds(scene, b - a + 1)),
+                   icon='SHADING_RENDERED' if entry["quality"] == 2 else 'SORTTIME', translate=False)
+        head.operator("wm.path_open", text="", icon='FILE_FOLDER', emboss=False).filepath = entry["folder"]
+        icon = render_review.thumb(entry["thumb"]) if entry["thumb"] else 0
+        if icon:
+            box.template_icon(icon_value=icon, scale=6.0)
+        row = box.row(align=True)
+        row.scale_y = 1.2
+        if entry["whole"]:
+            row.operator("wm.path_open", text="Play", icon='PLAY').filepath = entry["whole"]
+            row.operator("studio.cut", text="Into the Cut", icon='SEQUENCE').action = 'OPEN'
+        else:
+            row.active = False
+            row.label(text="Making the video …" if entry["old"] or entry["state"] in {"encoding", "done"}
+                      else "Rendering …", icon='TIME')
+        for name, video in entry["sections"]:
+            box.operator("wm.path_open", text=name.replace("_", " "), icon='PLAY', emboss=False,
+                         translate=False).filepath = video
+
+
+def motion_seconds(scene, frames):
+    from . import motion
+    return motion.seconds(scene, frames)
+
+
 def _draw_compare(layout, context):
     """A and B side by side as small pictures, with stars; [⇆] [✕] and the big side by side window."""
     from . import render_review
@@ -758,16 +852,20 @@ class STUDIO_PT_render_queue(_SidebarPanel, Panel):
         # quality details) in the gear; renders are started in the chat
         head = layout.row(align=True)
         head.scale_y = 1.2
-        from . import render_review
-        sort = next(label for key, label, _i in render_review.SORTS if key == render_review.state["sort"])
-        head.menu(STUDIO_MT_render_arrange.bl_idname, text=sort, icon='FILTER')
+        film_mode = rq.mode == 'ANIM'
+        if film_mode:
+            head.operator("studio.cut", text="Open Cut", icon='SEQUENCE').action = 'OPEN'
+        else:
+            from . import render_review
+            sort = next(label for key, label, _i in render_review.SORTS if key == render_review.state["sort"])
+            head.menu(STUDIO_MT_render_arrange.bl_idname, text=sort, icon='FILTER')
         head.popover(STUDIO_PT_output.__name__, text="", icon='PREFERENCES')
 
         # What renders now and what waits: progress only (renders are started in the chat).
         current = RUN.current["uid"] if RUN.current else None
         waiting = [(i, item) for i, item in enumerate(rq.items) if item.camera is not None]
         from . import film
-        films = [f for f in film.films() if f[2] != 'DONE']
+        films = [f for f in film.films_here() if f[2] != 'DONE']
         if RUN.busy or waiting or films:
             box = layout.box()
             col_run = box.column(align=True)
@@ -789,6 +887,10 @@ class STUDIO_PT_render_queue(_SidebarPanel, Panel):
                                  icon='PLAY')
             if RUN.message and not RUN.busy:
                 col_run.label(text=RUN.message, icon='INFO')
+
+        if film_mode:
+            _draw_films(layout, scene)
+            return
 
         # The preview: the entry that renders now (its quick draft, then the image) or the render you
         # picked; ◀ ▶ through all renders, the magnifier opens it big, [A] [B] and Compare next to it.

@@ -83,6 +83,22 @@ class STUDIO_OT_section_toggle(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class STUDIO_OT_tab(bpy.types.Operator):
+    bl_idname = "studio.tab"
+    bl_label = "Tab"
+    bl_options = {'INTERNAL'}
+
+    tab: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, _context, props):
+        return next((f"{name}: {text}" for key, name, text, _i, _n in STUDIO_TABS if key == props.tab), "")
+
+    def execute(self, context):
+        context.window_manager.studio_tab = self.tab
+        return {'FINISHED'}
+
+
 class STUDIO_PT_tabs(Panel):
     """Switcher Render | Light | Material | Queue at the top of the Studio tab."""
     bl_space_type = 'VIEW_3D'
@@ -96,11 +112,18 @@ class STUDIO_PT_tabs(Panel):
         _unpin(self)
         # five tabs as five equal icons: always the same size, whatever is open (names in the tooltips)
         wm = context.window_manager
+        from .ui_common import studio_tab, visible_tabs
+        switch = self.layout.row(align=True)
+        switch.prop_enum(context.scene.studio, "mode", 'STILL', icon='IMAGE_DATA')
+        switch.prop_enum(context.scene.studio, "mode", 'ANIM', icon='RENDER_ANIMATION')
         row = self.layout.row(align=True)
         row.scale_y = 1.3
-        grid = row.grid_flow(row_major=True, columns=len(STUDIO_TABS), even_columns=True, align=True)
+        shown = visible_tabs(context.scene)
+        current = studio_tab(context)
+        grid = row.grid_flow(row_major=True, columns=len(shown), even_columns=True, align=True)
         for key, _name, _text, icon, _n in STUDIO_TABS:
-            grid.prop_enum(wm, "studio_tab", key, text="", icon=icon)
+            if key in shown:     # the tab a hidden one falls back to looks pressed
+                grid.operator("studio.tab", text="", icon=icon, depress=key == current).tab = key
         row.popover("STUDIO_PT_project", text="", icon='FILE_BLEND')   # scenes, archive, CAD rules
 
 
@@ -109,6 +132,7 @@ class STUDIO_PT_tabs(Panel):
 classes = render_setup.classes + (
     STUDIO_LightSettings,
     STUDIO_OT_section_toggle,
+    STUDIO_OT_tab,
     STUDIO_PT_tabs,
     STUDIO_OT_low_scale,
     STUDIO_PT_output,

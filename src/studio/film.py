@@ -112,7 +112,7 @@ def start(scene, job, folder, stem, frames, parts, video, label):
     with open(os.path.join(film_dir, "job.json"), "w", encoding="utf-8") as f:
         json.dump(data, f, indent=1)
     entry = {"dir": film_dir, "folder": folder, "label": label, "pid": _launch(film_dir),
-             "added": time.time()}
+             "added": time.time(), "blend": bpy.data.filepath}
     films = [f for f in _load() if f["dir"] != film_dir] + [entry]
     _save(films)
     runner.log("film %s started (%d frames, %d parts, pid %s)" % (label, frames[1] - frames[0] + 1,
@@ -146,6 +146,15 @@ def films(fresh=False):
         out.append((film, st, kind))
     _films_cache[:] = [now, out]
     return out
+
+
+def mine(film):
+    """A film of the file open in this Blender (a second Blender shows only its own)."""
+    return film.get("blend", "") in ("", bpy.data.filepath)
+
+
+def films_here():
+    return [f for f in films() if mine(f[0])]
 
 
 def running():
@@ -207,6 +216,34 @@ def resume(film_dir):
     _ensure_timer()
 
 
+def _has_video(film_dir):
+    try:
+        with open(os.path.join(film_dir, "job.json"), encoding="utf-8") as f:
+            out = json.load(f)["out"]
+    except (OSError, ValueError, KeyError):
+        return True
+    import glob
+    return any(os.path.isfile(out + ext) for ext in (".mp4", ".mov")) or bool(
+        glob.glob(glob.escape(out) + "[0-9]*-[0-9]*.mp4"))
+
+
+def needs_video(film_dir):
+    """A finished film from before 3.7 (an image sequence only) that can still become a video."""
+    st = read_status({"dir": film_dir})
+    return (st.get("state") == "done" and not _has_video(film_dir)
+            and os.path.isfile(os.path.join(film_dir, "scene.blend"))
+            and not any(f["dir"] == film_dir for f in _load()))
+
+
+def make_video(film_dir, label="Video"):
+    """Make the videos of a finished film (its frames are all there, so only the encoding runs)."""
+    entry = {"dir": film_dir, "folder": os.path.dirname(film_dir), "label": label, "pid": _launch(film_dir),
+             "added": time.time(), "blend": bpy.data.filepath}
+    _save([f for f in _load() if f["dir"] != film_dir] + [entry])
+    _ensure_timer()
+    return entry
+
+
 def forget(film_dir):
     """Take the film off the list (its files stay)."""
     _save([f for f in _load() if f["dir"] != film_dir])
@@ -245,7 +282,8 @@ def _poll():
         key = film["dir"]
         if kind == 'DONE' and _seen.get(key) != 'DONE':
             runner.log("film done: %s" % film.get("label"))
-            runner.notify("%s is ready" % film.get("label", "The film"))
+            if mine(film):
+                runner.notify("%s is ready" % film.get("label", "The film"))
             result = _video_or_frame(film)
             if result:
                 runner.log("film result: %s" % result)
@@ -264,7 +302,7 @@ def _ensure_timer():
 
 def draw(layout, buttons=True):
     """One row per film: progress with part, frame and time left; Stop / Resume / ✕."""
-    for film, st, kind in films():
+    for film, st, kind in films_here():
         if kind == 'DONE':
             continue
         row = layout.row(align=True)

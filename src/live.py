@@ -1,16 +1,20 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Live Connection: external Claude sessions (Cowork, blender-mcp) reach the open Blender.
 
-Runs on the chat's HTTP server (mcp_server, path /live) with its own token. Port and token are
-in ~/.config/ai-studio/live.json (only readable by the user); the Blender opened last owns it.
+Runs on the chat's HTTP server (mcp_server, path /live) with its own token. Every open Blender
+writes ~/.config/ai-studio/live/<pid>.json (port, token, file, when the user last worked in it);
+~/.config/ai-studio/live.json is the one the user worked in last (older clients read only it).
+Several Blenders: live_mcp picks the one asked for by file, else the last one worked in.
 The requests are handled in core._dispatch_live on the main thread.
 """
 
 import atexit
+import glob
 import json
 import os
 import secrets
 import tempfile
+import time
 
 import bpy
 from bpy.app.handlers import persistent
@@ -19,6 +23,7 @@ from . import mcp_server
 from .preferences import get_prefs
 
 LIVE_FILE = os.path.expanduser("~/.config/ai-studio/live.json")
+_active = [0.0]          # when this Blender last told the others it is the one being worked in
 
 
 def _blend_file():
@@ -34,22 +39,91 @@ def _owner():
         return None
 
 
-def _write():
-    os.makedirs(os.path.dirname(LIVE_FILE), mode=0o700, exist_ok=True)
-    data = {"port": mcp_server.port(), "token": mcp_server.live_token(), "pid": os.getpid(),
-            "file": mcp_server.live_state["file"], "version": mcp_server.live_state["version"]}
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(LIVE_FILE), prefix=".live-")  # mode 0600
+def _data():
+    return {"port": mcp_server.port(), "token": mcp_server.live_token(), "pid": os.getpid(),
+            "file": mcp_server.live_state["file"], "version": mcp_server.live_state["version"],
+            "active": _active[0] or time.time()}
+
+
+def _dump(path, data):
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".live-")  # mode 0600
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(data, f)
-    os.replace(tmp, LIVE_FILE)
+    os.replace(tmp, path)
+
+
+def _instances_dir():
+    return os.path.join(os.path.dirname(LIVE_FILE), "live")
+
+
+def _mine():
+    return os.path.join(_instances_dir(), "%d.json" % os.getpid())
+
+
+def _alive(pid):
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def instances():
+    """[data] of every open Blender with the Live Connection, the one worked in last first."""
+    found = []
+    for path in glob.glob(os.path.join(_instances_dir(), "*.json")):
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if _alive(data.get("pid")):
+            found.append(data)
+        else:
+            try:
+                os.remove(path)            # left behind by a crash
+            except OSError:
+                pass
+    return sorted(found, key=lambda d: -float(d.get("active") or 0))
+
+
+def _write():
+    data = _data()
+    _dump(_mine(), data)
+    _dump(LIVE_FILE, data)
 
 
 def _remove_file():
-    if _owner() == os.getpid():
+    try:
+        os.remove(_mine())
+    except OSError:
+        pass
+    if _owner() == os.getpid():          # another Blender still open: it gets live.json
+        rest = [d for d in instances() if d.get("pid") != os.getpid()]
         try:
-            os.remove(LIVE_FILE)
+            if rest:
+                _dump(LIVE_FILE, rest[0])
+            else:
+                os.remove(LIVE_FILE)
         except OSError:
             pass
+
+
+def touch():
+    """The user works in this Blender: it becomes the one other Claude apps talk to (every 2 s at most)."""
+    if not is_running():
+        return
+    now = time.time()
+    if now - _active[0] < 2.0:
+        return
+    _active[0] = now
+    try:
+        _dump(_mine(), _data())
+        if _owner() != os.getpid():
+            _dump(LIVE_FILE, _data())
+    except OSError:
+        pass
 
 
 def is_running():
@@ -105,13 +179,19 @@ def _file_changed(_arg=None, _arg2=None):
     if not is_running():
         return
     mcp_server.live_state["file"] = _blend_file()
-    if _owner() in (os.getpid(), None):   # another Blender opened later keeps the file
-        _write()
+    _active[0] = time.time()             # opening or saving a file: working in this Blender
+    _write()
+
+
+@persistent
+def _worked_in(_scene=None, _depsgraph=None):
+    touch()
 
 
 def register():
     bpy.app.handlers.load_post.append(_file_changed)
     bpy.app.handlers.save_post.append(_file_changed)    # "Save As" changes the file too
+    bpy.app.handlers.depsgraph_update_post.append(_worked_in)   # any change: the user works here
     # background Blenders (renders, scripts) must not take the file over; nor a second window opened for tests
     if not bpy.app.background and not os.environ.get("AI_STUDIO_NO_LIVE"):
         sync()
@@ -124,4 +204,6 @@ def unregister():
     for handlers in (bpy.app.handlers.load_post, bpy.app.handlers.save_post):
         if _file_changed in handlers:
             handlers.remove(_file_changed)
+    if _worked_in in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(_worked_in)
     stop()

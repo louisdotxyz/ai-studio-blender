@@ -349,6 +349,12 @@ def _motion_items():
     return motion.PRESET_ITEMS
 
 
+def _motion_preset_changed(settings):
+    """A new preset shows its own strength (360°, 60 % …), to change from there."""
+    from . import motion
+    settings.motion_amount = motion.amount_of(settings.motion_preset)
+
+
 class STUDIO_Shot(PropertyGroup):
     """A shot (Render tab): camera + scene preset + material variant + quality."""
     name: StringProperty(name="Name", default="Shot")
@@ -457,8 +463,8 @@ class STUDIO_Settings(PropertyGroup):
     mode: EnumProperty(
         name="Mode",
         items=[
-            ('STILL', "Still", "One image per camera (current frame)"),
-            ('ANIM', "Animation", "The frame range per camera, as a PNG sequence in its own folder"),
+            ('STILL', "Still", "Images: one per camera at the current frame; compare, rate and refine them"),
+            ('ANIM', "Film", "Films: sections, camera moves, keys and the cut (renders a film per camera)"),
         ],
         default='STILL',
         options=set(),
@@ -468,9 +474,9 @@ class STUDIO_Settings(PropertyGroup):
                             ('LINEAR', "Linear", "The same speed all the way (a turntable that loops)")),
         default='SMOOTH', options=set())
     motion_preset: EnumProperty(name="Preset", items=lambda _s, _c: _motion_items(), options=set(),
-                                update=lambda s, _c: setattr(s, "motion_amount", 0.0))
+                                update=lambda s, _c: _motion_preset_changed(s))
     motion_amount: FloatProperty(name="Amount", description="How strong: degrees, % of the distance or frames "
-                                 "(0 = the preset's own)", default=0.0, options=set())
+                                 "(0 = the preset's own)", default=360.0, options=set())
     motion_reverse: BoolProperty(name="Other Way", description="The other direction (left instead of right, "
                                  "down instead of up, from white instead of black)", default=False, options=set())
     motion_from: IntProperty(name="From", description="First frame of the movement (0 = the section's start)",

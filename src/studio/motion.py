@@ -635,8 +635,8 @@ class STUDIO_OT_section(Operator):
                        "(P_<name>_01 on a pivot), starting from the active camera or the view",
                 'GO': "Go to this section: the timeline plays only it (again: the whole film)",
                 'REMOVE': "Remove this section (its marker and steps; the camera and the keys stay)",
-                'PREVIEW': "A quick film of this section in Low Quality to check it",
-                'RENDER': "Render this section as a film in High Quality"}.get(props.action, "")
+                'PREVIEW': "LQ: a quick film of this section in Low Quality (watch it in the Render tab)",
+                'RENDER': "HQ: this section as a film in High Quality (watch it in the Render tab)"}.get(props.action, "")
 
     def invoke(self, context, _event):
         if self.action == 'ADD':
@@ -787,13 +787,10 @@ def draw_presets(layout, scene):
     row.prop(rq, "motion_reverse", text="", icon='ARROW_LEFTRIGHT', toggle=True)
     spec = PRESETS.get(rq.motion_preset, PRESETS['HOLD'])
     if spec[3][1]:
-        row = col.row(align=True)
-        row.label(text="%s (%g)" % (spec[3][1], spec[3][0]) if not rq.motion_amount else spec[3][1],
-                  translate=False)
-        row.prop(rq, "motion_amount", text="")
+        col.prop(rq, "motion_amount", text=spec[3][1])
     row = col.row(align=True)
-    row.prop(rq, "motion_from")
-    row.prop(rq, "motion_to")
+    row.prop(rq, "motion_from", text="From Frame")
+    row.prop(rq, "motion_to", text="To Frame")
     col.row(align=True).prop(rq, "motion_ease", expand=True)
     row = layout.row(align=True)
     row.scale_y = 1.2
@@ -829,6 +826,9 @@ def draw_presets(layout, scene):
     op.chain = True
 
 
+_SHORT = {"Camera": "Cam", "Objects": "Obj"}
+
+
 def draw_sections(layout, scene):
     """Animation tab: the sections with their camera, frames, keys; go, preview, render, remove."""
     box = layout.box()
@@ -853,19 +853,21 @@ def draw_sections(layout, scene):
         cam = row.row(align=True)
         cam.ui_units_x = 5
         cam.prop(marker, "camera", text="")
-        for action, icon in (('PREVIEW', 'PLAY_SOUND'), ('RENDER', 'RENDER_ANIMATION'), ('REMOVE', 'X')):
-            op = row.operator(STUDIO_OT_section.bl_idname, text="", icon=icon, emboss=action != 'REMOVE')
+        for action, text in (('PREVIEW', "LQ"), ('RENDER', "HQ")):
+            op = row.operator(STUDIO_OT_section.bl_idname, text=text)
             op.action, op.name = action, marker.name
-        info = col.row(align=True)
+        op = row.operator(STUDIO_OT_section.bl_idname, text="", icon='X', emboss=False)
+        op.action, op.name = 'REMOVE', marker.name
+        info = col.split(factor=0.4, align=True)
         edit = info.operator(STUDIO_OT_section_edit.bl_idname, text="%d–%d · %.1f s" % (
-            start, end, seconds(scene, end - start + 1)), emboss=False, translate=False)
+            start, end, seconds(scene, end - start + 1)), icon='TIME', emboss=False, translate=False)
         edit.name = marker.name
         overview = key_overview(scene, start, end, marker.camera)
         sub = info.row(align=True)
         sub.active = False
         sub.alignment = 'RIGHT'
-        sub.label(text="  ".join("◆ %s %d" % kv for kv in overview.items()) if overview else "no keys",
-                  translate=False)
+        sub.label(text="◆ " + " · ".join("%s %d" % (_SHORT.get(k, k), n) for k, n in overview.items())
+                  if overview else "no keys", translate=False)
 
 
 def draw_timeline(self, context):

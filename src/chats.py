@@ -2,6 +2,7 @@
 """Chat history: saving, loading, naming and deleting chats (in the extension's user directory). The chat
 state itself lives in core."""
 
+import os
 import re
 import time
 import traceback
@@ -19,6 +20,26 @@ def list_chats():
         if not isinstance(core._chats, list):
             core._chats = []
     return core._chats
+
+
+def _write_chats(change):
+    """Read the saved chats again, apply change(list) → list and write them back under a lock: a
+    second Blender open at the same time keeps its chats (each used to write its own whole list)."""
+    lock = None
+    try:
+        import fcntl
+        lock = open(os.path.join(core.workdir(), ".chats.lock"), "w")
+        fcntl.flock(lock, fcntl.LOCK_EX)
+    except (ImportError, OSError):
+        pass
+    try:
+        stored = core._read_json("chats.json", [])
+        merged = change([c for c in stored if isinstance(c, dict)] if isinstance(stored, list) else [])
+        core._write_json("chats.json", merged)
+        core._chats = merged
+    finally:
+        if lock is not None:
+            lock.close()
 
 
 TITLE_WORDS = 5
@@ -66,8 +87,13 @@ def save_current_chat():
         entry["model"] = {key: getattr(prefs, key) for key in MODEL_KEYS}
     chats.sort(key=lambda c: -c.get("updated", 0))
     del chats[core.MAX_SAVED_CHATS:]
+
+    def put(stored):
+        stored = [c for c in stored if c.get("id") != entry["id"]] + [entry]
+        stored.sort(key=lambda c: -c.get("updated", 0))
+        return stored[:core.MAX_SAVED_CHATS]
     try:
-        core._write_json("chats.json", chats)
+        _write_chats(put)
     except OSError:
         traceback.print_exc()
 
@@ -153,17 +179,21 @@ def rename_chat(chat_id, title):
     if entry is None or not title:
         return
     entry.update(title=title, renamed=True)
+
+    def rename(stored):
+        for c in stored:
+            if c.get("id") == chat_id:
+                c.update(title=title, renamed=True)
+        return stored
     try:
-        core._write_json("chats.json", list_chats())
+        _write_chats(rename)
     except OSError:
         traceback.print_exc()
     core.mark_dirty()
 
 
 def delete_chat(chat_id):
-    chats = list_chats()
-    chats[:] = [c for c in chats if c.get("id") != chat_id]
-    core._write_json("chats.json", chats)
+    _write_chats(lambda stored: [c for c in stored if c.get("id") != chat_id])
     if core.session_id == chat_id and not core.is_busy():
         core.messages.clear()
         core.session_id = None

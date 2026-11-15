@@ -361,7 +361,13 @@ def export(scene, path=None):
         render.use_file_extension = keep[3]
     log = os.path.join(work, "log.txt")
     with open(log, "w", encoding="utf-8") as f:
-        subprocess.Popen([bpy.app.binary_path, "-b", blend, "--factory-startup", "-S", cut.name, "-a"],
+        script = ("import bpy, glob, os, re\n"            # render, then <path>0001-0108.mp4 → <path>.mp4
+                  "bpy.ops.render.render(animation=True)\n"
+                  "p = %r\n"
+                  "made = [f for f in glob.glob(glob.escape(p) + '*') if re.fullmatch(r'\\d+-\\d+\\.mp4', f[len(p):])]\n"
+                  "if made: os.replace(max(made, key=os.path.getmtime), p + '.mp4')\n" % path)
+        subprocess.Popen([bpy.app.binary_path, "-b", blend, "--factory-startup", "-S", cut.name,
+                          "--python-expr", script],
                          stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
     return path + ".mp4", log
 

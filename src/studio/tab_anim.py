@@ -23,9 +23,9 @@ ANIM_TAB_ORDER = 5
 
 class STUDIO_OT_anim_preview(Operator):
     bl_idname = "studio.anim_preview"
-    bl_label = "Viewport Preview"
-    bl_description = ("The current section (or the whole film) as a quick viewport film at half size, played "
-                      "right away: for timing and camera moves (light and materials: the quick film of a section)")
+    bl_label = "Check in the Viewport"
+    bl_description = ("The current section (or the whole film) as a quick viewport film in seconds, played right "
+                      "away: timing and camera moves (light and materials: LQ of a section)")
 
     def execute(self, context):
         scene = context.scene
@@ -40,7 +40,7 @@ class STUDIO_OT_anim_preview(Operator):
                 "start": scene.frame_start, "end": scene.frame_end, "format": images.file_format,
                 "media": getattr(images, "media_type", None), "ext": render.use_file_extension}
         from .runner import jobs_dir
-        out = os.path.join(jobs_dir(), "viewport_preview_")
+        out = os.path.join(jobs_dir(), "viewport_preview_%d_" % os.getpid())   # a second Blender: its own
         try:
             render.filepath = out
             render.resolution_percentage = 50
@@ -78,27 +78,33 @@ class STUDIO_PT_anim(_SidebarPanel, Panel):
         _unpin(self)
         layout = self.layout
         scene = context.scene
-        start, end, name = motion.current_range(scene)
 
-        # Head: where we are, quick check, film
-        head = layout.row(align=True)
-        head.scale_y = 1.2
-        head.operator(motion.STUDIO_OT_section.bl_idname, text="Section", icon='MARKER_HLT').action = 'ADD'
-        head.operator(STUDIO_OT_anim_preview.bl_idname, text="Preview", icon='PLAY')
-        head.operator("studio.add", text="Film", icon='RENDER_ANIMATION').mode = 'ANIM'
-        head.operator(cut.STUDIO_OT_cut.bl_idname, text="Cut", icon='SEQUENCE').action = 'OPEN'
-        info = layout.row()
-        info.active = False
-        info.label(text="%s · frames %d–%d · %.1f s · %s" % (
-            name or "Whole film", start, end, motion.seconds(scene, end - start + 1),
-            scene.camera.name if scene.camera else "no camera"), translate=False)
-        film.draw(layout)
-
+        # 1 · the sections (each one its own camera and video), 2 · their movement, 3 · render and watch
         motion.draw_sections(layout, scene)
 
         box, _head, is_open = section(layout, "anim_motion", "Motion", 'ANIM')
         if is_open:
             motion.draw_presets(box, scene)
+
+        box = layout.box()
+        box.label(text="Render", icon='RENDER_ANIMATION')
+        info = box.row()
+        info.active = False
+        found = motion.sections(scene)
+        info.label(text="Whole film · %d sections · frames %d–%d · %.1f s" % (
+            len(found), scene.frame_start, scene.frame_end,
+            motion.seconds(scene, scene.frame_end - scene.frame_start + 1)), translate=False)
+        row = box.row(align=True)
+        row.scale_y = 1.2
+        row.operator(STUDIO_OT_anim_preview.bl_idname, text="Check", icon='PLAY')
+        op = row.operator("studio.add", text="Film LQ", icon='SORTTIME')
+        op.mode, op.quality = 'ANIM', 'LOW'
+        op = row.operator("studio.add", text="Film HQ", icon='SHADING_RENDERED')
+        op.mode, op.quality = 'ANIM', 'HIGH'
+        film.draw(box)
+        row = box.row(align=True)
+        row.operator("studio.tab", text="Watch Films", icon='FILE_MOVIE').tab = 'QUEUE'
+        row.operator(cut.STUDIO_OT_cut.bl_idname, text="Cut", icon='SEQUENCE').action = 'OPEN'
 
 
 classes = (STUDIO_OT_anim_preview, STUDIO_PT_anim)

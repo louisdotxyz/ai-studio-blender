@@ -14,6 +14,7 @@ import traceback
 import uuid
 
 import bpy
+from bpy.app.handlers import persistent
 
 from . import attachments as att_mod
 from . import autosave, blender_tools, claude_cli, lessons, lmstudio, mcp_server, memory, skills
@@ -255,15 +256,45 @@ QUEUE_PAUSE = 2.0      # seconds between the end of a chat and the start of the 
 _queue_ready = [0.0]
 
 
+def _queue_key():
+    """The queue belongs to the open file: a second Blender with another file has its own."""
+    return getattr(bpy.data, "filepath", "") or ""
+
+
+def _stored_queue():
+    data = _read_json(CHAT_QUEUE_FILE, {})
+    data = data if isinstance(data, dict) else {}
+    chats = [c for c in (data.get("chats") or []) if isinstance(c, dict) and (c.get("text") or c.get("attachments"))]
+    paused = data.get("paused_by") if isinstance(data.get("paused_by"), dict) else {}
+    if not paused and data.get("paused"):
+        paused = {"": True}
+    return chats, paused
+
+
 def _save_chat_queue():
-    _write_json(CHAT_QUEUE_FILE, {"chats": chat_queue, "paused": chat_queue_paused[0]})
+    key = _queue_key()
+    mine = {c.get("id") for c in chat_queue}
+    stored, paused = _stored_queue()
+    for c in chat_queue:
+        c.setdefault("file", key)
+    others = [c for c in stored if c.get("file", "") != key and c.get("id") not in mine]
+    paused[key] = chat_queue_paused[0]
+    _write_json(CHAT_QUEUE_FILE, {"chats": others + chat_queue, "paused_by": paused})
 
 
 def load_chat_queue():
-    data = _read_json(CHAT_QUEUE_FILE, {})
-    chats = data.get("chats") if isinstance(data, dict) else None
-    chat_queue[:] = [c for c in (chats or []) if isinstance(c, dict) and (c.get("text") or c.get("attachments"))]
-    chat_queue_paused[0] = bool(data.get("paused")) if isinstance(data, dict) else False
+    """The queued chats of the open file (older ones without a file: taken by the first that loads)."""
+    key = _queue_key()
+    stored, paused = _stored_queue()
+    chat_queue[:] = [c for c in stored if c.get("file", key) == key]
+    chat_queue_paused[0] = bool(paused.get(key, paused.get("", False)))
+
+
+@persistent
+def _queue_file_changed(*_args):
+    load_chat_queue()
+    if chat_queue and not bpy.app.background:
+        chat_queue_paused[0] = True     # opened again: the queued chats wait for the user
 
 
 def queue_chat(text, skill_names=None, connectors=()):
@@ -279,7 +310,8 @@ def queue_chat(text, skill_names=None, connectors=()):
         text = rest
         names.append(skills.find(workdir(), name)["name"])
     chat_queue.append({"id": str(uuid.uuid4()), "text": text, "skills": list(dict.fromkeys(names)),
-                       "attachments": [dict(a) for a in attachments], "connectors": list(connectors)})
+                       "attachments": [dict(a) for a in attachments], "connectors": list(connectors),
+                       "file": _queue_key()})
     attachments.clear()
     _queue_ready[0] = 0.0
     _save_chat_queue()
@@ -1637,6 +1669,8 @@ def register():
     load_chat_queue()
     if chat_queue and not bpy.app.background:
         chat_queue_paused[0] = True     # after a restart the queued chats wait for the user
+    if _queue_file_changed not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_queue_file_changed)
     crash = autosave.last_crash
     if crash:
         notes.append("Blender did not shut down cleanly last time (probably a crash)"
@@ -1654,6 +1688,8 @@ def register():
 
 
 def unregister():
+    if _queue_file_changed in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_queue_file_changed)
     if bpy.app.timers.is_registered(_tick):
         bpy.app.timers.unregister(_tick)
     if current_run:

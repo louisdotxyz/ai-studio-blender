@@ -156,8 +156,19 @@ def encode(scene, paths, out, video):
         render.filepath = out
         render.use_file_extension = True
         bpy.ops.render.render(animation=True, scene=enc.name)
+        named(out)
     finally:
         bpy.data.scenes.remove(enc)
+
+
+def named(out):
+    """Blender names a video <out>0001-0960.mp4: it becomes <out>.mp4 (what the add-on looks for)."""
+    import glob
+    import re
+    made = [p for p in glob.glob(glob.escape(out) + "*") if re.fullmatch(r"\d+-\d+\.(mp4|mov)", p[len(out):])]
+    if made:
+        newest = max(made, key=os.path.getmtime)
+        os.replace(newest, out + os.path.splitext(newest)[1])
 
 
 def main():
@@ -228,14 +239,13 @@ def main():
         missing = [f for f in run if not _done(paths[f])]
         if missing:
             raise RuntimeError("Frames missing after part %d: %s" % (n, missing[:5]))
-        if job.get("video") and len(runs) > 1:
+        if len(runs) > 1:                  # every section also as its own video (to watch it)
             status(state="encoding")
             part_name = names[n - 1] if n - 1 < len(names) else "part_%02d" % n
-            encode(scene, [paths[f] for f in run], "%s_%s" % (base, part_name), job["video"])
+            encode(scene, [paths[f] for f in run], "%s_%s" % (base, part_name), job.get("video") or "MP4")
             status(state="rendering")
-    if job.get("video"):
-        status(state="encoding")
-        encode(scene, [paths[f] for f in frames], base, job["video"])
+    status(state="encoding")              # always a video to watch; an image sequence keeps its frames too
+    encode(scene, [paths[f] for f in frames], base, job.get("video") or "MP4")
     status(state="done", done=len(frames), finished=time.time())
     print("FILM done", flush=True)
 

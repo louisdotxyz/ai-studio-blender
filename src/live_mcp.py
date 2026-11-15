@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """MCP server (stdio) for other Claude apps: Claude Code, Claude Desktop / Cowork.
 
-Started by those apps, not by Blender: ``<python> live_mcp.py``. It reads
-~/.config/ai-studio/live.json (port and token of the Blender that was opened last,
-written by live.py) on every call and forwards to Blender's Live Connection
-(POST http://127.0.0.1:<port>/live). No bpy, no third-party modules.
+Started by those apps, not by Blender: ``<python> live_mcp.py``. On every call it reads the open
+Blenders from ~/.config/ai-studio/live/<pid>.json (port, token, file, when the user last worked in
+it; written by live.py; live.json alone for older add-ons) and forwards to the one asked for by
+`file`, else the one worked in last (POST http://127.0.0.1:<port>/live). No bpy, no third-party modules.
 """
 
 import json
@@ -17,6 +17,7 @@ import urllib.error
 import urllib.request
 
 LIVE_FILE = os.environ.get("AI_STUDIO_LIVE_FILE") or os.path.expanduser("~/.config/ai-studio/live.json")
+INSTANCES = os.path.join(os.path.dirname(LIVE_FILE), "live")
 VERSION = "1.0.0"
 INSTRUCTIONS = (
     "Tools for the Blender that is open with the AI Studio add-on (Live Connection). Start with "
@@ -27,28 +28,37 @@ INSTRUCTIONS = (
     "CAD jobs (changes Blender asks the CAD side for): blender_jobs list / claim / done – this works "
     "without Blender being open. Always give your chat's name (its title in the Claude app, e.g. 'CAD 5'; "
     "ask the user once if you do not know it): as chat in list, as by in claim. Blender then offers this "
-    "chat for its next jobs. When the user says there is a CAD job (or 'hol den Auftrag'), call list.")
+    "chat for its next jobs. When the user says there is a CAD job (or 'hol den Auftrag'), call list. "
+    "Several Blenders can be open: blender_status lists their files; the tools work in the one the user "
+    "worked in last unless you pass file (its name, e.g. 'VELO_now'). Every answer names the file: if it is "
+    "not the project the user means, stop and ask.")
+
+_FILE = {"type": "string", "description": "Several Blenders open: the file to work in (its name, e.g. "
+          "'VELO_now'); default: the one the user worked in last"}
 
 TOOLS = [
     {"name": "blender_status",
-     "description": "Is Blender open with the Live Connection? Which file and version.",
+     "description": "Is Blender open with the Live Connection? Which file(s) and version (every open Blender).",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "blender_scene",
      "description": "Overview of the open scene: objects, collections, materials, cameras, lights.",
-     "inputSchema": {"type": "object", "properties": {}}},
+     "inputSchema": {"type": "object", "properties": {"file": _FILE}}},
     {"name": "blender_object",
      "description": "Details of one object: transform, dimensions, modifiers, materials.",
-     "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
+     "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "file": _FILE},
+                     "required": ["name"]}},
     {"name": "blender_python",
      "description": "Run Python in the open Blender (one undo step). print() what you need to see.",
      "inputSchema": {"type": "object", "properties": {
          "code": {"type": "string"},
-         "description": {"type": "string", "description": "One short line for the user: what it does"}},
+         "description": {"type": "string", "description": "One short line for the user: what it does"},
+         "file": _FILE},
          "required": ["code"]}},
     {"name": "blender_screenshot",
      "description": "Picture of the 3D viewport as the user sees it.",
      "inputSchema": {"type": "object", "properties": {
-         "max_size": {"type": "integer", "description": "Longest side in pixels (default 1280)"}}}},
+         "max_size": {"type": "integer", "description": "Longest side in pixels (default 1280)"},
+         "file": _FILE}}},
     {"name": "blender_image",
      "description": "An image file on this computer (e.g. a render or CAD check image from api.cad_check_views) "
                     "as a picture, scaled to max_size.",
@@ -79,14 +89,66 @@ OPS = {"blender_status": "ping", "blender_scene": "info", "blender_object": "obj
        "blender_python": "python", "blender_screenshot": "screenshot", "blender_image": "image"}
 
 
-def call_blender(payload, timeout=7200):
-    """One request to the Live Connection. Raises RuntimeError with a sentence for the model."""
+def _alive(pid):
     try:
-        with open(LIVE_FILE, encoding="utf-8") as f:
-            info = json.load(f)
-    except (OSError, ValueError):
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def instances():
+    """[info] of the open Blenders, the one worked in last first (live.json alone: older add-ons)."""
+    found = []
+    try:
+        names = sorted(os.listdir(INSTANCES))
+    except OSError:
+        names = []
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(INSTANCES, name), encoding="utf-8") as f:
+                info = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if _alive(info.get("pid")):
+            found.append(info)
+    if not found:
+        try:
+            with open(LIVE_FILE, encoding="utf-8") as f:
+                found = [json.load(f)]
+        except (OSError, ValueError):
+            pass
+    return sorted(found, key=lambda i: -float(i.get("active") or 0))
+
+
+def file_name(info):
+    return os.path.basename(info.get("file") or "") or "an unsaved file"
+
+
+def pick(file=None):
+    """The Blender to talk to: the one with `file` (name or part of it), else the one worked in last."""
+    found = instances()
+    if not found:
         raise RuntimeError("Blender is not open with AI Studio (no ~/.config/ai-studio/live.json). "
                            "Ask the user to open Blender; the Live Connection is on by default.")
+    if not file:
+        return found[0], len(found)
+    wanted = os.path.splitext(os.path.basename(str(file)))[0].lower()
+    for info in found:
+        stem = os.path.splitext(file_name(info))[0].lower()
+        if stem == wanted:
+            return info, len(found)
+    for info in found:
+        if wanted and wanted in file_name(info).lower():
+            return info, len(found)
+    raise RuntimeError("No open Blender has %s. Open: %s" % (file, ", ".join(file_name(i) for i in found)))
+
+
+def call_blender(payload, timeout=7200, file=None):
+    """One request to the Live Connection. Raises RuntimeError with a sentence for the model."""
+    info, _count = pick(file)
     request = urllib.request.Request(
         "http://127.0.0.1:%d/live" % int(info["port"]), data=json.dumps(payload).encode("utf-8"),
         headers={"Authorization": "Bearer " + info["token"], "Content-Type": "application/json"})
@@ -137,17 +199,24 @@ def run_tool(name, arguments):
     if name not in OPS:
         return {"content": [{"type": "text", "text": "Unknown tool " + name}], "isError": True}
     payload = dict(arguments or {}, op=OPS[name])
+    file = payload.pop("file", None)
     try:
-        answer = call_blender(payload, timeout=10 if name == "blender_status" else 7200)
+        info, count = pick(file)
+        answer = call_blender(payload, timeout=10 if name == "blender_status" else 7200, file=file)
     except RuntimeError as exc:
         return {"content": [{"type": "text", "text": str(exc)}], "isError": True}
+    where = "[Blender: %s]" % file_name(info)
     if name in ("blender_screenshot", "blender_image") and answer.get("png"):
-        return {"content": [{"type": "image", "data": answer["png"], "mimeType": "image/png"}]}
+        content = [{"type": "image", "data": answer["png"], "mimeType": "image/png"}]
+        return {"content": content + ([{"type": "text", "text": where}] if count > 1 else [])}
     text = answer.get("text") or answer.get("output") or answer.get("error") or ""
     if name == "blender_status" and answer.get("ok"):
+        others = [file_name(i) for i in instances() if i.get("pid") != info.get("pid")]
         text = "Blender %s is open with %s" % (answer.get("version", "?"), answer.get("file") or "an unsaved file")
-    if answer.get("file") and name == "blender_python":
-        text = (text or "(no output)") + "\n[file: %s]" % answer["file"]
+        if others:
+            text += " (worked in last). Also open: %s – pass file to work there." % ", ".join(others)
+    elif count > 1 or name == "blender_python":
+        text = (text or "(no output)") + "\n" + where
     return {"content": [{"type": "text", "text": text or "(no output)"}], "isError": not answer.get("ok", False)}
 
 

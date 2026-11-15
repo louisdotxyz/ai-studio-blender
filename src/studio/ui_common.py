@@ -120,8 +120,27 @@ STUDIO_TABS = (
 )
 
 
+# Still or Film (scene.studio.mode, the switch on top): which tabs are there
+MODE_TABS = {'STILL': ('RENDER', 'LIGHT', 'MATERIAL', 'QUEUE', 'FINISH'),
+             'ANIM': ('RENDER', 'LIGHT', 'MATERIAL', 'ANIM', 'QUEUE')}
+
+
+def is_film(scene):
+    rq = getattr(scene, "studio", None) if scene is not None else None
+    return rq is not None and rq.mode == 'ANIM'
+
+
+def visible_tabs(scene):
+    return MODE_TABS['ANIM' if is_film(scene) else 'STILL']
+
+
 def studio_tab(context):
-    return getattr(context.window_manager, "studio_tab", 'RENDER')
+    """The open tab; one that the switch hides shows its neighbour (Animation → Render's place … )."""
+    tab = getattr(context.window_manager, "studio_tab", 'RENDER')
+    shown = visible_tabs(context.scene)
+    if tab in shown:
+        return tab
+    return 'QUEUE' if tab in {'ANIM', 'FINISH'} else 'RENDER'
 
 
 class _SidebarPanel:

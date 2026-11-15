@@ -2204,6 +2204,26 @@ def release_1_0():
           (result.stdout[-500:], result.stderr[-500:]))
     prefs.live_connection = on
 
+    # two Blenders: the bridge works in the one worked in last, or the one asked for by file
+    import importlib.util
+    os.environ["AI_STUDIO_LIVE_FILE"] = live.LIVE_FILE
+    spec = importlib.util.spec_from_file_location("live_mcp_test", os.path.join(
+        os.path.dirname(live.__file__), "live_mcp.py"))
+    bridge = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bridge)
+    del os.environ["AI_STUDIO_LIVE_FILE"]
+    folder = bridge.INSTANCES
+    os.makedirs(folder, exist_ok=True)
+    for pid, name, active in ((os.getpid(), "/x/VELO_now.blend", 2.0), (os.getppid(), "/x/Lampe.blend", 1.0)):
+        with open(os.path.join(folder, "%d.json" % pid), "w") as f:
+            json.dump({"pid": pid, "port": 1, "token": "t", "file": name, "active": active}, f)
+    last, count = bridge.pick()
+    asked, _n = bridge.pick("lampe")
+    check("two Blenders: the last one worked in, or the one named", count == 2 and last["file"].endswith("VELO_now.blend")
+          and asked["file"].endswith("Lampe.blend"), (last, asked))
+    for name in os.listdir(folder):
+        os.remove(os.path.join(folder, name))
+
 
 
 @section
@@ -2500,6 +2520,21 @@ def motion_sections():
             bpy.data.objects.remove(obj)
             if pivot is not None:
                 bpy.data.objects.remove(pivot)
+
+
+@section
+def still_film_switch():
+    """Still shows Refine, Film the Animation tab; a hidden tab shows its neighbour."""
+    ui = mod("studio.ui_common")
+    scene, wm = bpy.context.scene, bpy.context.window_manager
+    keep = (scene.studio.mode, wm.studio_tab)
+    scene.studio.mode, wm.studio_tab = 'STILL', 'ANIM'
+    still = ui.studio_tab(bpy.context)
+    scene.studio.mode = 'ANIM'
+    film = ui.studio_tab(bpy.context)
+    check("switch: Still hides Animation, Film shows it", still == 'QUEUE' and film == 'ANIM'
+          and 'FINISH' not in ui.visible_tabs(scene), (still, film))
+    scene.studio.mode, wm.studio_tab = keep
 
 
 @section

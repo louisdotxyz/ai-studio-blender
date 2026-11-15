@@ -191,9 +191,13 @@ wm.studio_mat_kind = "Metal"
 run(bpy.types.STUDIO_PT_material, ctx)
 wm.studio_mat_kind = ""
 run(bpy.types.STUDIO_MT_material_kind_filter, ctx)
+bpy.context.scene.studio.mode = 'ANIM'      # Film: the Animation tab and the films in the Render tab
 wm.studio_tab = 'ANIM'
 run(bpy.types.STUDIO_PT_anim, ctx)
 wm.studio_tab = 'QUEUE'
+run(bpy.types.STUDIO_PT_render_queue, ctx)
+run(bpy.types.STUDIO_PT_tabs, ctx)
+bpy.context.scene.studio.mode = 'STILL'
 run(bpy.types.STUDIO_PT_render_queue, ctx)
 wm.studio_tab = 'FINISH'
 run(bpy.types.STUDIO_PT_finish, ctx)
