@@ -8,6 +8,8 @@
 //   await OS.addFeatures([f1, f2, …])      several features in a row, stops at the first ERROR
 //   await OS.updateFeatures([f, …])        change several features in one regeneration
 //   await OS.setVariables(eid, [{name, type, expression}])   Variable Studio, all in one call
+//   await OS.exportSTEP(eid, part => !/Gitter/.test(part.name))   {blob, parts}  (e.g. FEA input)
+//   await OS.saveFile({port, token, folder: '/Users/<me>/…'}, 'Box.step', blob)   any CAD file to disk
 //   await OS.exportPackage({port, token, name, version, folder, floor, chat: {name, url}})
 //        GLB (glTF) + <name>.cad.json (ids, materials, boxes, mounts) straight into Blender's folder.
 //        chat: where this export comes from, so Blender can send CAD jobs back (blender_jobs):
@@ -25,10 +27,15 @@
   };
   const SIGN_IN = "Not signed in to Onshape: sign in to Onshape in the browser pane of the Claude app " +
                   "(cad.onshape.com), then run this again.";
-  const token = () => {
-    const c = document.cookie.split(";").map(s => s.trim()).find(s => s.startsWith("XSRF-TOKEN="));
+  // XSRF: cad.onshape.com sets "XSRF-TOKEN" and expects header "X-XSRF-TOKEN"; Enterprise domains
+  // (e.g. zhdk.onshape.com) set "XSRF-TOKEN-<companyId>" and expect "X-XSRF-TOKEN-<companyId>".
+  // Wrong header name = 401 on every POST (GETs still work). Value raw, not decoded (decoded gives 401).
+  const xsrfCookie = () => document.cookie.split(";").map(s => s.trim()).find(s => /^XSRF-TOKEN(-[^=]+)?=/.test(s));
+  const xsrf = () => {
+    const c = xsrfCookie();
     if (!c) throw new Error(SIGN_IN);
-    return c.slice(11);   // raw, not decoded (decoded gives 401)
+    const k = c.indexOf("=");
+    return {["X-" + c.slice(0, k)]: c.slice(k + 1)};
   };
   const OS = window.OS = {};
   // Signed in? Checked before anything else (info, export …): a clear sentence instead of a 401.
@@ -36,10 +43,9 @@
     if (!/(^|\.)onshape\.com$/.test(location.hostname)) {
       return {ok: false, message: "This tab is not Onshape: open cad.onshape.com in the browser pane first."};
     }
-    const c = document.cookie.split(";").map(s => s.trim()).find(s => s.startsWith("XSRF-TOKEN="));
-    if (!c) return {ok: false, message: SIGN_IN};
+    if (!xsrfCookie()) return {ok: false, message: SIGN_IN};
     const r = await fetch("/api/users/sessioninfo", {credentials: "include",
-      headers: {Accept: "application/json;charset=UTF-8; qs=0.09", "X-XSRF-TOKEN": c.slice(11)}});
+      headers: {Accept: "application/json;charset=UTF-8; qs=0.09", ...xsrf()}});
     if (r.status === 401 || r.status === 403) return {ok: false, message: SIGN_IN};
     if (!r.ok) return {ok: false, message: "Onshape answered " + r.status + ": try again in a moment."};
     const j = await r.json();
@@ -57,7 +63,7 @@
     const r = await fetch("/api" + path, {
       method, credentials: "include", body: body === undefined ? undefined : JSON.stringify(body),
       headers: {"Content-Type": "application/json", Accept: "application/json;charset=UTF-8; qs=0.09",
-                "X-XSRF-TOKEN": token()}});
+                ...xsrf()}});
     const text = await r.text();
     let j; try { j = JSON.parse(text); } catch (e) { j = text; }
     if (r.status === 401) { signedIn = false; throw new Error(SIGN_IN); }
@@ -162,7 +168,7 @@
       const s = await OS.api("GET", "/v6/translations/" + t.id);
       if (s.requestState === "DONE") {
         const r = await fetch(`/api/v6/documents/d/${i.d}/externaldata/${s.resultExternalDataIds[0]}`,
-                              {credentials: "include", headers: {"X-XSRF-TOKEN": token()}});
+                              {credentials: "include", headers: xsrf()});
         if (!r.ok) throw new Error("download " + r.status);
         return await r.blob();
       }
@@ -194,6 +200,29 @@
     if (!j.ok) throw new Error("Blender: " + j.error);
     return j.path;
   };
+  // STEP of a Part Studio (all parts, or those passing filter(part)), e.g. as FEA input.
+  OS.exportSTEP = async (e, filter) => {
+    const i = ids();
+    const parts = await OS.api("GET", `/parts/d/${i.d}/w/${i.w}/e/${e || i.e}`);
+    const sel = parts.filter(filter || (() => true));
+    const t = await OS.api("POST", OS.ps(e).replace("/v6", "") + "/translations",
+      {formatName: "STEP", storeInDocument: false, stepUnit: "MILLIMETER", partIds: sel.map(p => p.partId).join(",")});
+    for (let n = 0; n < 150; n++) {
+      await new Promise(r => setTimeout(r, 1000));
+      const s = await OS.api("GET", "/v6/translations/" + t.id);
+      if (s.requestState === "DONE") {
+        const r = await fetch(`/api/v6/documents/d/${i.d}/externaldata/${s.resultExternalDataIds[0]}`,
+                              {credentials: "include", headers: xsrf()});
+        if (!r.ok) throw new Error("download " + r.status);
+        return {blob: await r.blob(), parts: sel.map(p => p.name)};
+      }
+      if (s.requestState === "FAILED") throw new Error("translation failed: " + s.failureReason);
+    }
+    throw new Error("translation did not finish in 2.5 minutes");
+  };
+  // Any CAD file (.step/.stl/.glb/.json …) through Blender's /cad endpoint onto the disk.
+  // folder must be an ABSOLUTE path inside the user's home ("~" or relative names are refused).
+  OS.saveFile = async (target, name, blob) => OS.send(target, name, blob);
   // One call: GLB + sidecar into Blender's folder. Blender side: api.cad_import(<glb path>).
   OS.exportPackage = async ({port, token: blenderToken, name, version, folder, floor, e, parameters, variants, chat}) => {
     await ensureSession();

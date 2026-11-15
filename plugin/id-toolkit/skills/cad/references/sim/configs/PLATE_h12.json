@@ -1,0 +1,16 @@
+{
+ "name": "PLATE_h12",
+ "box": [
+  500,
+  500,
+  15
+ ],
+ "material": {
+  "E": 8000.0,
+  "nu": 0.3,
+  "rho": 5.8e-10
+ },
+ "mesh_mm": 12,
+ "modes": 6,
+ "threads": 8
+}

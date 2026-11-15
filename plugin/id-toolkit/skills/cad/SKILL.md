@@ -1,6 +1,6 @@
 ---
 name: cad
-description: Designs or changes parts and products in CAD - Onshape (in the Claude app's browser), Rhino or Fusion if connected, otherwise code CAD - parametric, checked and exported. Use for "konstruieren", "modellieren", "CAD", "Bauteil", "Gehäuse", "nachbauen", "Part Studio", "FeatureScript", "Onshape", "Rhino", "Fusion", "STEP", or a technical drawing to model.
+description: Designs or changes parts and products in CAD - Onshape (in the Claude app's browser), Rhino or Fusion if connected, otherwise code CAD - parametric, checked and exported; also FEA modal analysis (natural frequencies, mode shapes) rendered as animations. Use for "konstruieren", "modellieren", "CAD", "Bauteil", "Gehäuse", "nachbauen", "Part Studio", "FeatureScript", "Onshape", "Rhino", "Fusion", "STEP", "Simulation", "FEA", "Modalanalyse", "Eigenfrequenz", "Resonanz", or a technical drawing to model.
 ---
 
 # CAD
@@ -24,8 +24,11 @@ The user can override any time. Check which programs are reachable silently (too
   browser's JavaScript tool: `window.OS` gives `OS.session()`, `OS.info()`, `OS.parts()`, `OS.addFeatures()`,
   `OS.updateFeatures()`, `OS.setVariables()`, `OS.eval()`, `OS.exportPackage()`. Run it again after each navigation.
   API details and pitfalls: `references/onshape.md`.
+- **Onshape Enterprise** (e.g. `<company>.onshape.com`): open that domain instead; the helpers handle its
+  `XSRF-TOKEN-<id>` cookie (header `X-XSRF-TOKEN-<id>`, otherwise every POST gives 401).
 - **Rhino / Fusion:** only through an MCP that is already connected (`get_device_info`/tool list). Not connected →
   say in one line what the user would need (the program's MCP), and offer Onshape or build123d instead.
+  Fusion's API (and its MCP) cannot set up or read simulation studies: for FEA use section 6b, not Fusion.
 - A step fails twice → say in one sentence what is missing and continue with the next best option.
 
 ## 3 · Input → short brief
@@ -61,6 +64,14 @@ The user can override any time. Check which programs are reachable silently (too
 - **STEP** as master for manufacturing, **STL/3MF** for printing, **DXF** for laser cutting.
 - **To Blender** (render, check in context): **cad-to-blender** skill.
 - Clean the view: hide origin, planes, sketches and helpers.
+
+## 6b · Simulate (FEA)
+Modal analysis (natural frequencies, mode shapes; e.g. panel resonances of an enclosure) runs locally with
+gmsh + CalculiX, launched from the chat through headless Blender, and renders as 9:16 animations in a thermal
+look. Read `references/simulation.md` first (setup, config, validation, pitfalls); scripts in `references/sim/`.
+Get STEP with `OS.exportSTEP` + `OS.saveFile`. Check every driver/mass position against the real build, run the
+plate validation after pipeline changes, and report frequencies against the passband or load case, with the
+model's limits (free support, isotropic or orthotropic wood, parts left out).
 
 ## 7 · Report
 Short: an image (iso + the main view), program and file, the parameters the user can change, open assumptions,

@@ -1,0 +1,39 @@
+{
+ "npz": "<sim>/runs/EXAMPLE_BOX/EXAMPLE_BOX_modes.npz",
+ "out": "<sim>/render/EXAMPLE_BOX/frames",
+ "modes": [
+  0,
+  1,
+  2
+ ],
+ "sec_per_mode": 3.2,
+ "fps": 30,
+ "res": [
+  1080,
+  1920
+ ],
+ "amp": 0.03,
+ "samples": 16,
+ "view": {
+  "azim": 32,
+  "elev": 20,
+  "orbit_deg": 28,
+  "dist": 3.0,
+  "shift_y": -0.03
+ },
+ "views": {
+  "2": {
+   "azim": 212
+  }
+ },
+ "cutaway": {},
+ "brand": "",
+ "title": "BOX",
+ "subtitle": "MODALANALYSE",
+ "mode_labels": {
+  "0": "Seitenw\u00e4nde"
+ },
+ "tech": "FEA CalculiX \u00b7 C3D10 \u00b7 frei gelagert",
+ "video": "<sim>/render/EXAMPLE_BOX.mp4",
+ "tone": true
+}
