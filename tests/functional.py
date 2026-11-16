@@ -2840,6 +2840,14 @@ def render_farm_folder():
     check("a frame not rendered yet shows an empty frame of the strip's size",
           blank and cut.png_size(os.path.join(root, blank)) == (64, 36), blank)
     now = time.time()
+    keep_stamps = dict(farm._stamps)
+    farm._stamps.clear()
+    view = {"worker_rows": [("MD-1", "wartet", "", True, 10.0), ("MD-2", "rendert x", "", True, 4000.0),
+                            ("MD-3", "rendert x", "", True, 60.0)]}
+    states = {n: st for n, st, _j, _s in farm.worker_states(view)}
+    farm._stamps.update(keep_stamps)
+    check("workers: waiting, offline (rendert, but no line and no frame for an hour), loading",
+          states == {"MD-1": 'waiting', "MD-2": 'offline', "MD-3": 'loading'}, states)
     keep_events, keep_stamps = list(farm._events), dict(farm._stamps)
     farm._events[:] = [(now - 30 * i, "md-1", 60.0) for i in range(20)]    # one frame every 30 s
     farm._stamps.clear()

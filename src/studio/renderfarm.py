@@ -223,7 +223,7 @@ def scan(root):
             when = parts[2] if len(parts) > 2 else ""
             workers.append((parts[0], what, when))
             there = fresh or (what.startswith("rendert") and age < 12 * 3600)   # no new line while it renders
-            rows.append((parts[0], what, when, there))
+            rows.append((parts[0], what, when, there, age))
             online += there
     out["workers"] = workers
     out["worker_rows"] = rows
@@ -462,6 +462,7 @@ def _pump():
             if nxt is not None:
                 _pack(nxt)
         _collect_all()
+        _watch_workers()
         runner.tag_redraw()
     except Exception as ex:                      # never stop the timer
         print("AI Studio farm:", ex)
@@ -515,6 +516,28 @@ def _packed(job):
             os.remove(job["raw"])
         except OSError:
             pass
+
+
+_alarm = {"offline": set(), "looked": 0.0}
+
+
+def _watch_workers():
+    """While jobs of ours are on the farm: the share's worker lines are read every minute (also with the
+    panel closed) and a Mac going offline is reported once."""
+    from . import runner
+    if not any(j["phase"] == "sent" for j in _jobs):
+        return
+    if time.time() - _alarm["looked"] > 60:
+        _alarm["looked"] = time.time()
+        _refresh(force=True)
+    states = worker_states()
+    gone = {n for n, st, _j, _s in states if st == 'offline'}
+    new = gone - _alarm["offline"]
+    _alarm["offline"] = gone
+    if new and _view["scan"] is not None:
+        alive = sum(1 for _n, st, _j, _s in states if st != 'offline')
+        runner.notify("Render farm: %s offline%s" % (", ".join(sorted(new)),
+                                                    " · no Mac renders now!" if not alive else ""))
 
 
 def _start_copy(job):
@@ -1067,6 +1090,47 @@ def draw_switch(row, context):
     row.prop_enum(rq, "farm_mode", 'ON')
 
 
+LOADING = 900.0           # a worker that started a job may take this long for its first frame (loading)
+
+
+def worker_states(view=None):
+    """[(name, state, what, since)] of the workers seen in the last 12 h: state 'rendering' (frames come),
+    'loading' (started a job, no frame yet), 'waiting' (writes its line every 20 s) or 'offline' (no line and
+    no frame for too long: the Mac sleeps, its Terminal was closed or it lost the share). since: the time of
+    its last sign of life."""
+    view = view or _view["scan"] or {}
+    out = []
+    now = time.time()
+    for row in view.get("worker_rows", []):
+        name, what, _when, _there = row[:4]
+        age = row[4] if len(row) > 4 else 0.0
+        key = name.lower()
+        status_time = now - age
+        frames = [t + _clock_offset(key) for t, _s in _stamps.get(key, ())]
+        last_frame = max(frames) if frames else 0.0
+        per = seconds_per_frame(key) or 0.0
+        since = max(status_time, last_frame)
+        if what.startswith("rendert "):
+            if last_frame and now - last_frame < max(600.0, 4 * per) and last_frame >= status_time - 60:
+                state = 'rendering'
+            elif age < LOADING:
+                state = 'loading'
+            else:
+                state = 'offline'
+        elif age < ONLINE:
+            state = 'waiting'
+        else:
+            state = 'offline'
+        if state == 'offline' and now - since > 12 * 3600:
+            continue                                  # not used for a long time: not listed
+        out.append((name, state, what.split(" ", 1)[1].strip() if what.startswith("rendert ") else "", since))
+    return out
+
+
+def online_count(view=None):
+    return sum(1 for _n, state, _w, _s in worker_states(view) if state != 'offline')
+
+
 def _job_note(name):
     job = next((j for j in _jobs if j["job"] == name), None)
     return (job["note"] or name) if job else name
@@ -1089,28 +1153,33 @@ def draw_state(layout, context):
     if view is None:
         return
     from .runner import format_time
-    workers = view.get("online", 0)
+    states = worker_states(view)
+    workers = sum(1 for _n, st, _w, _s in states if st != 'offline')
+    gone = len(states) - workers
     have, total, secs, _sending = summary()
     rate = farm_rate()
     box = layout.box()
     col = box.column(align=True)
     head = col.row()
-    head.label(text="%d Mac%s online" % (workers, "" if workers == 1 else "s"),
+    if not workers and (total > have or _sending):
+        head.alert = True                             # jobs wait but nobody renders: say it loud
+    head.label(text="%d of %d Macs online%s" % (workers, len(states), "" if workers else
+                                                " · nothing renders!" if total > have else ""),
                icon='DESKTOP' if workers else 'ERROR', translate=False)
     if total:
         right = head.row()
         right.alignment = 'RIGHT'
-        right.label(text="%d/%d frames%s" % (have, total, " · ~%s left" % format_time(secs) if secs else ""),
-                    translate=False)
+        right.label(text="%d/%d frames%s" % (have, total, " · ~%s left" % format_time(secs)
+                                             if secs and workers else ""), translate=False)
     row = col.row()                                  # the farm's speed in plain words
     row.label(text="Speed", icon='SORTTIME')
     right = row.row()
     right.alignment = 'RIGHT'
-    if rate:
+    if rate and workers:
         right.label(text="%.1f frames/min · one every %.0f s" % (rate, 60.0 / rate), translate=False)
     else:
         right.active = False
-        right.label(text="no frames yet", translate=False)
+        right.label(text="no frames yet" if workers else "stopped", translate=False)
     every = frames_per_bucket()
     if any(every):
         row = col.row()
@@ -1119,26 +1188,28 @@ def draw_state(layout, context):
         right.alignment = 'RIGHT'
         right.label(text="%s  frames per 5 min" % sparkline(every), translate=False)
     col.separator(factor=0.5)
-    for name, what, _when, fresh in view.get("worker_rows", []):
-        if not fresh:
-            continue
+    icons = {'rendering': 'RENDER_ANIMATION', 'loading': 'FILE_REFRESH', 'waiting': 'TIME', 'offline': 'CANCEL'}
+    for name, state, job, since in states:
         key = name.lower()
-        busy = what.startswith("rendert ")
-        job = what.split(" ", 1)[1].strip() if busy else ""
-        mine = [t for t, _s in _stamps.get(key, ())]
-        working = busy and mine and time.time() - (max(mine) + _clock_offset(key)) < 600
         row = col.row()
-        row.label(text=name, icon='RENDER_ANIMATION' if working else 'TIME' if not busy else 'FILE_REFRESH',
-                  translate=False)
+        if state == 'offline':
+            row.alert = True
+        row.label(text=name, icon=icons[state], translate=False)
         doing = row.row()
-        doing.active = bool(working)
-        doing.label(text=("renders " if working else "loads ") + _job_note(job) if busy else "waits for a job",
+        doing.active = state == 'rendering'
+        doing.label(text={"rendering": "renders " + _job_note(job), "loading": "loads " + _job_note(job),
+                          "waiting": "waits for a job",
+                          "offline": "OFFLINE since %s" % time.strftime("%H:%M", time.localtime(since))}[state],
                     translate=False)
         right = row.row()
         right.alignment = 'RIGHT'
         per = seconds_per_frame(key)
         stats = _hosts.get(key)
         right.label(text="%.0f s/frame · %d" % (per, stats[0]) if per and stats else "—", translate=False)
+    if gone:
+        hint = col.row()
+        hint.active = False
+        hint.label(text="Offline: wake the Mac, start the worker again (Terminal command)", translate=False)
 
 
 # ------------------------------------------------------------------ operators

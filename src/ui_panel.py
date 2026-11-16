@@ -145,6 +145,7 @@ def _draw_render_total(layout):
     from .studio import film, renderfarm
     from .studio.runner import format_time
     have, total, secs, sending = renderfarm.summary()
+    farm_stopped = total > have and renderfarm._view["scan"] is not None and not renderfarm.online_count()
     films = 0
     for entry, st, kind in film.films_here():
         if kind in {'RENDERING', 'ENCODING', 'PAUSED'}:
@@ -160,7 +161,11 @@ def _draw_render_total(layout):
         bits.append("~%s left" % format_time(secs))
     if sending:
         bits.append("%d being sent" % sending)
-    layout.progress(factor=min(1.0, have / total), type='BAR', text=" · ".join(bits))
+    row = layout.row()
+    if farm_stopped:                  # jobs wait on the farm, but no Mac is online
+        row.alert = True
+        bits.append("farm offline!")
+    row.progress(factor=min(1.0, have / total), type='BAR', text=" · ".join(bits))
     return True
 
 
