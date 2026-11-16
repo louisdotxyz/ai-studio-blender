@@ -2702,6 +2702,33 @@ def unfinished_frames_and_folders():
 
 
 @section
+def render_farm_folder():
+    """The render farm's folder protocol: jobs, frames (> 0 bytes), states, workers; .part is never a job."""
+    farm = mod("studio.renderfarm")
+    root = tempfile.mkdtemp(prefix="farm_")
+    for sub in ("queue", "renders/a_job", "_worker/status"):
+        os.makedirs(os.path.join(root, sub))
+    with open(os.path.join(root, "queue", "a_job.json"), "w") as f:
+        json.dump({"scene": "Scene", "start": 1, "end": 3, "format": "PNG", "sent_by": "t", "note": "n"}, f)
+    open(os.path.join(root, "queue", "a_job.blend"), "wb").close()
+    open(os.path.join(root, "queue", "b_job.blend.part"), "wb").close()
+    with open(os.path.join(root, "renders", "a_job", "a_job_0001.png"), "wb") as f:
+        f.write(b"x" * 10)
+    open(os.path.join(root, "renders", "a_job", "a_job_0002.png"), "wb").close()      # being rendered
+    with open(os.path.join(root, "_worker", "status", "MD-1-render.txt"), "w") as f:
+        f.write("MD-1 | rendert a_job | 2026-11-16 18:00\n")
+    view = farm.scan(root)
+    job = view["jobs"][0] if view["jobs"] else {}
+    check("farm: one job, 1 of 3 frames, rendering; the .part is no job; the worker is read",
+          len(view["jobs"]) == 1 and job.get("done") == 1 and job.get("total") == 3
+          and job.get("state") == 'rendering' and view["halves"] == ["b_job.blend.part"]
+          and view["workers"] == [("MD-1", "rendert a_job", "2026-11-16 18:00")], view)
+    open(os.path.join(root, "queue", "a_job.done"), "w").close()
+    check("farm: .done → done; job names are safe", farm.scan(root)["jobs"][0]["state"] == 'done'
+          and farm.job_name("/x/VELO now.blend", "Szene 1", 0).startswith("VELO_now_Szene_1_"))
+
+
+@section
 def tabs_without_switch():
     """Five tabs in the 3D sidebar: Camera, Environment, Material, Animation, Render."""
     ui = mod("studio.ui_common")

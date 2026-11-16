@@ -522,11 +522,6 @@ class STUDIO_Settings(PropertyGroup):
         items=[('ALL', "Whole Film", "All strips"),
                ('PREVIEW', "Preview Range", "Only the timeline's preview range (Ctrl P in the timeline)"),
                ('CLIP', "Active Clip", "Only the clip that is selected")])
-    farm_films: BoolProperty(name="High Quality Films on the Farm", description="A section's High Quality render "
-                             "goes to the Flamenco render farm instead of this Mac (its frames come into the Video "
-                             "Editor as usual)", default=False, options=set())
-    farm_chunk: IntProperty(name="Chunk", description="Frames per task on the farm (more: fewer starts of Blender, "
-                            "less spread over the workers)", default=2, min=1, max=50, options=set())
     cut_export_music: BoolProperty(name="With Music", description="The music strip goes into the video",
                                    default=True, options=set())
     cut_export_name: StringProperty(name="File Name", description="Name of the export (empty: the scene's "
@@ -875,6 +870,11 @@ class STUDIO_Preferences(PropertyGroup):
         description="A .blend file with materials marked as assets: shown as a group in the Material tab's "
                     "library (empty: a 'Base Materials.blend' in one of your asset libraries)",
         subtype='FILE_PATH', default="")
+    farm_share: StringProperty(
+        name="Render Farm Share", subtype='DIR_PATH',
+        description="The render farm's folder on the DDE share (queue/, renders/, _worker/): jobs go there as files, "
+                    "the ZHdK Mac Studios render them",
+        default="/Volumes/DDE/BDE_VID/BA/02_Studierende/Louis Widmer/Flamenco")
     low_resolution: IntProperty(
         name="Low: Resolution",
         description="Share of the scene resolution used for Low Quality",
@@ -923,6 +923,7 @@ class STUDIO_Preferences(PropertyGroup):
         col.prop(self, "output_root")
         col.prop(self, "default_samples")
         col.prop(self, "low_resolution")
+        col.prop(self, "farm_share")
         col.prop(self, "low_samples_percent")
         col.separator()
         col.prop(self, "auto_render")

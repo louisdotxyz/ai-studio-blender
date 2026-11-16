@@ -199,17 +199,6 @@ class STUDIO_OT_add(Operator):
             if quality is None:
                 skipped.append(name)
                 continue
-            if quality == 'HIGH' and not keep and scene.studio.farm_films:   # on the render farm
-                from . import farm
-                try:
-                    farm.start_section(scene, name, a, b, cam)
-                except (ValueError, OSError, RuntimeError) as ex:
-                    self.report({'WARNING'}, "%s not on the farm: %s" % (name, ex))
-                    skipped.append(name)
-                    continue
-                autoquality.record(scene, key)
-                added.append("%s HQ · Farm" % name)
-                continue
             item = self._item(scene, cam, quality, 'ANIM')
             item.section, item.keep_frames = name, keep
             item.percentage = 100       # a film: High Quality at full size (Low: its share of it), whatever
@@ -225,8 +214,6 @@ class STUDIO_OT_add(Operator):
                 missing or ": everything is in High Quality and nothing changed"))
             return {'CANCELLED'}
         self.report({'WARNING'} if no_camera else {'INFO'}, "Rendering %s%s" % (", ".join(added), missing))
-        if not scene.studio.items:
-            return {'FINISHED'}                    # everything went to the farm
         return self._start(context)
 
 
@@ -1088,11 +1075,9 @@ class STUDIO_PT_render_queue(_SidebarPanel, Panel):
 
         _draw_renders(layout, context, review=False)
         draw_quality(layout, context)
-        from . import farm
+        from . import renderfarm
         from .ui_common import section
-        box, head, is_open = section(layout, "render_farm", "Render Farm · Flamenco", 'NETWORK_DRIVE',
-                                     default_open=False)
-        st = farm.status() if is_open else farm._state
-        head.label(text="online" if st["online"] else "", translate=False)
+        box, head, is_open = section(layout, "render_farm", "Render Farm", 'NETWORK_DRIVE', default_open=False)
+        head.label(text="" if renderfarm.connected() else "share offline", translate=False)
         if is_open:
-            farm.draw(box, scene)
+            renderfarm.draw(box, context)

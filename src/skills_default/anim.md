@@ -33,8 +33,8 @@ before the next one. Its camera is marker.camera (own camera P_<name>_01 on a pi
   without one is skipped). quality None = by itself: Low Quality first, High Quality once nothing changed;
   sections already in High Quality with nothing changed are skipped. frames=(a, b) renders only those
   frames again (the others stay). No video per section. High Quality renders at full size.
-  scene.studio.farm_films = True: High Quality sections go to the Flamenco render farm (Render tab · Render
-  Farm); their frames come back into the Video Editor by themselves.
+  Render farm (Render tab · Render Farm): jobs go as files over the DDE share to the ZHdK Mac Studios
+  (renderfarm.py; no network connection to them). Never delete anything in its queue/ without asking.
   api.render_status() says what renders (frame, seconds left); studio_render_queue 'wait' answers only
   when the films are done. Never start own background renders to check a film.
 - The Video Editor of the same scene shows every section as an image strip (they come in and fill in by

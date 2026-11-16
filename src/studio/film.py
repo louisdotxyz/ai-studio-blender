@@ -73,11 +73,8 @@ def read_status(film):
         return {}
 
 
-FARM_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "farm_job.py")
-
-
 def _command(film_dir):
-    script = FARM_SCRIPT if os.path.basename(film_dir.rstrip(os.sep)) == ".farm" else SCRIPT
+    script = SCRIPT
     cmd = [bpy.app.binary_path, "-b", os.path.join(film_dir, "scene.blend"), "--factory-startup", "-noaudio"]
     try:
         if bpy.context.preferences.filepaths.use_scripts_auto_execute:

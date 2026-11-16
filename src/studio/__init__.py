@@ -125,9 +125,9 @@ class STUDIO_PT_tabs(Panel):
 
 # ------------------------------------------------------------------ Register
 
-from . import farm, tab_anim
+from . import renderfarm, tab_anim
 
-classes = render_setup.classes + tab_anim.classes + farm.classes + (
+classes = render_setup.classes + tab_anim.classes + (
     STUDIO_LightSettings,
     STUDIO_OT_section_toggle,
     STUDIO_OT_tab,
@@ -322,6 +322,7 @@ def register():
     tab_finish.register()
     variants_ab.register()
     film.register()
+    renderfarm.register()
     keys.register()
     motion.register()
     cut.register()
@@ -351,6 +352,7 @@ def unregister():
         runner.on_live_image.remove(tab_queue.on_live_image)
 
     render_review.unregister()
+    renderfarm.unregister()
     film.unregister()
     keys.unregister()
     explode.unregister()
