@@ -320,11 +320,11 @@ def takes(scene, item):
 
 
 def active():
-    return [j for j in _jobs if j["phase"] in {"queued", "packing", "copying", "sent"}]
+    return [j for j in _jobs if j["phase"] in {"queued", "packing", "packed", "copying", "sent"}]
 
 
 def sending():
-    return any(j["phase"] in {"queued", "packing", "copying"} for j in _jobs)
+    return any(j["phase"] in {"queued", "packing", "packed", "copying"} for j in _jobs)
 
 
 def renders_section(folder):
@@ -418,8 +418,16 @@ def submit_item(scene, item, job, animation, path, camera, quality):
         stem = cut.frame_stem(section)
         overrides = [o for o in overrides if o[0] != "camera"] + [["camera", {"object": camera.name}]]
         fmt = _format_of(overrides)
-        if not item.keep_frames:                     # a new render: older frames go to archiv first
-            film._clear_old_frames(path, stem, cut.archive_folder())
+        supersede(path)                              # sent again: the older job of this section stops
+        skip = []
+        if not item.keep_frames and not getattr(item, "redo", False):
+            # Frames there in this quality (or better) stay: a longer intro renders only its new frames.
+            st = cut.frame_status(section, a, b, fresh=True)
+            wanted = {'HIGH'} if quality == 'HIGH' else {'HIGH', 'LOW'}
+            skip = [f for f, code in zip(range(a, b + 1), st["codes"]) if code in wanted]
+            if len(skip) == b - a + 1:
+                return None                          # nothing to render
+        # Older frames stay in the Video Editor until each new one comes (then the old one goes to archiv).
         meta = os.path.join(path, film.FILM_DIR)     # what the Video Editor reads: quality and size
         os.makedirs(meta, exist_ok=True)
         keep = [o for o in overrides if o[0] in {"render.resolution_x", "render.resolution_y",
@@ -429,21 +437,27 @@ def submit_item(scene, item, job, animation, path, camera, quality):
                        "overrides": keep, "farm": True, "camera_name": camera.name}, f, indent=1)
         return submit(scene, a, b, fmt, "%s · %s" % (section, "HQ" if quality == 'HIGH' else "LQ"), kind='ANIM',
                       overrides=overrides, folder=path, stem=stem, section=section, quality=quality,
-                      camera_name=camera.name)
+                      camera_name=camera.name, skip=skip,
+                      archive=os.path.join(cut.archive_folder(), "%s %s" % (os.path.basename(path),
+                                                                         time.strftime("%Y-%m-%d %H%M%S"))))
     frame = scene.frame_current
     return submit(scene, frame, frame, None, "%s · %s" % (label, "HQ" if quality == 'HIGH' else "LQ"),
                   kind='STILL', overrides=overrides, camera_spec=job.get("camera"), target=path, quality=quality)
 
 
 def _pump():
-    """One job at a time: pack (own Blender process) → copy (thread) → sent; collects the frames of sent
-    jobs every 10 s."""
+    """Sending, with the next job prepared ahead: while one job uploads, the next one is packed already
+    (own Blender process), so the farm gets it right after; collects the frames of sent jobs every 5 s."""
     from . import runner
     try:
-        busy = next((j for j in _jobs if j["phase"] in {"packing", "copying"}), None)
-        if busy is not None and busy["phase"] == "packing":
-            _packed(busy)
-        elif busy is None:
+        packing = next((j for j in _jobs if j["phase"] == "packing"), None)
+        if packing is not None:
+            _packed(packing)
+        if not any(j["phase"] == "copying" for j in _jobs):
+            ready = next((j for j in _jobs if j["phase"] == "packed"), None)
+            if ready is not None:
+                _start_copy(ready)
+        if not any(j["phase"] in {"packing", "packed"} for j in _jobs):
             nxt = next((j for j in _jobs if j["phase"] == "queued"), None)
             if nxt is not None:
                 _pack(nxt)
@@ -493,13 +507,19 @@ def _packed(job):
             pass
         job.update(phase="error", error="Packing failed: %s" % (tail or "process ended"))
     else:
-        job.update(phase="copying", size=os.path.getsize(packed), progress=0.0)
-        threading.Thread(target=_copy, args=(job, packed), daemon=True).start()
+        job.update(phase="packed", size=os.path.getsize(packed), progress=0.0, packed=packed)
+        if not any(j["phase"] == "copying" for j in _jobs):
+            _start_copy(job)
     if not any(j["raw"] == job["raw"] and j["phase"] in {"queued", "packing"} for j in _jobs):
         try:                                     # our own local copy, no longer needed
             os.remove(job["raw"])
         except OSError:
             pass
+
+
+def _start_copy(job):
+    job.update(phase="copying", progress=0.0)
+    threading.Thread(target=_copy, args=(job, job["packed"]), daemon=True).start()
 
 
 def _copy(job, packed):
@@ -530,6 +550,13 @@ def _copy(job, packed):
         if os.path.getsize(part) != size:
             raise OSError("The copy on the share is incomplete")
         os.replace(part, os.path.join(queue, name + ".blend"))
+        if job.get("skip"):                      # frames that are rendered already: the workers skip them
+            folder = os.path.join(root, "renders", name)
+            os.makedirs(folder, exist_ok=True)
+            for frame in job["skip"]:
+                path = os.path.join(folder, "%s_%04d.%s" % (name, frame, job["ext"]))
+                if not os.path.exists(path):
+                    open(path, "wb").close()
         meta = os.path.join(queue, name + ".json.part")
         with open(meta, "w", encoding="utf-8") as f:
             json.dump({"scene": job["scene"], "start": job["start"], "end": job["end"], "format": job["format"],
@@ -590,19 +617,20 @@ def starts_in(job):
     for other in _jobs:
         if other is job:
             return per * before
-        if other["phase"] in {"sent", "copying", "packing", "queued"} and other["kind"] == 'ANIM':
+        if other["phase"] in {"sent", "copying", "packed", "packing", "queued"} and other["kind"] == 'ANIM':
             before += max(0, total_of(other) - other.get("have", 0))
     return None
 
 
 def summary():
     """All of ours on the farm in one: (frames there, frames in all, seconds left or None, jobs sending)."""
-    jobs = [j for j in _jobs if j["phase"] in {"queued", "packing", "copying", "sent"} and j["kind"] == 'ANIM']
+    jobs = [j for j in _jobs if j["phase"] in {"queued", "packing", "packed", "copying", "sent"}
+            and j["kind"] == 'ANIM']
     have = sum(j.get("have", 0) for j in jobs)
     total = sum(total_of(j) for j in jobs)
     per = _per_frame()
     return have, total, (per * max(0, total - have) if per else None), \
-        sum(1 for j in jobs if j["phase"] in {"queued", "packing", "copying"})
+        sum(1 for j in jobs if j["phase"] in {"queued", "packing", "packed", "copying"})
 
 
 def _note_frame(job, path, live=True):
@@ -712,31 +740,48 @@ def _fetch(job):
                 job["arrived"] = target
             return
         have = new = 0
+        skip = set(job.get("skip") or ())
         for frame in range(job["start"], job["end"] + 1):
-            local = os.path.join(job["folder"], "%s_%04d.%s" % (job["stem"], frame, job["ext"]))
-            if os.path.exists(local) and os.path.getsize(local) > 0:
+            if frame in skip:                         # rendered before: kept, the workers skip it
                 have += 1
-                if not job.get("seeded"):              # after a restart: the graph and speeds again
-                    _note_frame(job, local, live=False)
                 continue
+            local = os.path.join(job["folder"], "%s_%04d.%s" % (job["stem"], frame, job["ext"]))
             source = os.path.join(folder, "%s_%04d.%s" % (job["job"], frame, job["ext"]))
             try:
                 st = os.stat(source)
             except OSError:
                 continue
-            if st.st_size > 0 and now - st.st_mtime > SETTLE:
-                shutil.copyfile(source, local + ".part")
-                os.replace(local + ".part", local)
-                have += 1
-                new += 1
-                _note_frame(job, local)
-                if new % 8 == 0:                  # many at once: show them as they come
-                    job["new"] = job.get("new", 0) + 8
-                    _note_progress(job, have)
+            if st.st_size <= 0 or now - st.st_mtime <= SETTLE:
+                continue                              # not rendered yet, or still being written
+            try:
+                mine = os.stat(local)
+            except OSError:
+                mine = None
+            if mine is not None and mine.st_size > 0 and mine.st_mtime >= st.st_mtime:
+                have += 1                             # fetched already (before a restart too)
+                if not job.get("seeded"):
+                    _note_frame(job, local, live=False)
+                continue
+            if mine is not None and mine.st_size > 0 and job.get("archive"):
+                os.makedirs(job["archive"], exist_ok=True)     # the older version of this frame
+                os.replace(local, os.path.join(job["archive"], os.path.basename(local)))
+            shutil.copyfile(source, local + ".part")
+            os.replace(local + ".part", local)
+            have += 1
+            new += 1
+            _note_frame(job, local)
+            if new % 8 == 0:                          # many at once: show them as they come
+                job["new"] = job.get("new", 0) + 8
+                _note_progress(job, have)
         job["seeded"] = True
         if new:
             job["new"] = job.get("new", 0) + new
         _note_progress(job, have)
+        if have >= total_of(job) and job.get("skip"):
+            done = os.path.join(job["root"], "queue", job["job"] + ".done")
+            if not os.path.exists(done):              # the workers count only their own frames: we say it
+                with open(done, "w", encoding="utf-8") as f:
+                    f.write(time.strftime("%Y-%m-%d %H:%M:%S") + " all frames there\n")
         job["error"] = ""
     except OSError as ex:
         if job["kind"] != 'STILL' or not isinstance(ex, FileNotFoundError):
@@ -798,6 +843,44 @@ def remove_from_share(root, name, start, end, ext):
                 open(path, "wb").close()
 
 
+def supersede(folder):
+    """A section is sent again: its older job is not wanted any more. Not sent yet: it is dropped here. On
+    the farm: every frame not rendered yet gets an empty file (the workers skip it, as their own
+    placeholders) and the job a .done, so no worker starts it again. Nothing is deleted on the share."""
+    folder = os.path.normcase(os.path.abspath(folder))
+    for job in [j for j in _jobs if j.get("kind") == 'ANIM' and j["phase"] != "done"
+                and os.path.normcase(os.path.abspath(j.get("folder", ""))) == folder]:
+        if job["phase"] == "sent":
+            renders = os.path.join(job["root"], "renders", job["job"])
+            try:
+                os.makedirs(renders, exist_ok=True)
+                for frame in range(job["start"], job["end"] + 1):
+                    path = os.path.join(renders, "%s_%04d.%s" % (job["job"], frame, job["ext"]))
+                    if not os.path.exists(path):
+                        open(path, "wb").close()
+                with open(os.path.join(job["root"], "queue", job["job"] + ".done"), "w", encoding="utf-8") as f:
+                    f.write(time.strftime("%Y-%m-%d %H:%M:%S") + " replaced by a newer job\n")
+            except OSError as ex:
+                print("AI Studio farm: older job not stopped:", ex)
+            job["phase"] = "done"
+        else:
+            if job["phase"] == "packing":
+                proc = _procs.pop(job["job"], None)
+                if proc is not None and proc.poll() is None:
+                    proc.terminate()
+            elif job["phase"] == "copying":
+                job["cancel"] = True
+            _jobs.remove(job)
+            shutil.rmtree(os.path.join(LOCAL, job["job"]), ignore_errors=True)
+            if job.get("raw") and not any(j.get("raw") == job["raw"] for j in _jobs):
+                try:
+                    os.remove(job["raw"])
+                except OSError:
+                    pass
+    _reconcile()
+    _save_registry()
+
+
 def remove(name):
     """Take a job out of the queue, wherever it is (waiting here, being sent, on the farm)."""
     job = next((j for j in _jobs if j["job"] == name), None)
@@ -817,6 +900,11 @@ def remove(name):
     elif phase == "sent":
         remove_from_share(job["root"], name, job["start"], job["end"], job["ext"])
     _jobs.remove(job)
+    if job.get("raw") and not any(j.get("raw") == job["raw"] for j in _jobs):
+        try:
+            os.remove(job["raw"])
+        except OSError:
+            pass
     shutil.rmtree(os.path.join(LOCAL, name), ignore_errors=True)
     _reconcile()
     _save_registry()
@@ -834,6 +922,8 @@ def _row_text(job):
         what = "waits to be sent"
     elif phase == "packing":
         what = "packing"
+    elif phase == "packed":
+        what = "packed, uploads next"
     elif phase == "copying":
         what = "upload %.1f/%.1f GB" % (job["progress"] * job["size"] / 1e9, job["size"] / 1e9)
     else:
@@ -871,7 +961,8 @@ def rows():
 def total_left():
     """Seconds until everything of ours on the farm is done, or None."""
     secs, known = 0.0, False
-    for job in [j for j in _jobs if j["phase"] in {"queued", "packing", "copying", "sent"} and j["kind"] == 'ANIM']:
+    for job in [j for j in _jobs if j["phase"] in {"queued", "packing", "packed", "copying", "sent"}
+                and j["kind"] == 'ANIM']:
         one = left(job)
         if one is not None:
             secs += one
@@ -879,7 +970,7 @@ def total_left():
     return secs if known else None
 
 
-SENDING = {"queued", "packing", "copying"}
+SENDING = {"queued", "packing", "packed", "copying"}
 
 
 def _send_text(job):
@@ -887,6 +978,8 @@ def _send_text(job):
         return "%s · waits to be sent" % (job["note"] or job["job"])
     if job["phase"] == "packing":
         return "%s · packing the file" % (job["note"] or job["job"])
+    if job["phase"] == "packed":
+        return "%s · packed, uploads next" % (job["note"] or job["job"])
     return "%s · upload %d %% of %.1f GB" % (job["note"] or job["job"], round(job["progress"] * 100),
                                             job["size"] / 1e9)
 

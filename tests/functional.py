@@ -2823,6 +2823,22 @@ def render_farm_folder():
               and len(os.listdir(os.path.join(root, "renders", "a_2_x"))) == 3)
     finally:
         farm._jobs[:] = keep
+    old = {"job": "old_job", "phase": "sent", "root": root, "kind": 'ANIM', "start": 1, "end": 3, "ext": "png",
+           "folder": os.path.join(root, "Frames", "S1"), "note": "S1"}
+    open(os.path.join(root, "queue", "old_job.json"), "w").close()
+    keep, farm._jobs[:] = list(farm._jobs), [old]
+    try:
+        farm.supersede(old["folder"])
+        frames = sorted(os.listdir(os.path.join(root, "renders", "old_job")))
+        check("sent again: the older job skips its frames left and is done, nothing is deleted on the share",
+              old["phase"] == "done" and len(frames) == 3 and os.path.exists(os.path.join(root, "queue", "old_job.done"))
+              and os.path.exists(os.path.join(root, "queue", "old_job.json")), frames)
+    finally:
+        farm._jobs[:] = keep
+    cut = mod("studio.cut")
+    blank = cut.blank_frame(root, "S1", 64, 36)
+    check("a frame not rendered yet shows an empty frame of the strip's size",
+          blank and cut.png_size(os.path.join(root, blank)) == (64, 36), blank)
     now = time.time()
     keep_events, keep_stamps = list(farm._events), dict(farm._stamps)
     farm._events[:] = [(now - 30 * i, "md-1", 60.0) for i in range(20)]    # one frame every 30 s

@@ -970,8 +970,10 @@ def key_pose(from_view=True):
 def section_render(section=None, quality=None, frames=None, force=False):
     """Render a section's frames (None: every section that needs it) into animation/Frames/<section>/;
     they come into the Video Editor by themselves. quality None = by itself (Low first, High once nothing
-    changed), else 'LOW' / 'HIGH'. frames=(a, b): only those frames again. force=True: render again though
-    nothing changed (e.g. after frames from a wrong camera): the frames there go to animation/archiv first.
+    changed), else 'LOW' / 'HIGH'. frames=(a, b): only those frames again; else frames there in that quality
+    stay (a longer section renders only its new frames). force=True: every frame again though nothing changed
+    (e.g. after frames from a wrong camera): each older frame stays until its new one comes. Sending a section
+    again stops its older render.
     With the render farm on (scene.studio.farm_on) the sections render there. Returns what was queued."""
     scene = bpy.context.scene
     result = bpy.ops.studio.add(mode='ANIM', section=section or "", quality=quality or 'DEFAULT',

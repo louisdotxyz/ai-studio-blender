@@ -35,8 +35,11 @@ before the next one. Its camera is marker.camera (own camera P_<name>_01 on a pi
   without one is skipped; the camera is written into every frame and checked: a film from a wrong camera
   stops by itself). quality None = by itself: Low Quality first, High Quality once nothing changed;
   sections already in High Quality with nothing changed are skipped. frames=(a, b) renders only those
-  frames again (the others stay). force=True renders again though nothing changed (the frames there go to
-  animation/archiv). High Quality renders at full size. No video per section.
+  frames again (the others stay); a longer section renders only its new frames (frames there in that
+  quality stay). force=True renders every frame again though nothing changed (each older frame stays in
+  the Video Editor until its new one comes, then goes to animation/archiv). Sending a section again stops
+  its older render (on the farm the frames left are skipped). Frames not rendered yet: the section's
+  preview image until the first frame, then empty. High Quality renders at full size. No video per section.
   api.render_status() says what renders (frame, seconds left); studio_render_queue 'wait' answers only
   when the films are done, 'cancel' also stops the films that run. Never start own background renders to
   check a film, and never patch the add-on's files: say what is wrong instead (an update replaces them).

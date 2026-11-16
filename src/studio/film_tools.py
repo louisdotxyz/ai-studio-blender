@@ -382,6 +382,22 @@ def _draft_running():
     return any(f.get("draft") and k in {'RENDERING', 'ENCODING'} for f, _s, k in film.films(fresh=True))
 
 
+def supersede(scene, name):
+    """The section is rendered again: what still renders or waits of it is not wanted any more. Its items in
+    the queue go, its film on this Mac stops (frames there stay), its job on the render farm skips the frames
+    left (nothing deleted on the share)."""
+    from . import cut, film, renderfarm, runner
+    for item in [i for i in scene.studio.items if i.mode == 'ANIM' and i.section == name]:
+        runner.remove_item(scene, item.uid)
+    folder = os.path.normcase(cut.frames_folder(name))
+    for entry, _st, kind in film.films_here():
+        if os.path.normcase(entry.get("folder", "")) == folder and not entry.get("draft") \
+                and entry.get("quality") != "POSTER" and kind in {'RENDERING', 'PAUSED'}:
+            film.stop(entry["dir"])
+            film.forget(entry["dir"])
+    renderfarm.supersede(cut.frames_folder(name))
+
+
 def queue_drafts(scene, names=None, kind='DRAFT'):
     """Drafts (kind 'DRAFT') or preview images ('POSTER') of the sections (all, or `names`), one after
     another in the background. Returns the sections queued."""

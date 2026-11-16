@@ -134,6 +134,7 @@ def shown_names(names, there):
 
 
 DRAFT = "draft"     # a draft's frames: <section>_draft_0001.png next to the real ones
+BLANK = "blank"     # an empty (transparent) frame of the section's size: <section>_blank_1920x1080.png
 POSTER = "poster"   # one Low Quality image of the section: <section>_poster_0119.png (its middle frame)
 
 
@@ -165,6 +166,45 @@ def png_width(path):
             _widths.clear()
         _widths[key] = width
     return _widths[key]
+
+
+def png_size(path):
+    """(width, height) of a PNG from its header, (0, 0) if it is no PNG."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(24)
+        if head[:8] == b"\x89PNG\r\n\x1a\n" and head[12:16] == b"IHDR":
+            return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+    except OSError:
+        pass
+    return 0, 0
+
+
+def blank_frame(folder, section, width, height):
+    """The name of an empty, transparent frame of this size in the section's folder (made once): a frame
+    not rendered yet shows nothing (the strip never points at a missing file: Blender would crash)."""
+    if not (width and height):
+        return None
+    name = "%s_%s_%dx%d.png" % (frame_stem(section), BLANK, width, height)
+    path = os.path.join(folder, name)
+    if not os.path.exists(path):
+        import struct
+        import zlib
+
+        def chunk(kind, data):
+            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
+        row = b"\0" + b"\0" * (width * 4)
+        body = zlib.compress(row * height, 9)
+        try:
+            with open(path + ".part", "wb") as f:
+                f.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+                        + chunk(b"IDAT", body) + chunk(b"IEND", b""))
+            os.replace(path + ".part", path)
+            old = time.time() - 60
+            os.utime(path, (old, old))             # "done" right away (finished_files waits for new files)
+        except OSError:
+            return None
+    return name
 
 
 _texts = {}
@@ -265,8 +305,11 @@ def frame_status(section, start, end, fresh=False):
     use_drafts = bool(first_draft) and (not done or abs(draft_width - real_width) <= 1)
     poster = max((n for n in there if n.startswith("%s_%s_" % (frame_stem(section), POSTER))), default=None)
     poster_width = png_width(os.path.join(folder, poster)) if poster else 0
-    use_poster = bool(poster) and (not done or abs(poster_width - real_width) <= 1) and \
-        (not use_drafts or abs(poster_width - draft_width) <= 1)
+    use_poster = bool(poster) and not done and (not use_drafts or abs(poster_width - draft_width) <= 1)
+    blank = None
+    if done:                                     # after the first frame: what is not rendered yet stays empty
+        w, h = png_size(os.path.join(folder, first_real)) if ext == ".png" else (0, 0)
+        blank = blank_frame(folder, section, w, h)
     quality = job.get("quality", "") if done else ""
     codes, base = [], []
     for n, d, r in zip(names, drafts, real):
@@ -285,7 +328,7 @@ def frame_status(section, start, end, fresh=False):
             base.append(poster)
         else:
             codes.append('')
-            base.append(None)
+            base.append(blank)
     out = {"folder": folder, "names": names, "done": done, "total": len(names), "ext": ext,
            "quality": quality, "width": real_width if done else (draft_width if use_drafts else
                                                                  poster_width if use_poster else job_width),

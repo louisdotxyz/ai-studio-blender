@@ -77,7 +77,8 @@ class STUDIO_OT_add(Operator):
     def description(cls, context, props):
         from . import autoquality
         if props.mode == 'ANIM' and props.force:
-            return "Render this section again (nothing changed since its render; the frames there go to archiv)"
+            return ("Render every frame of this section again (nothing changed since its render; each older "
+                    "frame stays until its new one comes, then goes to archiv)")
         if props.mode == 'ANIM':
             what = ("Render this section's frames" if props.section else
                     "Render every section that needs it (one after the other; sections in High Quality with "
@@ -186,8 +187,11 @@ class STUDIO_OT_add(Operator):
                 no_camera.append(name)
                 continue
             if name in waiting or cut._rendering(name, fresh=True):
-                skipped.append(name)
-                continue
+                if not self.section:
+                    skipped.append(name)
+                    continue
+                from . import film_tools          # this section sent again: its older render stops
+                film_tools.supersede(scene, name)
             a, b, keep = start, end, False
             if self.frames:
                 try:
@@ -208,7 +212,7 @@ class STUDIO_OT_add(Operator):
                 skipped.append(name)
                 continue
             item = self._item(scene, cam, quality, 'ANIM')
-            item.section, item.keep_frames = name, keep
+            item.section, item.keep_frames, item.redo = name, keep, bool(self.force)
             item.percentage = 100       # a film: High Quality at full size (Low: its share of it), whatever
             #                             size the scene is set to for the viewport
             item.frame_start, item.frame_end = a, b

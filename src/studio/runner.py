@@ -745,8 +745,15 @@ class Runner:
         label = "%s · %s" % (section, "HQ" if self.quality == 'HIGH' else "LQ")
         if item.keep_frames:
             label += " · %d–%d" % frames
+        fresh = not item.keep_frames
+        if fresh and not getattr(item, "redo", False):
+            # every frame there is in this quality (or better): only the missing ones render (a longer intro)
+            st = cut.frame_status(section, frames[0], frames[1], fresh=True)
+            wanted = {'HIGH'} if self.quality == 'HIGH' else {'HIGH', 'LOW'}
+            real = [c for c in st["codes"] if c in {'HIGH', 'LOW'}]
+            fresh = not real or any(c not in wanted for c in real)
         try:
-            film.start(scene, job, folder, stem, frames, 1, None, label, fresh=not item.keep_frames,
+            film.start(scene, job, folder, stem, frames, 1, None, label, fresh=fresh,
                        archive=cut.archive_folder())
         except Exception as ex:
             log("film could not start: %s" % ex)

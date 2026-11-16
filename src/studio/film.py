@@ -241,9 +241,10 @@ _FRAME_EXTS = (".png", ".jpg", ".jpeg", ".exr", ".tif", ".tiff", ".webp")
 def _frames_of(folder, stem):
     """A film's frame files; the drafts next to them (<stem>_draft_0001.png) are not the film's (they stay
     until the real frames are there)."""
-    draft, poster = stem + "_draft_", stem + "_poster_"
+    draft, poster, blank = stem + "_draft_", stem + "_poster_", stem + "_blank_"
     try:
         return [n for n in os.listdir(folder) if n.startswith(stem + "_") and n.lower().endswith(_FRAME_EXTS)
+                and not n.startswith(blank)
                 and (stem.endswith(("_draft", "_poster")) or not n.startswith((draft, poster)))]
     except OSError:
         return []

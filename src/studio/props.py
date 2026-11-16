@@ -250,6 +250,7 @@ class STUDIO_Item(PropertyGroup):
     # frames from frame_start to frame_end render again, the others stay
     section: StringProperty(options={'HIDDEN'})
     keep_frames: BoolProperty(options={'HIDDEN'})
+    redo: BoolProperty(options={'HIDDEN'})          # every frame again (else frames there in its quality stay)
 
 
 def _pin_changed(self, context):
