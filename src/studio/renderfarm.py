@@ -831,11 +831,16 @@ def _fetch(job):
                 if not job.get("seeded"):
                     _note_frame(job, local, live=False)
                 continue
-            if mine is not None and mine.st_size > 0 and job.get("archive"):
-                os.makedirs(job["archive"], exist_ok=True)     # the older version of this frame
-                os.replace(local, os.path.join(job["archive"], os.path.basename(local)))
             shutil.copyfile(source, local + ".part")
-            os.replace(local + ".part", local)
+            if mine is not None and mine.st_size > 0 and job.get("archive"):
+                os.makedirs(job["archive"], exist_ok=True)     # the older version of this frame (a copy:
+                kept = os.path.join(job["archive"], os.path.basename(local))   # the strip shows it until …
+                try:
+                    os.link(local, kept)
+                except OSError:
+                    shutil.copyfile(local, kept)
+            os.replace(local + ".part", local)       # … the new one takes its place in one step (never missing:
+            #                                          Blender's Video Editor crashes on a frame file that is gone)
             have += 1
             new += 1
             _note_frame(job, local)

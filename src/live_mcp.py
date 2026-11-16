@@ -146,6 +146,10 @@ def pick(file=None):
     raise RuntimeError("No open Blender has %s. Open: %s" % (file, ", ".join(file_name(i) for i in found)))
 
 
+_LOCAL = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # Blender on this Mac: never via a proxy
+#                                                                    (a VPN may set one for the whole system)
+
+
 def call_blender(payload, timeout=7200, file=None):
     """One request to the Live Connection. Raises RuntimeError with a sentence for the model."""
     info, _count = pick(file)
@@ -153,7 +157,7 @@ def call_blender(payload, timeout=7200, file=None):
         "http://127.0.0.1:%d/live" % int(info["port"]), data=json.dumps(payload).encode("utf-8"),
         headers={"Authorization": "Bearer " + info["token"], "Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with _LOCAL.open(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
