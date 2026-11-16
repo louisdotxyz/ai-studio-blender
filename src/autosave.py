@@ -422,15 +422,17 @@ def project_folder_target(filepath=None):
 
 
 def is_temp(filepath):
-    """A file in a temporary folder (Blender's own auto save, a recovered file): never a project folder there,
-    macOS empties those folders."""
+    """Blender's own auto save (or quit.blend) in a temporary folder: never a project folder there, macOS
+    empties those folders."""
     import tempfile
     path = os.path.realpath(filepath)
     roots = {os.path.realpath(r) for r in (tempfile.gettempdir(), os.environ.get("TMPDIR", ""), "/tmp",
                                            "/private/var/folders") if r}
     if bpy.app.tempdir:
         roots.add(os.path.realpath(os.path.dirname(bpy.app.tempdir.rstrip("/\\"))))
-    return any(path.startswith(r.rstrip("/") + "/") for r in roots if r and r != "/")
+    if not any(path.startswith(r.rstrip("/") + "/") for r in roots if r and r != "/"):
+        return False
+    return os.path.basename(path) == "quit.blend" or bool(re.search(r"_\d+_autosave", path))
 
 
 def _dismissed_path():
