@@ -121,7 +121,37 @@ def _clear_prompt(wm):
         wm.claude_prompt = ""
     finally:
         _clearing = False
+    save_draft("")
     core.mark_dirty()
+
+
+DRAFT_FILE = "draft.json"
+
+
+def save_draft(text):
+    """The message not sent yet is kept on disk (back after a crash or restart)."""
+    try:
+        core._write_json(DRAFT_FILE, {"text": text or ""})
+    except OSError:
+        pass
+
+
+def restore_draft():
+    """At start: the message box gets the text that was not sent last time (only if it is empty)."""
+    global _clearing
+    try:
+        wm = bpy.context.window_manager
+        text = (core._read_json(DRAFT_FILE, {}) or {}).get("text", "")
+        if wm is not None and text and not wm.claude_prompt:
+            _clearing = True
+            try:
+                wm.claude_prompt = text
+            finally:
+                _clearing = False
+            core.mark_dirty()
+    except Exception:
+        pass
+    return None
 
 
 def _send_prompt(wm):
@@ -131,7 +161,10 @@ def _send_prompt(wm):
 
 
 def _prompt_update(self, context):
-    if _clearing or not self.claude_prompt.strip():
+    if _clearing:
+        return
+    save_draft(self.claude_prompt)
+    if not self.claude_prompt.strip():
         return
     try:
         bpy.ops.claude.prompt_confirmed('INVOKE_DEFAULT')

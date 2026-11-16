@@ -2930,6 +2930,22 @@ def reliability():
     finally:
         core.messages[:], core.session_id = saved
         core._chats = keep
+    menus, wm = mod("ui_menus"), bpy.context.window_manager
+    old_draft = core._read_json(menus.DRAFT_FILE, None)
+    try:
+        menus.save_draft("noch nicht gesendet")
+        menus._clearing = True
+        wm.claude_prompt = ""
+        menus._clearing = False
+        menus.restore_draft()
+        back = wm.claude_prompt
+        menus._clear_prompt(wm)
+        check("the message not sent yet comes back after a restart; sending clears it",
+              back == "noch nicht gesendet" and core._read_json(menus.DRAFT_FILE, {}).get("text") == "", back)
+    finally:
+        menus._clearing = False
+        if old_draft is not None:
+            core._write_json(menus.DRAFT_FILE, old_draft)
 
 
 ok = all(results)

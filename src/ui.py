@@ -10,7 +10,7 @@ import bpy
 import bpy.utils.previews
 from bpy.props import BoolProperty, StringProperty
 
-from . import chatview, core
+from . import chatview, core, ui_menus
 
 # Moved into their own modules; re-exported so `ui.<name>` keeps working.
 from .ui_common import (
@@ -136,6 +136,8 @@ def register():
     )
     if not bpy.app.timers.is_registered(_restore_skills):
         bpy.app.timers.register(_restore_skills, first_interval=1.0)
+    if not bpy.app.background and not bpy.app.timers.is_registered(ui_menus.restore_draft):
+        bpy.app.timers.register(ui_menus.restore_draft, first_interval=1.2)   # the message not sent last time
     bpy.types.WindowManager.claude_show_setup = BoolProperty(
         name="Show Setup", description="Show the setup card in the chat", default=False, options={'SKIP_SAVE'})
     bpy.types.WindowManager.claude_use_selection = BoolProperty(
