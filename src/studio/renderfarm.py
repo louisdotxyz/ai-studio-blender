@@ -290,11 +290,43 @@ _view = {"scan": None, "busy": False, "drawn": 0.0}
 
 def _scan_now(root):
     try:
-        _view["scan"] = scan(root)
+        view = scan(root)
+        _retire_strays(root, view)
+        _view["scan"] = view
     except Exception as ex:                       # the share away in the middle of it
-        _view["scan"] = {"ok": False, "error": str(ex), "jobs": [], "halves": [], "workers": [],
-                         "time": time.time()}
+        if _view["scan"] is None:
+            _view["scan"] = {"ok": False, "error": str(ex), "jobs": [], "halves": [], "workers": [],
+                             "time": time.time()}
     _view["busy"] = False
+
+
+def _retire_strays(root, view):
+    """(thread) An older job of ours on the share that this Blender lost track of (sent while it closed),
+    for a section that has a newer job: the workers skip its frames (empty files) and it gets a .done.
+    Nothing is deleted."""
+    me = "%s@%s" % (getpass.getuser(), socket.gethostname().split(".")[0])
+    newest = {}
+    for job in list(_jobs):
+        if job["phase"] in {"queued", "packing", "packed", "copying", "sent"} and job.get("note"):
+            newest[job["note"]] = max(newest.get(job["note"], ""), job["job"])
+    known = {j["job"] for j in _jobs}
+    for seen in view.get("jobs", []):
+        if seen["job"] in known or seen["state"] == 'done' or seen.get("sent_by") != me:
+            continue
+        if seen.get("note") in newest and seen["job"] < newest[seen["note"]]:
+            ext = EXTENSIONS.get(seen.get("format"), "png")
+            renders = os.path.join(root, "renders", seen["job"])
+            try:
+                os.makedirs(renders, exist_ok=True)
+                for frame in range(seen["start"], seen["end"] + 1):
+                    path = os.path.join(renders, "%s_%04d.%s" % (seen["job"], frame, ext))
+                    if not os.path.exists(path):
+                        open(path, "wb").close()
+                with open(os.path.join(root, "queue", seen["job"] + ".done"), "w", encoding="utf-8") as f:
+                    f.write(time.strftime("%Y-%m-%d %H:%M:%S") + " replaced by a newer job\n")
+                seen["state"] = 'done'
+            except OSError:
+                pass
 
 
 def _refresh(force=False):
@@ -318,7 +350,7 @@ def _tick():
             _refresh(force=True)
         runner.tag_redraw()
         return 2.0
-    _refresh()
+    _refresh(force=_view.pop("force", False))
     runner.tag_redraw()
     return REFRESH
 
@@ -334,6 +366,7 @@ TRANSIENT = {"fetching", "new", "arrived", "looked", "t0", "h0", "per", "cancel"
 _rate = [0.0]             # seconds per frame the farm made lately (for jobs that wait)
 _hosts = {}               # worker → [frames, render seconds] of the frames fetched since Blender started
 _events = []              # (finished, worker, render seconds) of every frame fetched: the graph and the speed
+newest_frame = {"path": "", "time": 0.0, "title": ""}   # the frame fetched last (the Render tab's preview)
 _stamps = {}              # worker → [(its own clock's time of the frame, when we saw it or None)]
 _raw = {}                 # (file, scene state) → the saved copy several jobs pack from
 
@@ -616,7 +649,7 @@ def _copy(job, packed):
         job.update(phase="sent" if job["kind"] in {'STILL', 'ANIM'} else "done", progress=1.0)
         _reconcile()
         shutil.rmtree(os.path.join(LOCAL, name), ignore_errors=True)
-        _view["scan"] = None
+        _view["force"] = True                    # looked at again soon (the old view stays until then)
         _save_registry()
     except InterruptedError:                     # removed by the user (confirmed): its half file goes too
         try:
@@ -840,6 +873,7 @@ def _fetch(job):
                 except OSError:
                     shutil.copyfile(local, kept)
             os.replace(local + ".part", local)       # … the new one takes its place in one step (never missing:
+            newest_frame.update(path=local, time=time.time(), title="%s · frame %d" % (job["note"] or job["job"], frame))
             #                                          Blender's Video Editor crashes on a frame file that is gone)
             have += 1
             new += 1
@@ -962,7 +996,7 @@ def remove(name):
         seen = next((j for j in (_view["scan"] or {}).get("jobs", []) if j["job"] == name), None)
         if seen is not None:
             remove_from_share(share_root(), name, seen["start"], seen["end"], EXT.get(seen.get("format"), "png"))
-            _view["scan"] = None
+            _refresh(force=True)
         return
     phase = job["phase"]
     if phase == "packing":
@@ -982,7 +1016,7 @@ def remove(name):
     shutil.rmtree(os.path.join(LOCAL, name), ignore_errors=True)
     _reconcile()
     _save_registry()
-    _view["scan"] = None
+    _refresh(force=True)
 
 
 # ------------------------------------------------------------------ the queue's rows
@@ -1218,7 +1252,10 @@ def draw_state(layout, context):
         hint.label(text="From home: VPN first, then connect", translate=False)
         return
     view = _view["scan"]
-    if view is None:
+    if view is None:                                 # the first look at the share is on its way
+        row = layout.row()
+        row.active = False
+        row.label(text="Looking at the render farm …", icon='TIME')
         return
     from .runner import format_time
     states = worker_states(view)
@@ -1285,7 +1322,7 @@ def draw_state(layout, context):
         row.label(text=name, icon=icons[state], translate=False)
         doing = row.row()
         doing.active = state == 'rendering'
-        doing.label(text={"rendering": "renders " + _job_note(job), "loading": "loads %s · %s" % (_job_note(job), _clock(time.time() - since)),
+        doing.label(text={"rendering": _job_note(job), "loading": "loads %s · %s" % (_job_note(job), _clock(time.time() - since)),
                           "waiting": "waits for a job",
                           "offline": "OFFLINE since %s" % time.strftime("%H:%M", time.localtime(since))}[state],
                     translate=False)
@@ -1294,9 +1331,8 @@ def draw_state(layout, context):
         per = seconds_per_frame(key)
         stats = _hosts.get(key)
         busy = busy_share(key)
-        right.label(text=("%.0f s/frame · %d%s" % (per, stats[0], " · busy %d %%" % round(busy * 100)
-                                                   if busy and state == 'rendering' else ""))
-                    if per and stats else "—", translate=False)
+        right.label(text=("%.0f s/frame%s" % (per, " · %d %%" % round(busy * 100) if busy and state == 'rendering'
+                                               else "")) if per and stats else "—", translate=False)
     if gone:
         hint = col.row()
         hint.active = False

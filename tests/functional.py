@@ -2964,6 +2964,16 @@ def reliability():
         os.utime(path, (time.time() - age, time.time() - age))
     check("after a crash: the newest copy of the file is opened", autosave.newest_copy(main) == backup,
           autosave.newest_copy(main))
+    film = mod("studio.film")
+    copies = tempfile.mkdtemp(prefix="copies_")
+    first, second = os.path.join(copies, "a", "scene.blend"), os.path.join(copies, "b", "scene.blend")
+    for path in (first, second):
+        os.makedirs(os.path.dirname(path))
+        film._scene_copy(path)
+    check("two films without an edit share one copy of the file (no new GBs)",
+          os.path.samefile(first, second) and not os.path.exists(first + "1"))
+    film.drop_scene_copy(os.path.dirname(first))
+    check("a film done: its copy of the file goes", not os.path.exists(first) and os.path.exists(second))
     temp_file = os.path.join(tempfile.gettempdir(), "VELO_now_123_autosave.blend")
     check("Blender's auto save in a temporary folder never gets a project folder there",
           autosave.is_temp(temp_file) and autosave.project_folder_target(temp_file) is None

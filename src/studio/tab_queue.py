@@ -944,6 +944,16 @@ def _draw_renders(layout, context, review):
     images = runner.queue_images(scene)
     path = _selected_image(images)
     live = _live() if not _view["path"] else None
+    frame = None                     # a film renders: its newest frame, if newer than the newest image
+    if not review and not _view["path"] and live is None:
+        from . import renderfarm
+        newest = renderfarm.newest_frame
+        try:
+            if newest["path"] and os.path.isfile(newest["path"]) and (
+                    not images or os.path.getmtime(newest["path"]) > os.path.getmtime(images[0])):
+                frame, path = newest["title"], newest["path"]
+        except OSError:
+            frame = None
     image = bpy.data.images.get(runner.PREVIEW_IMAGE)
     if path and (image is None or
                  os.path.normpath(bpy.path.abspath(image.filepath)) != os.path.normpath(path)):
@@ -963,7 +973,7 @@ def _draw_renders(layout, context, review):
     older.operator(STUDIO_OT_preview_step.bl_idname, text="", icon='TRIA_LEFT').direction = 1
     count = head.row(align=True)
     count.alignment = 'CENTER'
-    count.label(text="Rendering" if live is not None else
+    count.label(text="Rendering" if live is not None else "Newest frame" if frame else
                 "%d / %d" % (index + 1, len(entries)) if index else "Newest")
     newer = head.row(align=True)
     newer.enabled = index > 0
@@ -981,6 +991,9 @@ def _draw_renders(layout, context, review):
     row = pic.row(align=True)
     if live is not None:
         row.label(text=live["camera"], icon='RENDER_STILL', translate=False)
+    elif frame:
+        row.label(text=frame, icon='RENDER_ANIMATION', translate=False)
+        row.operator(STUDIO_OT_render_reveal.bl_idname, text="", icon='FILE_FOLDER', emboss=False).path = path
     elif path:
         _ab_button(row, path, "A")
         _ab_button(row, path, "B")
@@ -1102,6 +1115,6 @@ class STUDIO_PT_render_queue(_SidebarPanel, Panel):
         renderfarm.draw_switch(head, context)
         head.popover(STUDIO_PT_output.__name__, text="", icon='PREFERENCES')
         renderfarm.draw_state(layout, context)
+        draw_quality(layout, context)              # High / Low Quality right here, where they are looked for
         draw_queue(layout, context)
         _draw_renders(layout, context, review=False)
-        draw_quality(layout, context)

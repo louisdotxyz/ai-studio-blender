@@ -94,6 +94,45 @@ def _launch(film_dir):
     return proc.pid
 
 
+_copy = {"path": "", "changes": -1, "file": ""}   # the last scene copy: jobs started without an edit share it
+
+
+def _scene_copy(target):
+    """The file as it is now into `target` (the film's process opens it). Nothing changed since the last
+    copy (several sections, preview images): the same file again as a hard link, no new GBs. No .blend1."""
+    from . import runner
+    from .. import autosave
+    for path in (target, target + "1"):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    last = _copy["path"]
+    if (last and last != target and _copy["changes"] == autosave.changes[0] and _copy["file"] == bpy.data.filepath
+            and os.path.isfile(last)):
+        try:
+            os.link(last, target)
+            return
+        except OSError:
+            pass
+    runner.RUN.preparing = True   # the save handlers must not take this copy for the user's save
+    try:
+        bpy.ops.wm.save_as_mainfile(filepath=target, copy=True, compress=False,
+                                    relative_remap=True, check_existing=False)
+    finally:
+        runner.RUN.preparing = False
+    _copy.update(path=target, changes=autosave.changes[0], file=bpy.data.filepath)
+
+
+def drop_scene_copy(film_dir):
+    """A film is done: its copy of the file goes (GBs each; its frames stay)."""
+    for name in ("scene.blend", "scene.blend1"):
+        try:
+            os.remove(os.path.join(film_dir, name))
+        except OSError:
+            pass
+
+
 def start(scene, job, folder, stem, frames, parts, video, label, fresh=True, archive=None, film_dir=FILM_DIR,
           extra=None):
     """Save a copy of the file into <folder>/.film, write the job and start the film's process.
@@ -114,12 +153,7 @@ def start(scene, job, folder, stem, frames, parts, video, label, fresh=True, arc
             os.remove(os.path.join(film_dir, name))
         except OSError:
             pass
-    runner.RUN.preparing = True   # the save handlers must not take this copy for the user's save
-    try:
-        bpy.ops.wm.save_as_mainfile(filepath=os.path.join(film_dir, "scene.blend"), copy=True, compress=False,
-                                    relative_remap=True, check_existing=False)
-    finally:
-        runner.RUN.preparing = False
+    _scene_copy(os.path.join(film_dir, "scene.blend"))
     data = {"scene": scene.name, "overrides": job["overrides"], "camera": job.get("camera"),
             "variant": job.get("variant") or [], "frames": list(frames), "parts": int(max(1, parts)),
             "pattern": os.path.join(folder, stem + "_"), "out": os.path.join(folder, stem),
@@ -423,6 +457,7 @@ def _poll():
                 cut.on_progress(film["scene"])
         if kind == 'DONE' and _seen.get(key) != 'DONE':
             runner.log("film done: %s" % film.get("label"))
+            drop_scene_copy(film["dir"])
             if mine(film) and not film.get("draft"):
                 runner.notify("%s is ready" % film.get("label", "The film"))
             result = _video_or_frame(film)

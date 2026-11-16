@@ -103,6 +103,10 @@ def _workdir():
 def _on_change(*_args):
     global _changed
     _changed = True
+    changes[0] += 1
+
+
+changes = [0]   # counts edits: a scene copy saved at the same count is still the same file
 
 
 _new_file = [False]   # the file being saved had never been saved before
