@@ -100,8 +100,8 @@ def _setup_visible(context, prefs):
     return _setup_steps_open(context, prefs) or _setup_questions_open(context, prefs)
 
 
-class CLAUDE_PT_chat(bpy.types.Panel):
-    bl_space_type = 'VIEW_3D'
+class _ChatPanel:
+    """The chat; the same in the 3D view and in the Video Editor (there: the cut chat, film_chat.py)."""
     bl_region_type = 'UI'
     bl_category = "Claude"
     bl_label = "Claude"
@@ -745,6 +745,10 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         row.operator("claude.compact_chat", text=text, emboss=False, translate=False)
 
 
-class CLAUDE_PT_chat_video(CLAUDE_PT_chat):
+class CLAUDE_PT_chat(_ChatPanel, bpy.types.Panel):
+    bl_space_type = 'VIEW_3D'
+
+
+class CLAUDE_PT_chat_video(_ChatPanel, bpy.types.Panel):
     """The chat in the Video Editor's sidebar: the cut chat of the scene (film_chat.py)."""
     bl_space_type = 'SEQUENCE_EDITOR'

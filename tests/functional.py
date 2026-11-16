@@ -2511,7 +2511,7 @@ def motion_sections():
             st = cut.frame_status("02 Hero", 51, 110, fresh=True)
             check("a section's frames: done, LQ", st["done"] == 60 and st["quality"] == "LOW"
                   and cut.status_text(st) == "LQ", st)
-            check("nothing new: the strips only read again", cut.sync(scene) == "reloaded")
+            check("nothing new: the strips only read again", cut.sync(scene) == "synced")
             first, second = cut.settings(scene, "01 Intro"), cut.settings(scene, "02 Hero")
             first.transition, first.frames, second.hold = 'CROSS', 6, 4
             cut.build(scene)
