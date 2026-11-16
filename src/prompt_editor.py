@@ -5,6 +5,7 @@ the same text (kept in step twice a second while the window is open); "Send" in 
 it, "Done" closes the window and leaves the text in the message box."""
 
 import bpy
+from bpy.props import EnumProperty
 from bpy.types import Operator
 
 from . import core
@@ -111,7 +112,7 @@ class CLAUDE_OT_prompt_window(Operator):
     bl_label = "Message Window"
     bl_options = {'INTERNAL'}
 
-    action: bpy.props.EnumProperty(items=(('SEND', "Send", "Send the message to Claude and close the window"),
+    action: EnumProperty(items=(('SEND', "Send", "Send the message to Claude and close the window"),
                                           ('DONE', "Done", "Close the window; the text stays in the message box")),
                                    options={'SKIP_SAVE'})
 
