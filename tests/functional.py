@@ -2703,17 +2703,19 @@ def unfinished_frames_and_folders():
 
 @section
 def tabs_without_switch():
-    """Four tabs in the 3D sidebar; the Animation tab of 3.x opens the Camera tab (Motion is there now)."""
+    """Five tabs in the 3D sidebar: Camera, Environment, Material, Animation, Render."""
     ui = mod("studio.ui_common")
     wm = bpy.context.window_manager
     keep = wm.studio_tab
-    try:
-        wm.studio_tab = 'ANIM'
-    except TypeError:
-        pass
-    check("no Still / Film switch: four tabs, Animation → Camera (Refine in the Compositor)",
-          ui.studio_tab(bpy.context) in ui.visible_tabs()
-          and ui.visible_tabs() == ('RENDER', 'LIGHT', 'MATERIAL', 'QUEUE'), ui.visible_tabs())
+    wm.studio_tab = 'ANIM'
+    check("five tabs, Animation between Material and Render",
+          ui.studio_tab(bpy.context) == 'ANIM'
+          and ui.visible_tabs() == ('RENDER', 'LIGHT', 'MATERIAL', 'ANIM', 'QUEUE'), ui.visible_tabs())
+    anim = mod("studio.tab_anim")
+    scene = bpy.context.scene
+    scene["Test LED Lumen"] = 12.5
+    check("the scene's own values show in the Animation tab", "Test LED Lumen" in anim.scene_values(scene))
+    del scene["Test LED Lumen"]
     skills = mod("skills")
     found = {s["name"]: s for s in skills.list_skills(mod("core").workdir())}
     check("ANIM in the skill row, CUT comes by itself", ("anim" not in found or found["anim"]["in_chat"])

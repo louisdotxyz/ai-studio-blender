@@ -191,9 +191,13 @@ wm.studio_mat_kind = "Metal"
 run(bpy.types.STUDIO_PT_material, ctx)
 wm.studio_mat_kind = ""
 run(bpy.types.STUDIO_MT_material_kind_filter, ctx)
-wm.studio_tab = 'RENDER'                     # Camera tab with Motion and Explosion open
-wm.studio_sections = "anim_motion\nanim_explode"
+wm.studio_tab = 'RENDER'
 run(bpy.types.STUDIO_PT_camera, ctx)
+wm.studio_tab = 'ANIM'                       # Animation tab with Motion, Orbit and Explosion open
+wm.studio_sections = "orbit\nanim_explode"
+bpy.context.scene["UI LED"] = 1.0
+run(bpy.types.STUDIO_PT_animation, ctx)
+del bpy.context.scene["UI LED"]
 wm.studio_sections = ""
 _marker = bpy.context.scene.timeline_markers.new("01 Check", frame=1)   # the Video Editor's sidebar
 for _tab in ('SECTIONS', 'CUT', 'MUSIC', 'EXPORT'):

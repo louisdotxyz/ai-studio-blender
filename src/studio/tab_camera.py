@@ -404,36 +404,10 @@ class STUDIO_PT_camera(_SidebarPanel, Panel):
         row.prop(own, "use_resolution", icon='PINNED' if own.use_resolution else 'UNPINNED', translate=False,
                  text="%d × %d" % (round(render.resolution_x * pct), round(render.resolution_y * pct)))
 
-        # Orbit around the picked object (or the 3D cursor)
-        box, head, is_open = section(layout, "orbit", "Orbit", 'ORIENTATION_GIMBAL')
-        from . import keys
-        keys.button(head, 'ORBIT')
-        if is_open:
-            col = box.column(align=True)
-            col.enabled = not locked
-            col.prop(rq, "orbit_horizontal")
-            col.prop(rq, "orbit_vertical")
-            if cam.data.type != 'ORTHO':   # orthographic: the distance changes nothing in the picture
-                col.prop(rq, "orbit_distance")
-            col.prop(rq, "orbit_height")
-            col.prop(rq, "orbit_side_offset")
-            col.prop(rq, "orbit_up_offset")
-
         # Backdrop: what the camera sees behind the product, and the floor it stands on
         box, _head, is_open = section(layout, "backdrop", "Backdrop", 'IMAGE_BACKGROUND')
         if is_open:
             env_ui.draw_backdrop(box, context)
-
-        # Motion: camera moves over the current section (the sections and their renders are in the Video
-        # Editor's Studio tab, the film icon opens it); the explosion view below it
-        from . import explode, motion
-        box, head, is_open = section(layout, "anim_motion", "Motion", 'ANIM', default_open=False)
-        head.operator("studio.cut", text="", icon='SEQUENCE', emboss=False).action = 'OPEN'
-        if is_open:
-            motion.draw_presets(box, context.scene)
-        box, _head, is_open = section(layout, "anim_explode", "Explosion", 'MOD_EXPLODE', default_open=False)
-        if is_open:
-            explode.draw(box, context.scene)
 
 
 class STUDIO_OT_fit_frame(Operator):

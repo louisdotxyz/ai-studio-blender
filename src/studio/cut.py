@@ -955,7 +955,7 @@ def export(scene, path=None):
         proc = subprocess.Popen([bpy.app.binary_path, "-b", blend, "--factory-startup", "-S", scene.name,
                                  "--python-expr", script],
                                 stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
-    film.register(work, folder, "Export %s" % scene.name, proc.pid)
+    film.register_process(work, folder, "Export %s" % scene.name, proc.pid)
     return (os.path.dirname(path) if fmt == 'PNG' else path + ext), log
 
 
@@ -988,7 +988,8 @@ def edl(scene, path=None):
 def open_cut(context, scene):
     """Show the film: the Video Editing workspace (appended once if the file has none) with this scene."""
     window = context.window
-    space = bpy.data.workspaces.get("Video Editing")
+    space = bpy.data.workspaces.get("Video Editing") or bpy.data.workspaces.get("Video") or next(
+        (w for w in bpy.data.workspaces if "video" in w.name.lower()), None)       # also when renamed
     if space is None:
         template = os.path.join(bpy.utils.resource_path('LOCAL'), "scripts", "startup",
                                 "bl_app_templates_system", "Video_Editing", "startup.blend")

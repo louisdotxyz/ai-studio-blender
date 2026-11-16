@@ -125,7 +125,9 @@ class STUDIO_PT_tabs(Panel):
 
 # ------------------------------------------------------------------ Register
 
-classes = render_setup.classes + (
+from . import farm, tab_anim
+
+classes = render_setup.classes + tab_anim.classes + farm.classes + (
     STUDIO_LightSettings,
     STUDIO_OT_section_toggle,
     STUDIO_OT_tab,

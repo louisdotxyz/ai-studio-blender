@@ -100,6 +100,9 @@ MATERIAL_TAB_ORDER = 3
 QUEUE_TAB_ORDER = 4
 
 
+ANIM_TAB_ORDER = 5
+
+
 def _unpin(panel):
     """A pinned panel is shown in every tab. Ours have no header to unpin them,
     so a pin (e.g. from an older version) is cleared. UI state, not ID data."""
@@ -114,7 +117,9 @@ STUDIO_TABS = (
     ('RENDER', "Camera", "Camera, format and image", 'CAMERA_DATA', 0),
     ('LIGHT', "Environment", "Scene presets, lights, World, background and floor", 'WORLD', 1),
     ('MATERIAL', "Material", "Materials of the active object", 'MATERIAL', 2),
-    ('QUEUE', "Render", "What renders now, all renders: compare, rate, sort", 'RENDER_STILL', 3),
+    ('ANIM', "Animation", "Sections, camera moves, orbit, explosion and the scene's values", 'RENDER_ANIMATION', 4),
+    ('QUEUE', "Render", "Preview, High and Low Quality, the render farm (Flamenco); queue, compare and sort in "
+              "the Photo workspace", 'RENDER_STILL', 3),
 )
 
 
@@ -126,8 +131,8 @@ def visible_tabs(_scene=None):
 
 
 def studio_tab(context):
-    """The open tab. Since 4.1 the 3D sidebar has Camera, Environment, Material and Render; comparing and
-    sorting is in the Image Editor, Refine in the Compositor, the film in the Video Editor."""
+    """The open tab. Since 4.3 the 3D sidebar has Camera, Environment, Material, Animation and Render; the
+    queue, comparing and sorting are in the Photo workspace, the film in the Video Editor."""
     tab = getattr(context.window_manager, "studio_tab", 'RENDER')
     return tab if tab in TAB_KEYS else 'RENDER'
 

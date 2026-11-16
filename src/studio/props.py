@@ -522,6 +522,11 @@ class STUDIO_Settings(PropertyGroup):
         items=[('ALL', "Whole Film", "All strips"),
                ('PREVIEW', "Preview Range", "Only the timeline's preview range (Ctrl P in the timeline)"),
                ('CLIP', "Active Clip", "Only the clip that is selected")])
+    farm_films: BoolProperty(name="High Quality Films on the Farm", description="A section's High Quality render "
+                             "goes to the Flamenco render farm instead of this Mac (its frames come into the Video "
+                             "Editor as usual)", default=False, options=set())
+    farm_chunk: IntProperty(name="Chunk", description="Frames per task on the farm (more: fewer starts of Blender, "
+                            "less spread over the workers)", default=2, min=1, max=50, options=set())
     cut_export_music: BoolProperty(name="With Music", description="The music strip goes into the video",
                                    default=True, options=set())
     cut_export_name: StringProperty(name="File Name", description="Name of the export (empty: the scene's "

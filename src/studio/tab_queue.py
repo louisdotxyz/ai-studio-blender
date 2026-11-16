@@ -199,6 +199,17 @@ class STUDIO_OT_add(Operator):
             if quality is None:
                 skipped.append(name)
                 continue
+            if quality == 'HIGH' and not keep and scene.studio.farm_films:   # on the render farm
+                from . import farm
+                try:
+                    farm.start_section(scene, name, a, b, cam)
+                except (ValueError, OSError, RuntimeError) as ex:
+                    self.report({'WARNING'}, "%s not on the farm: %s" % (name, ex))
+                    skipped.append(name)
+                    continue
+                autoquality.record(scene, key)
+                added.append("%s HQ · Farm" % name)
+                continue
             item = self._item(scene, cam, quality, 'ANIM')
             item.section, item.keep_frames = name, keep
             item.percentage = 100       # a film: High Quality at full size (Low: its share of it), whatever
@@ -214,6 +225,8 @@ class STUDIO_OT_add(Operator):
                 missing or ": everything is in High Quality and nothing changed"))
             return {'CANCELLED'}
         self.report({'WARNING'} if no_camera else {'INFO'}, "Rendering %s%s" % (", ".join(added), missing))
+        if not scene.studio.items:
+            return {'FINISHED'}                    # everything went to the farm
         return self._start(context)
 
 
@@ -465,15 +478,22 @@ def show_in_image_editor(context, path):
                     sp.image = image
 
 
+PHOTO_WORKSPACES = ("Photo", "Compositing", "Rendering")   # the Photo workspace (renamed Compositing)
+
+
+def photo_workspace():
+    return next((n for n in PHOTO_WORKSPACES if bpy.data.workspaces.get(n) is not None), "Photo")
+
+
 class STUDIO_OT_open_review(Operator):
     bl_idname = "studio.open_review"
-    bl_label = "Compare & Sort"
-    bl_description = ("All renders big in the Image Editor (Rendering workspace): compare A / B, stars, sort, "
-                      "batches; Studio tab in its sidebar")
+    bl_label = "Photo"
+    bl_description = ("The Photo workspace: the queue, all renders big in the Image Editor, compare A / B, stars, "
+                      "sort, batches; Refine in the Compositor next to it")
     bl_options = {'INTERNAL'}
 
     def execute(self, context):
-        open_workspace(context, "Rendering", 'IMAGE_EDITOR')
+        open_workspace(context, photo_workspace(), 'IMAGE_EDITOR')
         images = runner.queue_images(context.scene)
         show_in_image_editor(context, _selected_image(images) if images else "")
         return {'FINISHED'}
@@ -588,7 +608,7 @@ class STUDIO_OT_render_refine(Operator):
     def execute(self, context):
         if self.path:
             _view["path"] = self.path
-        open_workspace(context, "Compositing", 'NODE_EDITOR')
+        open_workspace(context, photo_workspace(), 'NODE_EDITOR')
         return {'FINISHED'}
 
 
@@ -787,43 +807,20 @@ def _factor_row(layout, label, factors, op, depress_value, **props):
             setattr(o, key, value)
 
 
-class STUDIO_PT_output(Panel):
-    """Gear menu in the Queue tab, top to bottom: High Quality, Low Quality, Still, Animation."""
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'HEADER'
-    bl_label = "Output"
-    bl_ui_units_x = 15
-
-    def draw(self, context):
-        layout = self.layout
-        scene = context.scene
-        rq = scene.studio
-        render = scene.render
-        p = runner.prefs(context)
-        cycles = scene.render.engine == 'CYCLES'
-
-        # Where the renders go and how big (the chat renders with these)
-        from . import render_size
-        box = layout.box()
-        col = box.column()
-        row = col.row(align=True)
-        row.label(text="", icon='SORTALPHA')
-        row.prop(rq, "output_name", text="", placeholder=core.project_name())
-        if p is not None:
-            row = col.row(align=True)
-            row.label(text="", icon='FILE_FOLDER')
-            row.prop(p, "output_root", text="", placeholder="Next to the .blend file")
-        render_size.draw(col, scene)
-
-        # High Quality: the scene's own settings
-        box = layout.box()
-        box.label(text="High Quality", icon='SHADING_RENDERED')
+def draw_quality(layout, context):
+    """Render tab: High Quality (the scene's own settings) and Low Quality (shares of it), at a glance."""
+    from .ui_common import section
+    scene = context.scene
+    rq = scene.studio
+    render = scene.render
+    p = runner.prefs(context)
+    cycles = render.engine == 'CYCLES'
+    box, head, is_open = section(layout, "render_hq", "High Quality", 'SHADING_RENDERED')
+    pct = render.resolution_percentage / 100
+    head.label(text="%d × %d" % (round(render.resolution_x * pct), round(render.resolution_y * pct)),
+               translate=False)
+    if is_open:
         _factor_row(box, "Size", SCALE_PRESETS, 'studio.set_scale', render.resolution_percentage)
-        pct = render.resolution_percentage / 100
-        sub = box.row()
-        sub.alignment = 'CENTER'
-        sub.active = False
-        sub.label(text="%d × %d px" % (round(render.resolution_x * pct), round(render.resolution_y * pct)))
         if cycles:
             cy = scene.cycles
             col = box.column(align=True)
@@ -838,10 +835,10 @@ class STUDIO_PT_output(Panel):
             box.prop(cy, "use_denoising", text="Denoise", toggle=True, icon='SHADERFX')
         elif hasattr(scene, "eevee"):
             box.prop(scene.eevee, "taa_render_samples", text="Samples")
-
-        # Low Quality: shares of High
-        box = layout.box()
-        box.label(text="Low Quality", icon='SORTTIME')
+    box, head, is_open = section(layout, "render_lq", "Low Quality", 'SORTTIME')
+    if p is not None:
+        head.label(text="%d %% · %d %%" % (p.low_resolution, p.low_samples_percent), translate=False)
+    if is_open:
         if p is not None:
             _factor_row(box, "Resolution", LOW_SCALES, STUDIO_OT_low_scale.bl_idname, p.low_resolution,
                         target="resolution")
@@ -849,6 +846,35 @@ class STUDIO_PT_output(Panel):
                         target="samples")
         if cycles:
             box.prop(rq, "low_denoise", text="Denoise", toggle=True, icon='SHADERFX')
+
+
+class STUDIO_PT_output(Panel):
+    """Gear menu of the Render tab: name, folder and size; still and animation format, file names,
+    behaviour (High and Low Quality and the farm are in the tab itself)."""
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'HEADER'
+    bl_label = "Output"
+    bl_ui_units_x = 15
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        rq = scene.studio
+        render = scene.render
+        p = runner.prefs(context)
+
+        # Where the renders go and how big (the chat renders with these)
+        from . import render_size
+        box = layout.box()
+        col = box.column()
+        row = col.row(align=True)
+        row.label(text="", icon='SORTALPHA')
+        row.prop(rq, "output_name", text="", placeholder=core.project_name())
+        if p is not None:
+            row = col.row(align=True)
+            row.label(text="", icon='FILE_FOLDER')
+            row.prop(p, "output_root", text="", placeholder="Next to the .blend file")
+        render_size.draw(col, scene)
 
         # Still
         box = layout.box()
@@ -958,17 +984,48 @@ def _draw_renders(layout, context, review):
         refine = row.row(align=True)
         refine.alignment = 'RIGHT'
         refine.operator(STUDIO_OT_render_refine.bl_idname, text="Refine", icon='NODE_COMPOSITING').path = path
-    if not review:              # comparing and sorting: big, in the Image Editor (Rendering workspace)
-        row = layout.row(align=True)
-        row.scale_y = 1.2
-        row.operator(STUDIO_OT_open_review.bl_idname, text="Compare & Sort (%d)" % len(images), icon='IMAGE')
+    if not review:              # the queue, comparing and sorting: in the Photo workspace (the tab's head)
         return
     _draw_compare(layout, context)
     _draw_overview(layout, context, images, path)
 
 
+def draw_queue(layout, context):
+    """What renders now and what waits (renders are started in the chat, the 3D view's Render tab or ⌘R)."""
+    scene = context.scene
+    rq = scene.studio
+    current = RUN.current["uid"] if RUN.current else None
+    waiting = [(i, item) for i, item in enumerate(rq.items) if item.camera is not None]
+    from . import film
+    films = [f for f in film.films_here() if f[2] != 'DONE']
+    if not (RUN.busy or waiting or films):
+        return
+    box = layout.box()
+    col_run = box.column(align=True)
+    col_run.label(text="Queue", icon='SORTTIME')
+    film.draw(col_run)
+    for i, item in waiting:
+        row = col_run.row(align=True)
+        rendering = item.uid == current
+        label = runner.item_label(scene, item)
+        if item.batch:
+            label = "%s · %s" % (item.batch, label)
+        row.label(text=label, icon='RENDER_STILL' if rendering else 'TIME', translate=False)
+        if rendering:
+            row.progress(factor=RUN.render_progress, type='BAR', text=_item_progress_text())
+            row.operator(STUDIO_OT_cancel.bl_idname, text="", icon='X', emboss=False)
+        else:
+            up = row.operator(STUDIO_OT_move.bl_idname, text="", icon='TRIA_UP', emboss=False)
+            up.index, up.direction = i, -1
+            row.operator(STUDIO_OT_remove.bl_idname, text="", icon='X', emboss=False).index = i
+    if not RUN.busy and waiting:   # left over after a cancel
+        col_run.operator(STUDIO_OT_render_queue.bl_idname, text="Render the Rest (%d)" % len(waiting), icon='PLAY')
+    if RUN.message and not RUN.busy:
+        col_run.label(text=RUN.message, icon='INFO')
+
+
 class STUDIO_PT_review(Panel):
-    """Compare & Sort: the renders in the Image Editor's sidebar (Rendering workspace)."""
+    """The Photo workspace's Image Editor sidebar (Studio): the queue, the renders big, compare and sort."""
     bl_space_type = 'IMAGE_EDITOR'
     bl_region_type = 'UI'
     bl_category = "Studio"
@@ -983,14 +1040,17 @@ class STUDIO_PT_review(Panel):
         sort = next(label for key, label, _i in render_review.SORTS if key == render_review.state["sort"])
         head.menu(STUDIO_MT_render_arrange.bl_idname, text=sort, icon='FILTER')
         head.operator("studio.cut", text="", icon='SEQUENCE').action = 'OPEN'
+        head.popover(STUDIO_PT_output.__name__, text="", icon='PREFERENCES')
+        draw_queue(layout, context)
         _draw_renders(layout, context, review=True)
 
 
 class STUDIO_PT_render_queue(_SidebarPanel, Panel):
-    """The queue, in its own tab. New name in 0.14: a pinned panel shows up in every tab,
-    and Blender keeps the pin per panel name in the file (STUDIO_PT_panel, STUDIO_PT_queue)."""
+    """The Render tab: the newest render as a preview, what renders now, High and Low Quality, the render
+    farm; the queue, comparing and sorting are in the Photo workspace (one button). The panel keeps its
+    name of 0.14: Blender keeps a pin per panel name in the file."""
     studio_tab = 'QUEUE'
-    bl_label = "Queue"
+    bl_label = "Render"
     bl_options = {'HIDE_HEADER'}
     bl_order = QUEUE_TAB_ORDER
 
@@ -1002,41 +1062,37 @@ class STUDIO_PT_render_queue(_SidebarPanel, Panel):
         rq = scene.studio
         if not RUN.busy:
             shots.draw_check(layout, scene)
-
-        # The head: what is shown below [sort · filter ▾] and the output settings (name, folder, size,
-        # quality details) in the gear; renders are started in the chat
-        head = layout.row(align=True)
+        images = runner.queue_images(scene)
+        waiting = [item for item in rq.items if item.camera is not None]
+        head = layout.row(align=True)              # the same head as every tab
         head.scale_y = 1.2
-        head.operator(STUDIO_OT_open_review.bl_idname, text="Compare & Sort", icon='IMAGE')
-        head.operator("studio.cut", text="", icon='SEQUENCE').action = 'OPEN'    # films: the Video Editor
+        text = "Photo · Queue & Compare (%d)" % len(images) if not waiting else \
+            "Photo · %d waiting · %d renders" % (len(waiting), len(images))
+        head.operator(STUDIO_OT_open_review.bl_idname, text=text, icon='IMAGE')
+        head.operator("studio.cut", text="", icon='SEQUENCE').action = 'OPEN'
         head.popover(STUDIO_PT_output.__name__, text="", icon='PREFERENCES')
 
-        # What renders now and what waits: progress only (renders are started in the chat).
-        current = RUN.current["uid"] if RUN.current else None
-        waiting = [(i, item) for i, item in enumerate(rq.items) if item.camera is not None]
         from . import film
         films = [f for f in film.films_here() if f[2] != 'DONE']
-        if RUN.busy or waiting or films:
+        if RUN.busy or films:                      # what renders now (the list is in Photo)
             box = layout.box()
-            col_run = box.column(align=True)
-            film.draw(col_run)
-            for i, item in waiting:
-                row = col_run.row(align=True)
-                rendering = item.uid == current
-                label = runner.item_label(scene, item)
-                if item.batch:
-                    label = "%s · %s" % (item.batch, label)
-                row.label(text=label, icon='RENDER_STILL' if rendering else 'TIME', translate=False)
-                if rendering:
-                    row.progress(factor=RUN.render_progress, type='BAR', text=_item_progress_text())
-                    row.operator(STUDIO_OT_cancel.bl_idname, text="", icon='X', emboss=False)
-                else:
-                    row.operator(STUDIO_OT_remove.bl_idname, text="", icon='X', emboss=False).index = i
-            if not RUN.busy and waiting:   # left over after a cancel
-                col_run.operator(STUDIO_OT_render_queue.bl_idname, text="Render the Rest (%d)" % len(waiting),
-                                 icon='PLAY')
+            col = box.column(align=True)
+            film.draw(col)
+            if RUN.busy and RUN.current:
+                row = col.row(align=True)
+                row.progress(factor=RUN.render_progress, type='BAR', text="%s · %s" % (
+                    RUN.current.get("camera", ""), _item_progress_text()))
+                row.operator(STUDIO_OT_cancel.bl_idname, text="", icon='X', emboss=False)
             if RUN.message and not RUN.busy:
-                col_run.label(text=RUN.message, icon='INFO')
+                col.label(text=RUN.message, icon='INFO')
 
         _draw_renders(layout, context, review=False)
-
+        draw_quality(layout, context)
+        from . import farm
+        from .ui_common import section
+        box, head, is_open = section(layout, "render_farm", "Render Farm · Flamenco", 'NETWORK_DRIVE',
+                                     default_open=False)
+        st = farm.status() if is_open else farm._state
+        head.label(text="online" if st["online"] else "", translate=False)
+        if is_open:
+            farm.draw(box, scene)

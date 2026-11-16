@@ -51,10 +51,14 @@ def _space_view(context):
     return getattr(getattr(context, "space_data", None), "view_type", "")
 
 
-def _tabs(layout, wm, prop):
+def _tabs(layout, wm, prop, items):
+    """The tabs as equal icons over the full width, like the Studio tab of the 3D view (names in the
+    tooltips)."""
     row = layout.row(align=True)
-    row.scale_y = 1.35
-    row.prop(wm, prop, expand=True, icon_only=True)
+    row.scale_y = 1.3
+    grid = row.grid_flow(row_major=True, columns=len(items), even_columns=True, align=True)
+    for key, _name, _text, icon, _n in items:
+        grid.prop_enum(wm, prop, key, text="", icon=icon)
 
 
 def _hint(layout, text, icon='INFO'):
@@ -243,9 +247,9 @@ class STUDIO_PT_cut_clip(Panel):
         strip = _active(scene)
         if strip is not None:
             _clip_header(layout, scene, strip)
-        _tabs(layout, wm, "studio_cut_tab_clip")
+        _tabs(layout, wm, "studio_cut_tab_clip", CLIP_TABS)
         {'CLIP': _clip_tab, 'LOOK': _look_tab, 'FADE': _fade_tab, 'TITLE': _title_tab}[wm.studio_cut_tab_clip](
-            layout.column(), scene, context, strip)
+            layout.box(), scene, context, strip)
 
 
 # ------------------------------------------------------------------ below: the film
@@ -267,38 +271,26 @@ def _problems(layout, scene):
 
 
 def _section_card(layout, scene, name, start, end, marker, here):
+    """One section as a box: ▶ name · state · render; its camera (lock); frames, seconds, the next render's
+    time; the active section also shows its proof (the camera's view)."""
     st = cut.frame_status(name, start, end)
     item = next((c for c in scene.studio.cut_items if c.section == name), None)
-    card = layout.box() if here else layout.column()
-    split = card.split(factor=0.34, align=True)
-    left = split.column(align=True)
-    icon = film_tools.proof_icon(name)
-    if icon:
-        try:
-            left.template_icon(icon_value=icon, scale=3.6)
-        except (AttributeError, TypeError):
-            left.label(text="", icon_value=icon)
-        info = film_tools.proof_info(name)
-        cam = marker.camera if marker is not None else scene.camera
-        if cam is not None and info.get("camera") not in (None, cam.name):
-            warn = left.row()
-            warn.alert = True
-            warn.label(text="other camera", icon='ERROR')
-    else:
-        op = left.operator(film_tools.STUDIO_OT_film_proof.bl_idname, text="Proof", icon='CAMERA_DATA')
-        op.section = name
-    right = split.column(align=True)
-    row = right.row(align=True)                       # ▶ name · state · render
+    box = layout.box()
+    row = box.row(align=True)                         # ▶ name · state · render
     row.operator(cut.STUDIO_OT_cut_go.bl_idname, text="", icon='PLAY' if here else 'TRIA_RIGHT',
                  emboss=here).section = name
     if marker is not None:
         row.prop(marker, "name", text="")
     else:
         row.label(text=name, translate=False)
+    state = row.row(align=True)
+    state.ui_units_x = 4.2
+    state.label(text=film_tools.label_of(st) or "open", icon=_state_icon(st), translate=False)
     clean = st["done"] == st["total"] and film_tools.next_quality(scene, name, st) is None
     op = row.operator("studio.add", text="", icon='CHECKMARK' if clean else 'RENDER_ANIMATION')
     op.mode, op.section = 'ANIM', name
-    row = right.row(align=True)                       # 🔒 camera
+    col = box.column(align=True)
+    row = col.row(align=True)                         # 🔒 camera
     locked = bool(item and item.camera_lock)
     row.operator(film_tools.STUDIO_OT_section_lock.bl_idname, text="", icon='LOCKED' if locked else 'UNLOCKED',
                  depress=locked).section = name
@@ -306,53 +298,55 @@ def _section_card(layout, scene, name, start, end, marker, here):
         sub = row.row(align=True)
         sub.enabled = not locked
         sub.prop(marker, "camera", text="")
-    row = right.row(align=True)                       # state · what the next render takes
-    row.label(text=film_tools.label_of(st, cut._rendering(name)) or "nothing yet", icon=_state_icon(st),
-              translate=False)
+    row.operator(film_tools.STUDIO_OT_film_proof.bl_idname, text="", icon='CAMERA_DATA').section = name
+    row.operator(film_tools.STUDIO_OT_film_draft.bl_idname, text="", icon='SHADING_SOLID').section = name
+    row = col.row(align=True)                         # frames · seconds · the next render
+    seconds = "%d–%d · %.1f s" % (start, end, motion.seconds(scene, end - start + 1))
+    if marker is not None:
+        row.operator("studio.section_edit", text=seconds, emboss=False, translate=False).name = name
+    else:
+        row.label(text=seconds, translate=False)
     est = row.row()
     est.alignment = 'RIGHT'
     est.active = False
     est.label(text=film_tools.estimate_text(scene, name, st), translate=False)
-    row = right.row(align=True)                       # frames · seconds · draft · proof · update
-    if marker is not None:
-        edit = row.operator("studio.section_edit", text="%d–%d · %.1f s" % (
-            start, end, motion.seconds(scene, end - start + 1)), emboss=False, translate=False)
-        edit.name = name
-    else:
-        row.label(text="%d–%d · %.1f s" % (start, end, motion.seconds(scene, end - start + 1)), translate=False)
-    row.operator(film_tools.STUDIO_OT_film_draft.bl_idname, text="", icon='SHADING_SOLID').section = name
-    if icon:
-        row.operator(film_tools.STUDIO_OT_film_proof.bl_idname, text="", icon='CAMERA_DATA').section = name
     if cut.outdated(scene, name, start, end):
         _strip_op(row, 'UPDATE', name, 'FILE_REFRESH', text="")
+    icon = film_tools.proof_icon(name) if here else 0
+    if icon:                                          # the active section: what its camera sees
+        try:
+            box.template_icon(icon_value=icon, scale=7.0)
+        except (AttributeError, TypeError):
+            box.label(text="", icon_value=icon)
+        info = film_tools.proof_info(name)
+        cam = marker.camera if marker is not None else scene.camera
+        if cam is not None and info.get("camera") not in (None, cam.name):
+            warn = box.row()
+            warn.alert = True
+            warn.label(text="Proof from another camera: make it again", icon='ERROR')
 
 
 def _sections_tab(layout, scene, context):
     from .runner import format_time
-    row = layout.row(align=True)
-    row.scale_y = 1.25
+    row = layout.row(align=True)                      # the head, like every Studio tab
+    row.scale_y = 1.2
     row.operator(film_tools.STUDIO_OT_film_proof.bl_idname, text="Proof", icon='CAMERA_DATA')
     row.operator(film_tools.STUDIO_OT_film_draft.bl_idname, text="Draft", icon='SHADING_SOLID')
     row.operator("studio.section", text="", icon='ADD').action = 'ADD'
-    _problems(layout, scene)
-    found = cut.sections_of(scene)
     total = film_tools.total_estimate(scene)
-    legend = layout.row(align=True)
-    legend.active = False
-    for code, text in (('HIGH', "HQ"), ('LOW', "LQ"), ('DRAFT', "Draft"), ('', "open")):
-        legend.label(text=text, icon=_icon(STATE_ICONS[code], 'DOT'))
     if total:
-        legend.label(text="all ~%s" % format_time(total), translate=False)
+        info = layout.row()
+        info.active = False
+        info.label(text="Next renders together ~%s" % format_time(total), icon='TIME', translate=False)
+    _problems(layout, scene)
     frame = scene.frame_current
     sed = scene.sequence_editor
     active = sed.active_strip if sed is not None else None
-    col = layout.column()
-    for name, start, end, marker in found:
+    for name, start, end, marker in cut.sections_of(scene):
         strip = cut.section_strip(scene, name)
         here = (strip is not None and active is not None and cut._get(active, cut.SECTION_KEY) == name) or \
             (strip is None and start <= frame <= end)
-        _section_card(col, scene, name, start, end, marker, here)
-        col.separator(factor=0.4)
+        _section_card(layout, scene, name, start, end, marker, here)
 
 
 def _cut_tab(layout, scene, context):
@@ -453,9 +447,10 @@ class STUDIO_PT_cut(Panel):
         wm = context.window_manager
         from . import film
         film.draw(layout)
-        _tabs(layout, wm, "studio_cut_tab_film")
-        {'SECTIONS': _sections_tab, 'CUT': _cut_tab, 'MUSIC': _music_tab, 'EXPORT': _export_tab}[
-            wm.studio_cut_tab_film](layout.column(), scene, context)
+        _tabs(layout, wm, "studio_cut_tab_film", FILM_TABS)
+        tab = wm.studio_cut_tab_film
+        {'SECTIONS': _sections_tab, 'CUT': _cut_tab, 'MUSIC': _music_tab, 'EXPORT': _export_tab}[tab](
+            layout.column() if tab == 'SECTIONS' else layout.box(), scene, context)
         row = layout.row(align=True)
         span = cut.strip_range(scene)
         info = row.row()

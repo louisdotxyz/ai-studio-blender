@@ -3,6 +3,7 @@ title: ANIM
 description: Product films: sections, camera moves, the Video Editor
 icon: RENDER_ANIMATION
 chat: yes
+studio_tab: ANIM
 ---
 Product films with AI Studio's tools. Answer briefly. On by itself when the scene has sections or a film
 renders (or with its button in the skill row).
@@ -19,7 +20,7 @@ before the next one. Its camera is marker.camera (own camera P_<name>_01 on a pi
   Default frames = the current section. Keys already there: replace=True removes them in the frames, False
   keeps them; say which you did.
 - api.motion_chain("02 Hero", [("PULL_OUT", 24, 140), ("HOLD", 12), ("TURNTABLE", 0, 90)]): steps one after
-  the other (frames 0 = to the end). Motion is in the Camera tab.
+  the other (frames 0 = to the end). Motion, Orbit, Explosion and the scene's values are in the Animation tab.
 - api.key_pose(): the viewport's view as a key at this frame (with the lens).
 - Before rendering: api.film_check() lists problems (NO_CAMERA blocks that section; SHARED camera; OUTDATED
   strip) and the time of the next render per section. api.section_proof(section=None) makes a quick
@@ -32,6 +33,8 @@ before the next one. Its camera is marker.camera (own camera P_<name>_01 on a pi
   without one is skipped). quality None = by itself: Low Quality first, High Quality once nothing changed;
   sections already in High Quality with nothing changed are skipped. frames=(a, b) renders only those
   frames again (the others stay). No video per section. High Quality renders at full size.
+  scene.studio.farm_films = True: High Quality sections go to the Flamenco render farm (Render tab · Render
+  Farm); their frames come back into the Video Editor by themselves.
   api.render_status() says what renders (frame, seconds left); studio_render_queue 'wait' answers only
   when the films are done. Never start own background renders to check a film.
 - The Video Editor of the same scene shows every section as an image strip (they come in and fill in by
@@ -43,7 +46,7 @@ before the next one. Its camera is marker.camera (own camera P_<name>_01 on a pi
   name=None) renders all strips at the end (animation/Export): format MP4 / H265 / PRORES / WEBM / PNG.
 - In the timeline every section strip has a band: green High Quality, orange Low Quality, grey draft, red
   not rendered yet (the strip shows the nearest rendered frame there).
-- Explosion view (Camera tab): api.explode_group("Lampenkopf", [parts]) gives a handle "Griff | Lampenkopf";
+- Explosion view (Animation tab): api.explode_group("Lampenkopf", [parts]) gives a handle "Griff | Lampenkopf";
   the parts follow it only while scene["Explosion"] > 0 (0 = exactly as in CAD). Place groups by moving /
   turning their handles with the explosion open, never the parts themselves. api.explode_arrange(names,
   flat, upright, in_row) turns groups flat to the camera and puts them in a row; api.explode_key_section("02

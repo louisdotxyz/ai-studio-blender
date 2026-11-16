@@ -752,5 +752,15 @@ class CLAUDE_PT_chat(_ChatPanel, bpy.types.Panel):
 
 
 class CLAUDE_PT_chat_video(_ChatPanel, bpy.types.Panel):
-    """The chat in the Video Editor's sidebar: the cut chat of the scene (film_chat.py)."""
+    """The chat in the Video Editor's sidebar: the cut chat of the scene (film_chat.py). Only in the
+    preview's sidebar (the timeline's sidebar is the film's Studio tab), unless there is no preview."""
     bl_space_type = 'SEQUENCE_EDITOR'
+
+    @classmethod
+    def poll(cls, context):
+        if getattr(getattr(context, "space_data", None), "view_type", "") != 'SEQUENCER':
+            return True
+        screen = getattr(context, "screen", None)
+        return screen is None or not any(
+            a.type == 'SEQUENCE_EDITOR' and getattr(a.spaces.active, "view_type", "") in {'PREVIEW', 'SEQUENCER_PREVIEW'}
+            for a in screen.areas)

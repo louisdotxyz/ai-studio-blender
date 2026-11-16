@@ -73,14 +73,18 @@ def read_status(film):
         return {}
 
 
+FARM_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "farm_job.py")
+
+
 def _command(film_dir):
+    script = FARM_SCRIPT if os.path.basename(film_dir.rstrip(os.sep)) == ".farm" else SCRIPT
     cmd = [bpy.app.binary_path, "-b", os.path.join(film_dir, "scene.blend"), "--factory-startup", "-noaudio"]
     try:
         if bpy.context.preferences.filepaths.use_scripts_auto_execute:
             cmd.append("-y")   # drivers with Python, as in your Blender
     except AttributeError:
         pass
-    return cmd + ["--python-exit-code", "3", "--python", SCRIPT, "--", os.path.join(film_dir, "job.json")]
+    return cmd + ["--python-exit-code", "3", "--python", script, "--", os.path.join(film_dir, "job.json")]
 
 
 def _launch(film_dir):
@@ -349,10 +353,12 @@ def needs_video(film_dir):
             and not any(f["dir"] == film_dir for f in _load()))
 
 
-def register(film_dir, folder, label, pid):
-    """Another process that writes status.json like a film (the cut's export): its bar, its result."""
+def register_process(film_dir, folder, label, pid, extra=None):
+    """Another process that writes status.json like a film (the cut's export, a farm job): its bar, its
+    result."""
     entry = {"dir": film_dir, "folder": folder, "label": label, "pid": pid, "added": time.time(),
              "blend": bpy.data.filepath}
+    entry.update(extra or {})
     _save([f for f in _load() if f["dir"] != film_dir] + [entry])
     _ensure_timer()
     return entry
