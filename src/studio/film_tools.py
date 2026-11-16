@@ -20,6 +20,7 @@ import statistics
 import time
 
 import bpy
+import bpy.utils.previews
 from bpy.props import StringProperty
 from bpy.types import Operator
 
@@ -122,7 +123,6 @@ def proof_icon(section):
     except OSError:
         return 0
     if _previews[0] is None:
-        import bpy.utils.previews
         _previews[0] = bpy.utils.previews.new()
     key = "%s|%d" % (path, int(mtime * 1000))
     pcoll = _previews[0]
@@ -637,7 +637,6 @@ def unregister():
         if bpy.app.timers.is_registered(timer):
             bpy.app.timers.unregister(timer)
     if _previews[0] is not None:
-        import bpy.utils.previews
         bpy.utils.previews.remove(_previews[0])
         _previews[0] = None
     for cls in reversed(classes):
