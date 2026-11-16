@@ -105,6 +105,34 @@ def frame_names(section, start, end, ext=".png"):
 _status = {}
 
 
+SETTLE = 3.0     # seconds a frame file must be unchanged before the Video Editor reads it
+
+
+def finished_files(folder):
+    """Names of the frame files that are done: not empty (a placeholder of the film) and not being written."""
+    now = time.time()
+    try:
+        return {e.name for e in os.scandir(folder) if e.is_file() and e.name[:1] != "."
+                and e.stat().st_size > 0 and now - e.stat().st_mtime > SETTLE}
+    except OSError:
+        return set()
+
+
+def shown_names(names, there):
+    """The file each frame of a strip shows: its own when it is done, else the nearest done frame
+    before it (after it at the start). Blender's Video Editor crashes on frame files that are empty or
+    still being written, so a strip never points at one. None when no frame is done."""
+    done = [i for i, n in enumerate(names) if n in there]
+    if not done:
+        return None
+    out, last = [], names[done[0]]
+    for n in names:
+        if n in there:
+            last = n
+        out.append(last)
+    return out
+
+
 def frame_status(section, start, end, fresh=False):
     """What is rendered of a section: {"folder", "names", "done", "total", "quality" ('LOW'/'HIGH'/''),
     "width" (pixels of its frames, 0 = unknown), "job" (a render was started)}. Read again after 1 s."""
@@ -118,10 +146,7 @@ def frame_status(section, start, end, fresh=False):
     ov = _overrides(job)
     ext = ".png" if job.get("video") else _EXTS.get(ov.get("render.image_settings.file_format"), ".png")
     names = frame_names(section, start, end, ext)
-    try:
-        there = {e.name for e in os.scandir(folder) if e.is_file() and e.stat().st_size > 0}
-    except OSError:
-        there = set()
+    there = finished_files(folder)
     done = sum(1 for n in names if n in there)
     width = 0
     scene = bpy.context.scene
@@ -133,7 +158,8 @@ def frame_status(section, start, end, fresh=False):
         except (TypeError, ValueError):
             width = 0
     out = {"folder": folder, "names": names, "done": done, "total": len(names), "ext": ext,
-           "quality": job.get("quality", "") if done else "", "width": width, "job": bool(job)}
+           "quality": job.get("quality", "") if done else "", "width": width, "job": bool(job),
+           "shown": shown_names(names, there)}
     _status[key] = (now, out)
     return out
 
@@ -351,7 +377,9 @@ def _make_section_strip(scene, name, kind, data, channel, at):
     """(strip, paths) of a section: its frames, an older film's frames or a 3.9 video."""
     strips = _strips(scene.sequence_editor)
     if kind == "FRAMES":
-        paths = [os.path.join(data["folder"], n) for n in data["names"]]
+        if not data["shown"]:
+            return None, None                      # nothing done yet: it comes with its first frames
+        paths = [os.path.join(data["folder"], n) for n in data["shown"]]
         strip = _image(strips, name, paths, channel, at, fit='ORIGINAL')
         _fit(scene, strip, data["width"])
     elif kind == "OLD":
@@ -396,12 +424,12 @@ def build(scene):
     at = found[0][1] if found else scene.frame_start
     for name, start, end, kind, data in found:
         length = end - start + 1
-        if kind is None or (kind == "FRAMES" and not data["done"] and not data["job"]):
+        strip, paths = _make_section_strip(scene, name, kind, data, 1, at) if kind else (None, None)
+        if strip is None:
             report["missing"].append(name)
             at += length
             continue
         item = settings(scene, name)
-        strip, paths = _make_section_strip(scene, name, kind, data, 1, at)
         if kind == "FRAMES" and data["done"] < data["total"]:
             report["missing"].append(name)
         last = strip
@@ -477,8 +505,45 @@ def sync(scene):
             for strip in ours(scene):
                 if _get(strip, SECTION_KEY) == name and _get(strip, KIND_KEY) in {"SECTION", "HOLD", "FREEZE"}:
                     _fit(scene, strip, data["width"])
+                    if _get(strip, KIND_KEY) == "SECTION" and data["shown"]:
+                        _point_to(strip, data["names"], data["shown"])
+    repair(scene)
     _reload(scene)
     return "synced"
+
+
+def _point_to(strip, names, shown):
+    """A section strip's frames as they are now: each points at its own file once it is done (a strip
+    with one element per frame of its section; strips cut into parts keep theirs)."""
+    elements = list(getattr(strip, "elements", []))
+    if len(elements) != len(names):
+        return
+    for element, wanted in zip(elements, shown):
+        if element.filename != wanted:
+            element.filename = wanted
+
+
+def repair(scene):
+    """Our image strips never point at a frame file that is empty or missing (Blender's Video Editor
+    crashes drawing one): such frames show the nearest done frame; a strip without any is removed
+    (it comes again with its first frames)."""
+    from . import film_edit
+    fixed = 0
+    for strip in [s for s in ours(scene) if s.type == 'IMAGE']:
+        folder = bpy.path.abspath(strip.directory)
+        there = finished_files(folder)
+        names = [e.filename for e in strip.elements]
+        if all(n in there for n in names):
+            continue
+        shown = shown_names(names, there)
+        if shown is None:
+            film_edit.remove(scene, strip)
+        else:
+            for element, name in zip(strip.elements, shown):
+                if element.filename != name:
+                    element.filename = name
+        fixed += 1
+    return fixed
 
 
 def replace_section(scene, section):
@@ -1262,6 +1327,16 @@ def _migrate():
 
 @bpy.app.handlers.persistent
 def _loaded(_dummy=None):
+    try:
+        scenes = list(bpy.data.scenes)       # (not while the add-on registers)
+    except AttributeError:
+        scenes = []
+    for scene in scenes:                     # before the first redraw: no strip on an empty frame file
+        try:
+            if scene.sequence_editor is not None and repair(scene):
+                print("AI Studio: %s: strips on unfinished frames repaired" % scene.name)
+        except (RuntimeError, ReferenceError, AttributeError) as ex:
+            print("AI Studio: repair:", ex)
     if not bpy.app.timers.is_registered(_migrate):
         bpy.app.timers.register(_migrate, first_interval=2.0)
 

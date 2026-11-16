@@ -117,7 +117,7 @@ class CLAUDE_OT_autosave_now(bpy.types.Operator):
         return tip(cls.bl_description)
 
     def execute(self, context):
-        path = autosave.save_now("manual", force=True)
+        path = autosave.save_now("manual", force=True, by_user=True)
         if path:
             self.report({'INFO'}, tr("Saved: {}").format(path))
             return {'FINISHED'}

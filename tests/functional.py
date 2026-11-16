@@ -2493,6 +2493,9 @@ def motion_sections():
             img.save()
             for f in range(a + 1, b + 1):
                 shutil.copyfile(first, os.path.join(folder, "%s_%04d.png" % (name, f)))
+            old = time.time() - 60                  # done a minute ago (frames being written are not read)
+            for f in range(a, b + 1):
+                os.utime(os.path.join(folder, "%s_%04d.png" % (name, f)), (old, old))
             with open(os.path.join(folder, ".film", "job.json"), "w") as f:
                 json.dump({"scene": scene.name, "quality": "LOW", "overrides": [
                     ["render.resolution_x", 4], ["render.resolution_percentage", 100]]}, f)
@@ -2646,6 +2649,32 @@ def explosion_view():
             scene.pop(explode.PROP, None)
         else:
             scene[explode.PROP] = keep
+
+
+@section
+def unfinished_frames_and_folders():
+    """Strips never point at empty or unfinished frame files; new project folders never nest."""
+    cut = mod("studio.cut")
+    names = ["a_0001.png", "a_0002.png", "a_0003.png"]
+    check("unfinished frames show the frame before (or none)",
+          cut.shown_names(names, {"a_0001.png", "a_0003.png"}) == ["a_0001.png", "a_0001.png", "a_0003.png"]
+          and cut.shown_names(names, {"a_0003.png"}) == ["a_0003.png"] * 3 and cut.shown_names(names, set()) is None)
+    folder = os.path.join(TMP, "frames_settle")
+    os.makedirs(folder, exist_ok=True)
+    for n, size in (("a_0001.png", 10), ("a_0002.png", 0), ("a_0003.png", 10)):
+        with open(os.path.join(folder, n), "wb") as f:
+            f.write(b"x" * size)
+    old = time.time() - 60
+    os.utime(os.path.join(folder, "a_0001.png"), (old, old))
+    check("an empty placeholder and a frame just written are not done",
+          cut.finished_files(folder) == {"a_0001.png"}, cut.finished_files(folder))
+    autosave = mod("autosave")
+    root = os.path.join(TMP, "projects_root")
+    inner = os.path.join(root, "Lampe")
+    os.makedirs(inner, exist_ok=True)
+    open(os.path.join(inner, "Lampe" + autosave.main_suffix() + ".blend"), "wb").close()
+    check("a file saved inside a project folder gets its folder next to it", autosave.projects_root(inner) == root
+          and autosave.projects_root(root) == root, autosave.projects_root(inner))
 
 
 @section

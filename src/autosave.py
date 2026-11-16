@@ -42,6 +42,9 @@ import bpy
 CHECK_INTERVAL = 15.0     # seconds between timer checks
 RISKY_MIN_GAP = 120.0     # at most one "before risky" save per 2 minutes
 CRITICAL_MIN_GAP = 300.0  # while memory stays critical: at most one save per 5 minutes
+BIG_FILE = 1 << 30        # a .blend from 1 GB on: saving takes long and needs memory, so …
+BIG_MIN_GAP = 900.0       # … automatic backups at most every 15 minutes …
+BIG_KEEP = 2              # … and only the newest 2 kept
 HEARTBEAT = 2.0           # seconds between heartbeats for the freeze watch
 STALL = 30.0              # no heartbeat for this long = Blender hangs
 
@@ -312,8 +315,7 @@ def make_main():
 
 
 def _prune_project(backups, stem):
-    prefs = _prefs()
-    _prune(backups, stem, prefs.autosave_keep if prefs is not None else 5)
+    _prune(backups, stem, _keep(_prefs()))
 
 
 def in_project_folder(filepath=None):
@@ -322,12 +324,26 @@ def in_project_folder(filepath=None):
     return bool(filepath) and os.path.basename(main_folder(filepath)) == project_name(filepath)
 
 
+def is_project_folder(folder):
+    """A folder of a project: <name>/ with <name>_now.blend or its project memory <name>.claude.md."""
+    name = os.path.basename(os.path.normpath(folder))
+    return any(os.path.isfile(os.path.join(folder, name + end)) for end in (main_suffix() + ".blend", ".claude.md"))
+
+
+def projects_root(folder):
+    """Where a new project folder goes: next to the project the file was saved in, never inside it
+    (a copy saved as "<name>_RETTUNG" or a new file saved from within a project folder)."""
+    while is_project_folder(folder) and os.path.dirname(folder) != folder:
+        folder = os.path.dirname(folder)
+    return folder
+
+
 def project_folder_target(filepath=None):
     """The project folder the open file should move to, or None if it is in one (or unsaved)."""
     filepath = filepath if filepath is not None else bpy.data.filepath
     if not filepath or in_project_folder(filepath):
         return None
-    return os.path.join(main_folder(filepath), project_name(filepath))
+    return os.path.join(projects_root(main_folder(filepath)), project_name(filepath))
 
 
 def move_to_project_folder(fresh=False):
@@ -388,8 +404,23 @@ def _busy_rendering():
         return False
 
 
-def save_now(reason, force=False):
-    """Save a backup (or the file) now. Returns the path or None. Main thread only."""
+def big_file():
+    """The open file is big (from 1 GB): automatic backups are rarer and fewer."""
+    try:
+        return bool(bpy.data.filepath) and os.path.getsize(bpy.data.filepath) >= BIG_FILE
+    except OSError:
+        return False
+
+
+def _keep(prefs):
+    keep = prefs.autosave_keep if prefs is not None else 5
+    return min(keep, BIG_KEEP) if big_file() else keep
+
+
+def save_now(reason, force=False, by_user=False):
+    """Save a backup (or the file) now. Returns the path or None. Main thread only.
+    A big file (from 1 GB) is backed up automatically at most every 15 minutes (each copy takes long
+    and needs memory, which can crash Blender); by_user (a button) always saves."""
     global _changed
     prefs = _prefs()
     if prefs is None or (not prefs.autosave and not force):
@@ -398,6 +429,8 @@ def save_now(reason, force=False):
         return None
     if _busy_rendering() or _queue_preparing():
         return None  # saving during a render can crash Blender
+    if not by_user and big_file() and time.time() - state["last"] < BIG_MIN_GAP:
+        return None
     try:
         if prefs.autosave_mode == 'FILE' and bpy.data.filepath and bpy.data.is_saved:
             bpy.ops.wm.save_mainfile(check_existing=False)
@@ -408,7 +441,7 @@ def save_now(reason, force=False):
             stem = _stem()
             path = _unique_path(folder, stem)   # never overwrite (Blender would also leave a .blend1)
             bpy.ops.wm.save_as_mainfile(filepath=path, copy=True, compress=False, check_existing=False)
-            _prune(folder, stem, prefs.autosave_keep)
+            _prune(folder, stem, _keep(prefs))
     except Exception as exc:
         state["error"] = str(exc)
         traceback.print_exc()
@@ -468,7 +501,7 @@ def _tick():
             _last_pressure_level = level
             # macOS can stay at "warn" for hours: save once when it starts, again only if critical.
             if (level >= 2 and before < 2) or (level >= 4 and now - state["last"] >= CRITICAL_MIN_GAP):
-                save_now("memory low", force=True)
+                save_now("memory low", force=True)   # (a big file: within its 15-minute gap only)
                 return CHECK_INTERVAL
         if now - state["last"] >= prefs.autosave_minutes * 60:
             save_now("regular")
