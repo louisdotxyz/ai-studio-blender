@@ -438,7 +438,7 @@ def _glide():
 
 def _in_claude_sidebar(context):
     area, region = context.area, context.region
-    if not (area and region and area.type == 'VIEW_3D' and region.type == 'UI'):
+    if not (area and region and area.type in {'VIEW_3D', 'SEQUENCE_EDITOR'} and region.type == 'UI'):
         return False
     try:
         return region.active_panel_category == "Claude"

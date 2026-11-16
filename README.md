@@ -196,6 +196,10 @@ stays on your computer.
 - `python3 tests/update_e2e.py` installs an old build from a local test repository into a fresh
   Blender profile and lets it update itself to the current version.
 
+Versions (`src/blender_manifest.toml`, X.Y.Z): Z for fixes and small changes, Y for new features or a
+reworked area, X only for a big change of what the add-on is (e.g. 4.0: films, Krea). Blender extensions take
+three numbers only, so there is no fourth; numbers never go down (installed copies update only upward).
+
 Up to 0.24 the extension id was `claude_assistant`. Version 1.0 (`AI_Studio`) takes over its settings,
 chats and Studio data, turns it off and asks you to remove it in *Preferences › Get Extensions*.
 

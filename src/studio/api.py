@@ -991,6 +991,91 @@ def cut_export(edl=False):
     return out
 
 
+def _cut_scene():
+    return getattr(bpy.context, "sequencer_scene", None) or bpy.context.scene
+
+
+def _clip(scene, target):
+    """A strip by its name or its section's name (the section's first strip)."""
+    from . import cut
+    sed = scene.sequence_editor
+    if sed is None:
+        raise ValueError("Nothing in the Video Editor yet")
+    strip = sed.strips_all.get(target) if hasattr(sed, "strips_all") else sed.sequences_all.get(target)
+    strip = strip or cut.section_strip(scene, target)
+    if strip is None:
+        raise ValueError("No strip or section %r" % target)
+    return strip
+
+
+def cut_state():
+    """What the Video Editor shows: {"scene", "playhead", "active", "active_3d_frame", "strips": [{"name",
+    "type", "channel", "frames", "kind", "section", "look"}]} (strips in time order)."""
+    from . import film_edit
+    return film_edit.state(_cut_scene())
+
+
+def cut_look(target, brightness=None, contrast=None, saturation=None, warmth=None):
+    """A clip's look; target = strip or section name, "all" (every clip) or "film" (an adjustment layer over
+    everything). brightness / contrast -100..100, saturation 0..2 (1 = as rendered), warmth -1..1."""
+    from . import film_edit
+    scene = _cut_scene()
+    if target == "film":
+        strips = [film_edit.film_look(scene)]
+    elif target == "all":
+        strips = film_edit.clips(scene)
+    else:
+        strips = [_clip(scene, target)]
+    for strip in strips:
+        film_edit.set_look(strip, brightness, contrast, saturation, warmth)
+    return {s.name: film_edit.look_of(s) for s in strips}
+
+
+def cut_fade(side, frames=12, color="BLACK", target=None):
+    """A fade in ("IN") from or out ("OUT") to black or white; target strip / section, None = the whole film."""
+    from . import film_edit
+    scene = _cut_scene()
+    made = film_edit.fade(scene, side.upper(), int(frames), color.upper(), _clip(scene, target) if target else None)
+    return made.name if made is not None else None
+
+
+def cut_freeze(frame, frames=24):
+    """The image at this Video Editor frame stands still for `frames`; everything after it moves along."""
+    from . import film_edit
+    return film_edit.freeze(_cut_scene(), int(frame), int(frames)).name
+
+
+def cut_transition(section, kind, frames=12):
+    """CUT / CROSS / BLACK / WHITE from `section` into the next one, in place."""
+    from . import cut
+    item = cut.settings(_cut_scene(), section)
+    item.transition, item.frames = kind.upper(), int(frames)
+    from . import film_edit
+    film_edit.apply_section(_cut_scene(), section)
+    return {"section": section, "transition": item.transition, "frames": item.frames}
+
+
+def cut_hold(section, frames):
+    """The section's last image stands still for `frames` after it (0 = none), in place."""
+    from . import cut, film_edit
+    item = cut.settings(_cut_scene(), section)
+    item.hold = int(frames)
+    film_edit.apply_section(_cut_scene(), section)
+    return {"section": section, "hold": item.hold}
+
+
+def cut_letterbox(ratio=2.39):
+    """Black bars for this aspect ratio (0 = none)."""
+    from . import film_edit
+    return [s.name for s in film_edit.letterbox(_cut_scene(), ratio)]
+
+
+def cut_title(text, frame=None, length=48, place="CENTER"):
+    """A title at a Video Editor frame (default: the playhead), centred or "LOWER" third."""
+    from . import film_edit
+    return film_edit.title(_cut_scene(), text, frame, int(length), place.upper()).name
+
+
 def render_status():
     """What renders and what is ready, for checking renders without own processes:
     {"busy", "message", "queue": [labels], "current": {"label", "path", "progress"} or None,

@@ -743,3 +743,8 @@ class CLAUDE_PT_chat(bpy.types.Panel):
         if core.lessons_count:
             text += " · " + tr("{} lessons").format(core.lessons_count)
         row.operator("claude.compact_chat", text=text, emboss=False, translate=False)
+
+
+class CLAUDE_PT_chat_video(CLAUDE_PT_chat):
+    """The chat in the Video Editor's sidebar: the cut chat of the scene (film_chat.py)."""
+    bl_space_type = 'SEQUENCE_EDITOR'

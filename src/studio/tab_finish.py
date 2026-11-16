@@ -11,9 +11,8 @@ from bpy.props import BoolProperty, CollectionProperty, EnumProperty, IntPropert
 from bpy.types import Menu, Operator, Panel
 
 from . import image_edit, krea, krea_scene, look, runner, tab_queue
-from .ui_common import _SidebarPanel, _unpin, section, tab_head
+from .ui_common import section, tab_head
 
-FINISH_TAB_ORDER = 5
 LOOK_KEYS = ("look_glow", "look_contrast", "look_vignette", "look_saturation")
 
 
@@ -738,14 +737,20 @@ class STUDIO_PT_finish_settings(Panel):
         row.operator(STUDIO_OT_krea_usage.bl_idname, icon='FUND')
 
 
-class STUDIO_PT_finish(_SidebarPanel, Panel):
-    studio_tab = 'FINISH'
+class STUDIO_PT_finish(Panel):
+    """Refine: in the Compositing workspace's node editor sidebar (the look is the compositor)."""
+    bl_space_type = 'NODE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category = "Studio"
     bl_label = "Refine"
     bl_options = {'HIDE_HEADER'}
-    bl_order = FINISH_TAB_ORDER
+
+    @classmethod
+    def poll(cls, context):
+        space = context.space_data
+        return space is None or getattr(space, "tree_type", 'CompositorNodeTree') == 'CompositorNodeTree'
 
     def draw(self, context):
-        _unpin(self)
         layout = self.layout
         tab_head(layout, STUDIO_MT_edit_presets.bl_idname, "Adjustments", STUDIO_OT_edit_save_preset.bl_idname,
                  STUDIO_PT_finish_settings.__name__, icon='IMAGE_DATA')

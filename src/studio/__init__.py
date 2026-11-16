@@ -50,7 +50,7 @@ from .tab_queue import (STUDIO_MT_render_presets, STUDIO_OT_add, STUDIO_OT_cance
                         STUDIO_OT_preview_step, STUDIO_OT_remove, STUDIO_OT_render_queue, STUDIO_OT_show_render,
                         STUDIO_OT_render_overview, STUDIO_OT_render_pick, STUDIO_OT_render_reveal,
                         STUDIO_OT_render_ab, STUDIO_OT_render_rate, STUDIO_OT_render_arrange, STUDIO_MT_render_arrange,
-                        STUDIO_OT_render_refine,
+                        STUDIO_OT_render_refine, STUDIO_OT_open_review, STUDIO_PT_review,
                         STUDIO_OT_view_camera, STUDIO_PT_output, STUDIO_PT_render_queue, draw_statusbar)
 from . import cad_link, render_setup
 from .look import STUDIO_OT_look_preset, STUDIO_OT_look_reset, STUDIO_OT_open_compositor
@@ -234,6 +234,8 @@ classes = render_setup.classes + (
     STUDIO_PT_lighting,
     STUDIO_PT_material,
     STUDIO_PT_render_queue,
+    STUDIO_OT_open_review,
+    STUDIO_PT_review,
 )
 
 

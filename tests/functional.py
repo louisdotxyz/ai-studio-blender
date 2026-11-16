@@ -2534,6 +2534,30 @@ def motion_sections():
             film._remove_frames(folder, "02 Hero", (60, 62))
             left = cut.frame_status("02 Hero", 51, 110, fresh=True)
             check("render again from a frame: only those frames go", left["done"] == 57, left["done"])
+            fe = mod("studio.film_edit")
+            before = cut.strip_range(scene)[1]
+            fe.set_hold(scene, "01 Intro", 10)        # in place: what follows moves along, the cross stays
+            after_hold = cut.strip_range(scene)[1]
+            fe.freeze(scene, 20, 5)
+            parts = [s for s in cut.ours(scene) if cut._get(s, cut.SECTION_KEY) == "01 Intro"
+                     and cut._get(s, cut.KIND_KEY) == "SECTION"]
+            kinds = sorted(cut._get(s, cut.KIND_KEY) for s in cut.ours(scene))
+            check("hold and freeze in place: the rest moves along, the cross stays",
+                  after_hold == before + 10 and cut.strip_range(scene)[1] == after_hold + 5 and len(parts) == 2
+                  and "CROSS" in kinds and "FREEZE" in kinds, (before, after_hold, cut.strip_range(scene), kinds))
+            places = [(s.name, s.frame_final_start, s.channel) for s in cut.ours(scene)]
+            check("after a render the strips stay where they are", cut.sync(scene) == "synced"
+                  and [(s.name, s.frame_final_start, s.channel) for s in cut.ours(scene)] == places)
+            fe.set_look(intro, contrast=20.0, warmth=0.5)
+            fe.fade(scene, 'IN', 8)
+            fe.film_look(scene)
+            bars = fe.letterbox(scene, 2.39)
+            look_mod = intro.modifiers.get(fe.LOOK_MOD)
+            state = fe.state(scene)
+            check("look, fade, film look, letterbox", look_mod is not None and abs(look_mod.contrast - 20) < 1e-3
+                  and intro.modifiers.get(fe.COLOR_MOD) is not None and fe._ours(scene, "FADE")
+                  and fe.film_look(scene, create=False) is not None and len(bars) == 2
+                  and state["playhead"] == scene.frame_current, (look_mod, [s["name"] for s in state["strips"]]))
         finally:
             cut._remove_ours(scene)
             if not had_editor:
@@ -2626,7 +2650,7 @@ def explosion_view():
 
 @section
 def tabs_without_switch():
-    """Five tabs; the Animation tab of 3.x opens the Camera tab (Motion is there now)."""
+    """Four tabs in the 3D sidebar; the Animation tab of 3.x opens the Camera tab (Motion is there now)."""
     ui = mod("studio.ui_common")
     wm = bpy.context.window_manager
     keep = wm.studio_tab
@@ -2634,8 +2658,9 @@ def tabs_without_switch():
         wm.studio_tab = 'ANIM'
     except TypeError:
         pass
-    check("no Still / Film switch: five tabs, Animation → Camera", ui.studio_tab(bpy.context) == 'RENDER'
-          and ui.visible_tabs() == ('RENDER', 'LIGHT', 'MATERIAL', 'QUEUE', 'FINISH'), ui.visible_tabs())
+    check("no Still / Film switch: four tabs, Animation → Camera (Refine in the Compositor)",
+          ui.studio_tab(bpy.context) in ui.visible_tabs()
+          and ui.visible_tabs() == ('RENDER', 'LIGHT', 'MATERIAL', 'QUEUE'), ui.visible_tabs())
     skills = mod("skills")
     anim = next((s for s in skills.list_skills(mod("core").workdir()) if s["name"] == "anim"), None)
     check("the ANIM skill is not in the skill row (it comes by itself)", anim is None or not anim["in_chat"])

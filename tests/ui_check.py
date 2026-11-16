@@ -202,8 +202,8 @@ run(bpy.types.STUDIO_PT_cut, ctx)
 wm.studio_tab = 'QUEUE'
 run(bpy.types.STUDIO_PT_render_queue, ctx)
 run(bpy.types.STUDIO_PT_tabs, ctx)
-wm.studio_tab = 'FINISH'
-run(bpy.types.STUDIO_PT_finish, ctx)
+run(bpy.types.STUDIO_PT_finish, ctx)       # Refine: in the Compositor's sidebar
+run(bpy.types.STUDIO_PT_review, ctx)       # Compare & Sort: in the Image Editor's sidebar
 studio_p = bpy.context.preferences.addons[PKG].preferences.studio
 studio_p.krea_token = "test-token"
 wm.studio_krea_refs = "/nonexistent/room.jpg\n/nonexistent/hand.jpg"

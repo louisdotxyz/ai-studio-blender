@@ -337,7 +337,7 @@ class STUDIO_MotionStep(PropertyGroup):
 
 
 class STUDIO_CutItem(PropertyGroup):
-    """How a section goes into the cut (Video Editor · Studio): a change builds the strips again."""
+    """How a section goes into the next one (Video Editor · Studio): changed in place on the strips."""
     section: StringProperty(name="Section", options=set())
     transition: EnumProperty(name="Transition", description="Into the next section", options=set(),
                              update=lambda s, _c: _cut_changed(s),
@@ -351,8 +351,9 @@ class STUDIO_CutItem(PropertyGroup):
 
 
 def _cut_changed(item):
+    """A section's transition or hold (or the music) changed: in place, on the strips as they are."""
     from . import cut
-    cut.build_soon(item.id_data)
+    cut.apply_soon(item.id_data, getattr(item, "section", None) or None)
 
 
 def _motion_items():

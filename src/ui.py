@@ -47,7 +47,7 @@ from .ui_menus import (
     CLAUDE_OT_prompt_confirmed, _clearing, _prompt_update, _send_prompt
 )  # noqa: F401
 from .ui_panel import (
-    CLAUDE_PT_chat, CLAUDE_PT_settings, _setup_questions_open, _setup_steps_open, _setup_visible, _wrap_text
+    CLAUDE_PT_chat, CLAUDE_PT_chat_video, CLAUDE_PT_settings, _setup_questions_open, _setup_steps_open, _setup_visible, _wrap_text
 )  # noqa: F401
 
 _previews = None
@@ -115,6 +115,7 @@ classes = (
     CLAUDE_FH_attach,
     CLAUDE_PT_settings,
     CLAUDE_PT_chat,
+    CLAUDE_PT_chat_video,
 )
 
 

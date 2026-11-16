@@ -415,6 +415,63 @@ def _title(path):
     return runner.variant_of(path) or os.path.splitext(os.path.basename(path))[0]
 
 
+def open_workspace(context, name, space_type):
+    """Switch to a workspace (Rendering, Compositing …) and open the Studio sidebar of its `space_type`
+    editor. Without that workspace: the biggest editor that is not a 3D view becomes one. Returns its spaces."""
+    window = context.window
+    space = bpy.data.workspaces.get(name)
+    if space is not None:
+        window.workspace = space
+        screens = list(space.screens)
+    else:
+        area = max((a for a in window.screen.areas if a.type != 'VIEW_3D'), key=lambda a: a.width * a.height,
+                   default=None)
+        if area is not None:
+            if space_type == 'NODE_EDITOR':
+                area.ui_type = 'CompositorNodeTree'
+            else:
+                area.type = space_type
+        screens = [window.screen]
+    found = []
+    for screen in screens:
+        for area in screen.areas:
+            if area.type == space_type:
+                for sp in area.spaces:
+                    if sp.type == space_type:
+                        sp.show_region_ui = True
+                        found.append(sp)
+    return found
+
+
+def show_in_image_editor(context, path):
+    """The render in the Image Editors of the window (the Compare & Sort workspace)."""
+    if not path or not os.path.isfile(path):
+        return
+    try:
+        image = bpy.data.images.load(path, check_existing=True)
+    except RuntimeError:
+        return
+    for area in context.window.screen.areas:
+        if area.type == 'IMAGE_EDITOR':
+            for sp in area.spaces:
+                if sp.type == 'IMAGE_EDITOR':
+                    sp.image = image
+
+
+class STUDIO_OT_open_review(Operator):
+    bl_idname = "studio.open_review"
+    bl_label = "Compare & Sort"
+    bl_description = ("All renders big in the Image Editor (Rendering workspace): compare A / B, stars, sort, "
+                      "batches; Studio tab in its sidebar")
+    bl_options = {'INTERNAL'}
+
+    def execute(self, context):
+        open_workspace(context, "Rendering", 'IMAGE_EDITOR')
+        images = runner.queue_images(context.scene)
+        show_in_image_editor(context, _selected_image(images) if images else "")
+        return {'FINISHED'}
+
+
 class STUDIO_OT_render_pick(Operator):
     bl_idname = "studio.render_pick"
     bl_label = "Render"
@@ -426,12 +483,14 @@ class STUDIO_OT_render_pick(Operator):
     @classmethod
     def description(cls, _context, props):
         if props.slot == "VIEW":
-            return "Show this render big above (also in the Refine tab)"
+            return "Show this render big (also in Refine)"
         return "Compare: this render as %s (click again: not)" % props.slot
 
     def execute(self, context):
         if self.slot == "VIEW":
             _view["path"] = self.path
+            if context.area is not None and context.area.type == 'IMAGE_EDITOR':
+                show_in_image_editor(context, self.path)
         else:
             _ab[self.slot] = "" if _ab[self.slot] == self.path else self.path
         return {'FINISHED'}
@@ -513,7 +572,8 @@ class STUDIO_MT_render_arrange(Menu):
 class STUDIO_OT_render_refine(Operator):
     bl_idname = "studio.render_refine"
     bl_label = "Refine"
-    bl_description = "Open this render in the Refine tab: Krea, look and adjustments (the result comes back here)"
+    bl_description = ("Refine this render in the Compositing workspace (Studio tab in its sidebar): look, Krea and "
+                      "adjustments (the result comes back here)")
     bl_options = {'INTERNAL'}
 
     path: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
@@ -521,7 +581,7 @@ class STUDIO_OT_render_refine(Operator):
     def execute(self, context):
         if self.path:
             _view["path"] = self.path
-        context.window_manager.studio_tab = 'FINISH'
+        open_workspace(context, "Compositing", 'NODE_EDITOR')
         return {'FINISHED'}
 
 
@@ -835,6 +895,90 @@ class STUDIO_MT_render_presets(Menu):
         layout.prop_enum(rq, "quality", 'LOW', text="Low Quality")
 
 
+def _draw_renders(layout, context, review):
+    """The newest render or the one picked (◀ ▶, A / B, stars, Refine); in the Image Editor (review) also
+    comparing and all renders."""
+    scene = context.scene
+    # The preview: the entry that renders now (its quick draft, then the image) or the render you
+    # picked; ◀ ▶ through all renders, the magnifier opens it big, [A] [B] and Compare next to it.
+    images = runner.queue_images(scene)
+    path = _selected_image(images)
+    live = _live() if not _view["path"] else None
+    image = bpy.data.images.get(runner.PREVIEW_IMAGE)
+    if path and (image is None or
+                 os.path.normpath(bpy.path.abspath(image.filepath)) != os.path.normpath(path)):
+        _schedule_preview(path)   # data can't change inside draw
+        image = None              # still the older image until it is loaded
+    entries = ([""] if _live() else []) + images
+    if not entries:
+        sub = layout.row()
+        sub.active = False
+        sub.label(text="No renders yet: start them in the chat", icon='INFO')
+        return
+    index = 0 if live is not None or path not in entries else entries.index(path)
+    pic = layout.box()
+    head = pic.row(align=True)
+    older = head.row(align=True)
+    older.enabled = index < len(entries) - 1
+    older.operator(STUDIO_OT_preview_step.bl_idname, text="", icon='TRIA_LEFT').direction = 1
+    count = head.row(align=True)
+    count.alignment = 'CENTER'
+    count.label(text="Rendering" if live is not None else
+                "%d / %d" % (index + 1, len(entries)) if index else "Newest")
+    newer = head.row(align=True)
+    newer.enabled = index > 0
+    newer.operator(STUDIO_OT_preview_step.bl_idname, text="", icon='TRIA_RIGHT').direction = -1
+    head.operator(STUDIO_OT_show_render.bl_idname, text="", icon='ZOOM_IN')
+    scale = max(6.0, min(24.0, context.region.width / (20 * (context.preferences.system.ui_scale or 1.0)) - 2.5))
+    if image is not None and path:
+        pic.template_icon(icon_value=layout.icon(image), scale=scale)
+    else:   # the same height until the draft is there
+        wait = pic.row()
+        wait.alignment = 'CENTER'
+        wait.scale_y = scale
+        wait.active = False
+        wait.label(text="", icon='TIME' if live is not None else 'NONE')
+    row = pic.row(align=True)
+    if live is not None:
+        row.label(text=live["camera"], icon='RENDER_STILL', translate=False)
+    elif path:
+        _ab_button(row, path, "A")
+        _ab_button(row, path, "B")
+        row.label(text=_title(path), translate=False)
+        row.operator(STUDIO_OT_render_reveal.bl_idname, text="", icon='FILE_FOLDER', emboss=False).path = path
+        row = pic.row(align=True)
+        _stars(row, path)
+        refine = row.row(align=True)
+        refine.alignment = 'RIGHT'
+        refine.operator(STUDIO_OT_render_refine.bl_idname, text="Refine", icon='NODE_COMPOSITING').path = path
+    if not review:              # comparing and sorting: big, in the Image Editor (Rendering workspace)
+        row = layout.row(align=True)
+        row.scale_y = 1.2
+        row.operator(STUDIO_OT_open_review.bl_idname, text="Compare & Sort (%d)" % len(images), icon='IMAGE')
+        return
+    _draw_compare(layout, context)
+    _draw_overview(layout, context, images, path)
+
+
+class STUDIO_PT_review(Panel):
+    """Compare & Sort: the renders in the Image Editor's sidebar (Rendering workspace)."""
+    bl_space_type = 'IMAGE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category = "Studio"
+    bl_label = "Renders"
+    bl_options = {'HIDE_HEADER'}
+
+    def draw(self, context):
+        layout = self.layout
+        from . import render_review
+        head = layout.row(align=True)
+        head.scale_y = 1.2
+        sort = next(label for key, label, _i in render_review.SORTS if key == render_review.state["sort"])
+        head.menu(STUDIO_MT_render_arrange.bl_idname, text=sort, icon='FILTER')
+        head.operator("studio.cut", text="", icon='SEQUENCE').action = 'OPEN'
+        _draw_renders(layout, context, review=True)
+
+
 class STUDIO_PT_render_queue(_SidebarPanel, Panel):
     """The queue, in its own tab. New name in 0.14: a pinned panel shows up in every tab,
     and Blender keeps the pin per panel name in the file (STUDIO_PT_panel, STUDIO_PT_queue)."""
@@ -856,9 +1000,7 @@ class STUDIO_PT_render_queue(_SidebarPanel, Panel):
         # quality details) in the gear; renders are started in the chat
         head = layout.row(align=True)
         head.scale_y = 1.2
-        from . import render_review
-        sort = next(label for key, label, _i in render_review.SORTS if key == render_review.state["sort"])
-        head.menu(STUDIO_MT_render_arrange.bl_idname, text=sort, icon='FILTER')
+        head.operator(STUDIO_OT_open_review.bl_idname, text="Compare & Sort", icon='IMAGE')
         head.operator("studio.cut", text="", icon='SEQUENCE').action = 'OPEN'    # films: the Video Editor
         head.popover(STUDIO_PT_output.__name__, text="", icon='PREFERENCES')
 
@@ -889,57 +1031,5 @@ class STUDIO_PT_render_queue(_SidebarPanel, Panel):
             if RUN.message and not RUN.busy:
                 col_run.label(text=RUN.message, icon='INFO')
 
-        # The preview: the entry that renders now (its quick draft, then the image) or the render you
-        # picked; ◀ ▶ through all renders, the magnifier opens it big, [A] [B] and Compare next to it.
-        images = runner.queue_images(scene)
-        path = _selected_image(images)
-        live = _live() if not _view["path"] else None
-        image = bpy.data.images.get(runner.PREVIEW_IMAGE)
-        if path and (image is None or
-                     os.path.normpath(bpy.path.abspath(image.filepath)) != os.path.normpath(path)):
-            _schedule_preview(path)   # data can't change inside draw
-            image = None              # still the older image until it is loaded
-        entries = ([""] if _live() else []) + images
-        if not entries:
-            sub = layout.row()
-            sub.active = False
-            sub.label(text="No renders yet: start them in the chat", icon='INFO')
-            return
-        index = 0 if live is not None or path not in entries else entries.index(path)
-        pic = layout.box()
-        head = pic.row(align=True)
-        older = head.row(align=True)
-        older.enabled = index < len(entries) - 1
-        older.operator(STUDIO_OT_preview_step.bl_idname, text="", icon='TRIA_LEFT').direction = 1
-        count = head.row(align=True)
-        count.alignment = 'CENTER'
-        count.label(text="Rendering" if live is not None else
-                    "%d / %d" % (index + 1, len(entries)) if index else "Newest")
-        newer = head.row(align=True)
-        newer.enabled = index > 0
-        newer.operator(STUDIO_OT_preview_step.bl_idname, text="", icon='TRIA_RIGHT').direction = -1
-        head.operator(STUDIO_OT_show_render.bl_idname, text="", icon='ZOOM_IN')
-        scale = max(6.0, min(24.0, context.region.width / (20 * (context.preferences.system.ui_scale or 1.0)) - 2.5))
-        if image is not None and path:
-            pic.template_icon(icon_value=layout.icon(image), scale=scale)
-        else:   # the same height until the draft is there
-            wait = pic.row()
-            wait.alignment = 'CENTER'
-            wait.scale_y = scale
-            wait.active = False
-            wait.label(text="", icon='TIME' if live is not None else 'NONE')
-        row = pic.row(align=True)
-        if live is not None:
-            row.label(text=live["camera"], icon='RENDER_STILL', translate=False)
-        elif path:
-            _ab_button(row, path, "A")
-            _ab_button(row, path, "B")
-            row.label(text=_title(path), translate=False)
-            row.operator(STUDIO_OT_render_reveal.bl_idname, text="", icon='FILE_FOLDER', emboss=False).path = path
-            row = pic.row(align=True)
-            _stars(row, path)
-            refine = row.row(align=True)
-            refine.alignment = 'RIGHT'
-            refine.operator(STUDIO_OT_render_refine.bl_idname, text="Refine", icon='NODE_COMPOSITING').path = path
-        _draw_compare(layout, context)
-        _draw_overview(layout, context, images, path)
+        _draw_renders(layout, context, review=False)
+

@@ -692,6 +692,12 @@ def _send(text, extra_skills=()):
         skill = skills.find(workdir(), "anim")
         if skill:
             chosen.append(skill)
+    from . import film_chat
+    video = film_chat.context_line()      # the cut chat (Video Editor): the CUT skill and what it shows
+    if video and all(s["name"] != "cut" for s in chosen):
+        skill = skills.find(workdir(), "cut")
+        if skill:
+            chosen.append(skill)
     done_once = [s["name"] for s in chosen if skills.is_once(s) and s["name"] in active_skills]
     if done_once:                # one-off skills (SORT, CAD …) switch themselves off after this message
         active_skills[:] = [n for n in active_skills if n not in done_once]
@@ -705,6 +711,8 @@ def _send(text, extra_skills=()):
         _skills_sent.update(s["name"] for s in chosen)
     else:
         prompt = text
+    if video:
+        prompt += "\n\n[" + video + "]"
 
     msg = {"role": "user", "text": text,
            "attachments": [{"name": a["name"], "kind": a["kind"], "path": a["path"]} for a in atts]}
@@ -1564,7 +1572,7 @@ def _tag_redraw():
         return
     for window in wm.windows:
         for area in window.screen.areas:
-            if area.type == 'VIEW_3D':
+            if area.type in {'VIEW_3D', 'SEQUENCE_EDITOR'}:
                 for region in area.regions:
                     if region.type == 'UI':
                         region.tag_redraw()

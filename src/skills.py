@@ -28,8 +28,9 @@ ACTIVE = ".active.json"   # the checked skills, kept between Blender sessions
 # In the chat's skill row also when an older copy of the file says only studio_tab (2.1: no
 # Claude line in the Light and Material tabs any more, these skills are used from the chat).
 IN_CHAT = {"camera", "light", "material"}
-# Never in the skill row, they come by themselves (anim: when the scene has sections or a film renders).
-HIDDEN = {"anim"}
+# Never in the skill row, they come by themselves (anim: when the scene has sections or a film renders;
+# cut: in the Video Editor's chat).
+HIDDEN = {"anim", "cut"}
 # Earlier shipped versions (sha1 of the file): a copy the user never changed gets the new text.
 UPGRADES = {"sort": {"b35e76dbacdeb8cbbbf0f5eb0167c16a63492077"},
             "cad": {"e7b3d80ae27d22995023a36ddcaab3b3761f1b97"},

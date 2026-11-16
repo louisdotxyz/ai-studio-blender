@@ -213,7 +213,7 @@ def camera_shot():
 def material_shot():
     shot("7_panel_material.png")
     with override():
-        bpy.context.window_manager.studio_tab = 'FINISH'
+        bpy.context.window_manager.studio_tab = 'QUEUE'
     for area in view()[0].screen.areas:
         area.tag_redraw()
 
