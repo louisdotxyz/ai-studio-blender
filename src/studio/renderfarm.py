@@ -1087,6 +1087,13 @@ def draw_rows(layout, buttons=True):
 BLOCKS = "▁▂▃▄▅▆▇█"
 BUCKET = 300.0            # seconds per bar of the graph
 BARS = 12                 # the last hour
+GRAPH_ROWS = 6            # the Render tab shows the last 30 minutes
+
+
+def _clock(secs):
+    """1:05 (minutes:seconds) or 1 h 05."""
+    secs = int(max(0, secs))
+    return "%d h %02d" % (secs // 3600, secs // 60 % 60) if secs >= 3600 else "%d:%02d" % (secs // 60, secs % 60)
 
 
 def frames_per_bucket(host=None, now=None):
@@ -1225,13 +1232,32 @@ def draw_state(layout, context):
     else:
         right.active = False
         right.label(text="no frames yet" if workers else "stopped", translate=False)
-    every = frames_per_bucket()
-    if any(every):
+    loading = [(n, j, since) for n, st, j, since in states if st == 'loading']
+    if loading and not rate:                         # the start: the Macs load the file before the first frame
+        longest = max(time.time() - since for _n, _j, since in loading)
         row = col.row()
-        row.label(text="Last hour", icon='GRAPH')
+        row.label(text="Start", icon='FILE_REFRESH')
         right = row.row()
         right.alignment = 'RIGHT'
-        right.label(text="%s  frames per 5 min" % sparkline(every), translate=False)
+        right.label(text="%d Mac%s load %s · %s" % (len(loading), "" if len(loading) == 1 else "s",
+                                                   _job_note(loading[0][1]), _clock(longest)), translate=False)
+    every = frames_per_bucket()
+    if any(every):                                   # the last 30 minutes, newest on top: one bar per 5 minutes
+        graph = box.column(align=True)
+        graph.separator(factor=0.3)
+        sub = graph.row()
+        sub.active = False
+        sub.label(text="Frames per 5 minutes", icon='GRAPH')
+        top = max(every) or 1
+        now = time.time()
+        for back, count in enumerate(reversed(every[-GRAPH_ROWS:])):
+            end = now - back * BUCKET
+            bar = graph.row(align=True)
+            bar.scale_y = 0.75
+            bar.progress(factor=count / top, type='BAR', text="%s  ·  %d frames" % (
+                time.strftime("%H:%M", time.localtime(end - BUCKET)), count) if count else
+                time.strftime("%H:%M", time.localtime(end - BUCKET)))
+        col = box.column(align=True)
     col.separator(factor=0.5)
     icons = {'rendering': 'RENDER_ANIMATION', 'loading': 'FILE_REFRESH', 'waiting': 'TIME', 'offline': 'CANCEL'}
     for name, state, job, since in states:
@@ -1242,7 +1268,7 @@ def draw_state(layout, context):
         row.label(text=name, icon=icons[state], translate=False)
         doing = row.row()
         doing.active = state == 'rendering'
-        doing.label(text={"rendering": "renders " + _job_note(job), "loading": "loads " + _job_note(job),
+        doing.label(text={"rendering": "renders " + _job_note(job), "loading": "loads %s · %s" % (_job_note(job), _clock(time.time() - since)),
                           "waiting": "waits for a job",
                           "offline": "OFFLINE since %s" % time.strftime("%H:%M", time.localtime(since))}[state],
                     translate=False)
