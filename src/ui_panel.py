@@ -139,6 +139,64 @@ def _fit_rows(context, rows, unit, key):
     return max(6, rows - state["extra"])
 
 
+def _draw_render_total(layout):
+    """One bar for every film that renders (this Mac and the render farm): frames, time left. Many renders
+    must not fill the chat; each one is in the Render tab."""
+    from .studio import film, renderfarm
+    from .studio.runner import format_time
+    have, total, secs, sending = renderfarm.summary()
+    films = 0
+    for entry, st, kind in film.films_here():
+        if kind in {'RENDERING', 'ENCODING', 'PAUSED'}:
+            films += 1
+            have += st.get("done", 0)
+            total += st.get("total", 0)
+            left = film.time_left(st) if kind == 'RENDERING' else None
+            secs = max(secs or 0.0, left or 0.0) or secs
+    if not total:
+        return False
+    bits = ["Renders %d/%d" % (have, total)]
+    if secs:
+        bits.append("~%s left" % format_time(secs))
+    if sending:
+        bits.append("%d being sent" % sending)
+    layout.progress(factor=min(1.0, have / total), type='BAR', text=" · ".join(bits))
+    return True
+
+
+PREVIEW_LINES = 5
+
+
+def prompt_preview_lines(context):
+    """The lines of a message too long for the one-line box (its end, where you write), [] if it fits."""
+    try:
+        text = context.window_manager.claude_prompt
+        if len(text) < 40 and "\n" not in text:
+            return []
+        chatview._setup_font(context)
+        width = max(80.0, context.region.width - 3.0 * chatview.UNIT * chatview.ui_scale(context))
+        lines = []
+        for part in text.split("\n"):
+            lines += chatview.wrap(part, width) or [""]
+    except (AttributeError, TypeError, ReferenceError):
+        return []
+    if len(lines) <= 1:
+        return []
+    return (["…"] + lines[-PREVIEW_LINES:]) if len(lines) > PREVIEW_LINES else lines
+
+
+def _draw_prompt_preview(layout, context):
+    lines = prompt_preview_lines(context)
+    if not lines:
+        return
+    col = layout.column(align=True)
+    col.scale_y = 0.8
+    col.active = False
+    for line in lines:
+        col.label(text=line or " ", translate=False)
+    col.separator(factor=0.4)
+
+
 class _ChatPanel:
     """The chat; the same in the 3D view and in the Video Editor (there: the cut chat, film_chat.py)."""
     bl_region_type = 'UI'
@@ -163,7 +221,8 @@ class _ChatPanel:
 
         # Chat area: fills what the cards, the input and the status line leave free.
         skill_rows = len(skills.list_skills(core.workdir())) // SKILLS_PER_ROW + 1
-        reserved = RESERVED_ROWS + len(core.attachments) + skill_rows + self._cards_height()
+        reserved = RESERVED_ROWS + len(core.attachments) + skill_rows + self._cards_height() \
+            + len(prompt_preview_lines(context)) * 0.8
         if prefs is not None and prefs.backend == 'LOCAL':
             reserved += 1   # local model status has two lines
         rows = _fit_rows(context, int(max(6, context.region.height / unit - reserved)), unit, round(reserved * 4))
@@ -468,14 +527,13 @@ class _ChatPanel:
     @staticmethod
     def _draw_render(layout):
         """A render runs (the queue, or a preview for Claude): its progress, also in the chat."""
-        from .studio import film, runner
+        from .studio import runner
         from .studio.ui_common import _queue_progress_text
         area = bpy.context.area
         if area is not None and area.type == 'SEQUENCE_EDITOR':
             return                    # the Video Editor: the queue is in its Studio tab below, shown once
-        film.draw(layout)             # films in their own process: part, frame, time left
-        from .studio import renderfarm
-        renderfarm.draw_rows(layout.column(align=True), buttons=False)   # and what the render farm does
+        if _draw_render_total(layout):   # films here and on the farm: one bar for all (details: Render tab)
+            return
         if not runner.RUN.busy:
             return
         row = layout.row(align=True)
@@ -614,10 +672,13 @@ class _ChatPanel:
                 up.operator("claude.queued_chat_move", text="", icon='TRIA_UP', emboss=False).chat_id = entry["id"]
                 up.operator("claude.queued_chat_remove", text="", icon='X', emboss=False).chat_id = entry["id"]
 
-        # [ prompt ................ ] [send] [queue as a new chat] [stop]
+        # A long message: its end wrapped above the box (the box shows one line only)
+        _draw_prompt_preview(col, context)
+        # [ prompt ................ ] [window] [send] [queue as a new chat] [stop]
         row = col.row(align=True)
         row.scale_y = 1.4
         _prop_with_placeholder(row, context.window_manager, "claude_prompt", placeholder)
+        row.operator("claude.edit_prompt", text="", icon='TEXT')
         row.operator("claude.send", text="", icon='EVENT_RETURN')
         row.operator("claude.queue_chat", text="", icon='NEXT_KEYFRAME')
         if busy:

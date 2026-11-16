@@ -305,7 +305,8 @@ _jobs = []                # the farm's queue of this Mac, in order: queued → p
 TRANSIENT = {"fetching", "new", "arrived", "looked", "t0", "h0", "per", "cancel", "seeded"}
 _rate = [0.0]             # seconds per frame the farm made lately (for jobs that wait)
 _hosts = {}               # worker → [frames, render seconds] of the frames fetched since Blender started
-_events = []              # (finished, worker, render seconds) of every frame fetched: the graph
+_events = []              # (finished, worker, render seconds) of every frame fetched: the graph and the speed
+_stamps = {}              # worker → [(its own clock's time of the frame, when we saw it or None)]
 _raw = {}                 # (file, scene state) → the saved copy several jobs pack from
 
 
@@ -564,35 +565,106 @@ def _note_progress(job, have):
     job["have"] = have
 
 
+def _per_frame(job=None):
+    """Seconds per frame of the farm now (all workers together)."""
+    rate = farm_rate()
+    if rate:
+        return 60.0 / rate
+    return (job or {}).get("per") or _rate[0] or None
+
+
 def left(job):
     """Seconds until the job is done, or None (not known yet)."""
-    per = job.get("per") or _rate[0]
+    per = _per_frame(job)
     if not per or job["kind"] != 'ANIM':
         return None
     return per * max(0, total_of(job) - job.get("have", 0))
 
 
-def _note_frame(job, path):
-    """(thread) What a fetched frame says: which Mac rendered it, how long, from which camera."""
+def starts_in(job):
+    """Seconds until the farm gets to a job that waits (the frames of the jobs before it), or None."""
+    per = _per_frame()
+    if not per:
+        return None
+    before = 0
+    for other in _jobs:
+        if other is job:
+            return per * before
+        if other["phase"] in {"sent", "copying", "packing", "queued"} and other["kind"] == 'ANIM':
+            before += max(0, total_of(other) - other.get("have", 0))
+    return None
+
+
+def summary():
+    """All of ours on the farm in one: (frames there, frames in all, seconds left or None, jobs sending)."""
+    jobs = [j for j in _jobs if j["phase"] in {"queued", "packing", "copying", "sent"} and j["kind"] == 'ANIM']
+    have = sum(j.get("have", 0) for j in jobs)
+    total = sum(total_of(j) for j in jobs)
+    per = _per_frame()
+    return have, total, (per * max(0, total - have) if per else None), \
+        sum(1 for j in jobs if j["phase"] in {"queued", "packing", "copying"})
+
+
+def _note_frame(job, path, live=True):
+    """(thread) What a fetched frame says: which Mac rendered it, how long, from which camera. live: seen
+    just now (its time is ours); else fetched earlier (after a restart: its time from the Mac's own clock,
+    shifted by how far that clock is off)."""
     if job["ext"] != "png":
         return
     from . import cut
     meta = cut.png_text(path)
     host = meta.get("Hostname", "").split(".")[0]
     if host:
+        key = host.lower()
         secs = cut.render_seconds(meta.get("RenderTime", ""))
-        entry = _hosts.setdefault(host.lower(), [0, 0.0, host])
+        entry = _hosts.setdefault(key, [0, 0.0, host])
         entry[0] += 1
         entry[1] += secs
         try:
-            finished = time.mktime(time.strptime(meta.get("Date", ""), "%Y/%m/%d %H:%M:%S"))
+            stamped = time.mktime(time.strptime(meta.get("Date", ""), "%Y/%m/%d %H:%M:%S"))
         except (ValueError, OverflowError):
-            finished = time.time()
-        _events.append((finished, host.lower(), secs))
+            stamped = None
+        seen = time.time() if live else None
+        if stamped is not None:
+            _stamps.setdefault(key, []).append((stamped, seen))
+            del _stamps[key][:-400]
+        finished = seen if seen is not None else (stamped + _clock_offset(key) if stamped is not None
+                                                  else time.time())
+        _events.append((finished, key, secs))
         del _events[:-5000]
     wanted = job.get("camera_name", "")
     if wanted and meta.get("Camera") and meta["Camera"] != wanted:
         job["wrong_camera"] = meta["Camera"]
+
+
+def _clock_offset(host):
+    """How far behind our clock a worker's clock is (from the frames seen as they came), 0 if unknown."""
+    diffs = sorted(seen - stamped for stamped, seen in _stamps.get(host, ()) if seen is not None)
+    return diffs[len(diffs) // 2] if diffs else 0.0
+
+
+def seconds_per_frame(host):
+    """A worker's speed: the usual time between two of its frames (its own clock, so rendering, saving and
+    loading count, as on the farm); the render time in the frames when there are too few."""
+    times = sorted(stamped for stamped, _seen in _stamps.get(host, ()))
+    gaps = [b - a for a, b in zip(times, times[1:]) if 0 < b - a < 900][-12:]
+    if len(gaps) >= 2:
+        gaps.sort()
+        return gaps[len(gaps) // 2]
+    stats = _hosts.get(host)
+    return stats[1] / stats[0] if stats and stats[0] and stats[1] else None
+
+
+def farm_rate(now=None):
+    """Frames per minute of the whole farm lately (last 15 minutes, or the last hour when few), None if
+    nothing came."""
+    now = now or time.time()
+    for window, least in ((900.0, 4), (3600.0, 2)):
+        times = [finished for finished, _w, _s in _events if now - window <= finished <= now + 60]
+        if len(times) >= least:
+            span = max(120.0, now - min(times))          # the farm may have started less than a window ago
+            return len(times) / (span / 60.0)
+    return None
 
 
 def _collect_all():
@@ -645,7 +717,7 @@ def _fetch(job):
             if os.path.exists(local) and os.path.getsize(local) > 0:
                 have += 1
                 if not job.get("seeded"):              # after a restart: the graph and speeds again
-                    _note_frame(job, local)
+                    _note_frame(job, local, live=False)
                 continue
             source = os.path.join(folder, "%s_%04d.%s" % (job["job"], frame, job["ext"]))
             try:
@@ -757,6 +829,7 @@ def _row_text(job):
     from .runner import format_time
     total = total_of(job)
     phase = job["phase"]
+    name = job["note"] or job["job"]
     if phase == "queued":
         what = "waits to be sent"
     elif phase == "packing":
@@ -765,17 +838,22 @@ def _row_text(job):
         what = "upload %.1f/%.1f GB" % (job["progress"] * job["size"] / 1e9, job["size"] / 1e9)
     else:
         have = job.get("have", 0)
-        what = "Farm %d/%d" % (have, total) if job["kind"] == 'ANIM' else "Farm"
-        secs = left(job)
-        if have and secs:
-            what += " · ~%s" % format_time(secs)
-        elif not have:
-            what += " · held" if job.get("held") else " · waits" if not _renders(job["job"]) else " · starts"
+        if job["kind"] != 'ANIM':
+            what = "on the farm" if not have else "done"
+        elif have or _renders(job["job"]):
+            what = "%d/%d" % (have, total)
+            secs = left(job)
+            if secs:
+                what += " · ~%s left" % format_time(secs)
+        else:
+            secs = starts_in(job)
+            what = "on the farm ✓ · starts %s" % ("in ~%s (%s)" % (format_time(secs), time.strftime(
+                "%H:%M", time.localtime(time.time() + secs))) if secs else "after the job before")
         if job.get("wrong_camera"):
             what += " · wrong camera (%s)" % job["wrong_camera"]
         if job.get("error"):
             what += " · " + job["error"]
-    return "%s · %s" % (job["note"] or job["job"], what)
+    return "%s · %s" % (name, what)
 
 
 def _renders(name):
@@ -896,8 +974,14 @@ def draw_switch(row, context):
     row.prop_enum(rq, "farm_mode", 'ON')
 
 
+def _job_note(name):
+    job = next((j for j in _jobs if j["job"] == name), None)
+    return (job["note"] or name) if job else name
+
+
 def draw_state(layout, context):
-    """Under the switch while the farm is on (or still works for us): the workers, or what is missing."""
+    """Under the switch while the farm is on (or still works for us): how fast the farm is, what each Mac
+    does and how fast it is, or what is missing."""
     rq = context.scene.studio
     if not rq.farm_on and not active():
         return
@@ -913,44 +997,55 @@ def draw_state(layout, context):
         return
     from .runner import format_time
     workers = view.get("online", 0)
-    secs = total_left()
+    have, total, secs, _sending = summary()
+    rate = farm_rate()
     box = layout.box()
     col = box.column(align=True)
     head = col.row()
-    head.label(text="%d worker%s online" % (workers, "" if workers == 1 else "s"),
+    head.label(text="%d Mac%s online" % (workers, "" if workers == 1 else "s"),
                icon='DESKTOP' if workers else 'ERROR', translate=False)
-    if secs:
+    if total:
         right = head.row()
         right.alignment = 'RIGHT'
-        right.label(text="~%s left" % format_time(secs), translate=False)
+        right.label(text="%d/%d frames%s" % (have, total, " · ~%s left" % format_time(secs) if secs else ""),
+                    translate=False)
+    row = col.row()                                  # the farm's speed in plain words
+    row.label(text="Speed", icon='SORTTIME')
+    right = row.row()
+    right.alignment = 'RIGHT'
+    if rate:
+        right.label(text="%.1f frames/min · one every %.0f s" % (rate, 60.0 / rate), translate=False)
+    else:
+        right.active = False
+        right.label(text="no frames yet", translate=False)
     every = frames_per_bucket()
-    top = max(every) or 1
-    if any(every):                                   # the farm over the last hour, frames per 5 minutes
+    if any(every):
         row = col.row()
-        row.label(text="Farm", icon='GRAPH')
+        row.label(text="Last hour", icon='GRAPH')
         right = row.row()
         right.alignment = 'RIGHT'
-        right.label(text="%s  %.1f /min" % (sparkline(every, top), every[-1] / (BUCKET / 60) if every[-1] else
-                                            every[-2] / (BUCKET / 60)), translate=False)
+        right.label(text="%s  frames per 5 min" % sparkline(every), translate=False)
+    col.separator(factor=0.5)
     for name, what, _when, fresh in view.get("worker_rows", []):
         if not fresh:
             continue
+        key = name.lower()
+        busy = what.startswith("rendert ")
+        job = what.split(" ", 1)[1].strip() if busy else ""
+        mine = [t for t, _s in _stamps.get(key, ())]
+        working = busy and mine and time.time() - (max(mine) + _clock_offset(key)) < 600
         row = col.row()
-        busy = what.startswith("rendert")
-        row.label(text=name, icon='RENDER_ANIMATION' if busy else 'TIME', translate=False)
-        stats = _hosts.get(name.lower())
+        row.label(text=name, icon='RENDER_ANIMATION' if working else 'TIME' if not busy else 'FILE_REFRESH',
+                  translate=False)
+        doing = row.row()
+        doing.active = bool(working)
+        doing.label(text=("renders " if working else "loads ") + _job_note(job) if busy else "waits for a job",
+                    translate=False)
         right = row.row()
         right.alignment = 'RIGHT'
-        right.active = busy
-        if stats and stats[0]:                      # its graph and speed: seconds per frame, its frames
-            right.label(text="%s  %.0f s/frame · %d" % (sparkline(frames_per_bucket(name.lower()), top),
-                                                        stats[1] / stats[0], stats[0]), translate=False)
-        else:
-            right.label(text="renders" if busy else "waits", translate=False)
-    hint = col.row()
-    hint.active = False
-    hint.scale_y = 0.8
-    hint.label(text="Graph: frames per 5 min, last hour", translate=False)
+        per = seconds_per_frame(key)
+        stats = _hosts.get(key)
+        right.label(text="%.0f s/frame · %d" % (per, stats[0]) if per and stats else "—", translate=False)
 
 
 # ------------------------------------------------------------------ operators

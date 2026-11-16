@@ -28,6 +28,13 @@ DE = {
     "Send": "Senden",
     "Send the message, also while Claude is working": "Nachricht senden – auch während Claude arbeitet",
     "Write a message first": "Schreib zuerst eine Nachricht",
+    "Write in a Window": "Im Fenster schreiben",
+    "Write the message in a window of its own: several lines, word wrap, arrow keys. "
+    "Send it from the window's header":
+        "Die Nachricht in einem eigenen Fenster schreiben: mehrere Zeilen, Umbruch, Pfeiltasten. "
+        "Gesendet wird oben im Fenster",
+    "Send the message to Claude and close the window": "Nachricht an Claude senden und Fenster schliessen",
+    "Close the window; the text stays in the message box": "Fenster schliessen, der Text bleibt im Eingabefeld",
     "Stop": "Stoppen",
     "Stop Claude": "Claude anhalten",
     "Stopped": "Gestoppt",

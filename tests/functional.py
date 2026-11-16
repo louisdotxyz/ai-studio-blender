@@ -2823,6 +2823,26 @@ def render_farm_folder():
               and len(os.listdir(os.path.join(root, "renders", "a_2_x"))) == 3)
     finally:
         farm._jobs[:] = keep
+    now = time.time()
+    keep_events, keep_stamps = list(farm._events), dict(farm._stamps)
+    farm._events[:] = [(now - 30 * i, "md-1", 60.0) for i in range(20)]    # one frame every 30 s
+    farm._stamps.clear()
+    farm._stamps["md-1"] = [(1000.0 + 72 * i, None) for i in range(10)]
+    jobs = [{"job": "r", "phase": "sent", "kind": 'ANIM', "start": 1, "end": 100, "have": 40, "note": "A"},
+            {"job": "w", "phase": "sent", "kind": 'ANIM', "start": 1, "end": 50, "have": 0, "note": "B"}]
+    keep, farm._jobs[:] = list(farm._jobs), jobs
+    try:
+        rate = farm.farm_rate(now)
+        have, total, secs, _sending = farm.summary()
+        check("farm stats: frames per minute, a Mac's seconds per frame, when a waiting job starts, one total",
+              abs(rate - 2.0) < 0.3 and farm.seconds_per_frame("md-1") == 72.0
+              and abs(farm.starts_in(jobs[1]) - 60 * 30) < 200 and (have, total) == (40, 150) and secs,
+              (rate, farm.seconds_per_frame("md-1"), farm.starts_in(jobs[1]), have, total, secs))
+    finally:
+        farm._jobs[:] = keep
+        farm._events[:] = keep_events
+        farm._stamps.clear()
+        farm._stamps.update(keep_stamps)
 
 
 @section
