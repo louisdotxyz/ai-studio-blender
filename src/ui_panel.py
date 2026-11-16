@@ -100,6 +100,45 @@ def _setup_visible(context, prefs):
     return _setup_steps_open(context, prefs) or _setup_questions_open(context, prefs)
 
 
+_newest = {"key": None, "time": 0.0, "path": None}
+
+
+def _newest_copy(crash):
+    """autosave.newest_copy for the crash card, looked up at most every 10 s (it lists folders)."""
+    key = crash.get("file")
+    if _newest["key"] != key or time.monotonic() - _newest["time"] > 10.0:
+        try:
+            path = autosave.newest_copy(key) or crash.get("backup")
+            _newest.update(key=key, time=time.monotonic(), path=path if path and os.path.isfile(path) else None)
+        except OSError:
+            _newest.update(key=key, time=time.monotonic(), path=None)
+    return _newest["path"]
+
+
+_overflow = {}   # area → {"key", "extra"}: rows the chat gives up because the sidebar would scroll as well
+
+
+def _fit_rows(context, rows, unit, key):
+    """The chat fills the sidebar but never more: when the sidebar itself got scrolled (its content was
+    taller than the sidebar, so wheel and trackpad scrolled the sidebar and the chat), the chat gets that
+    many rows shorter. Starts again from the estimate when the cards around the chat change."""
+    region, area = getattr(context, "region", None), getattr(context, "area", None)
+    try:
+        state = _overflow.setdefault(area.as_pointer(), {"key": None, "extra": 0})
+    except (AttributeError, TypeError, ReferenceError):
+        return rows
+    if state["key"] != key:
+        state.update(key=key, extra=0)
+    try:
+        top = region.view2d.region_to_view(0, region.height - 1)[1]
+    except (AttributeError, RuntimeError, TypeError):
+        top = 0.0
+    if top < -2.0 and rows - state["extra"] > 6:
+        state["extra"] += max(1, int(-top / unit + 0.99))
+        region.tag_redraw()
+    return max(6, rows - state["extra"])
+
+
 class _ChatPanel:
     """The chat; the same in the 3D view and in the Video Editor (there: the cut chat, film_chat.py)."""
     bl_region_type = 'UI'
@@ -127,7 +166,7 @@ class _ChatPanel:
         reserved = RESERVED_ROWS + len(core.attachments) + skill_rows + self._cards_height()
         if prefs is not None and prefs.backend == 'LOCAL':
             reserved += 1   # local model status has two lines
-        rows = int(max(6, context.region.height / unit - reserved))
+        rows = _fit_rows(context, int(max(6, context.region.height / unit - reserved)), unit, round(reserved * 4))
         chatview.draw_chat(layout, context, rows, att_icon)
 
         self._draw_crash(layout, context)
@@ -217,12 +256,13 @@ class _ChatPanel:
         col.active = False
         if crash.get("step"):
             col.label(text=tr("Last step: {}").format(crash["step"])[:70], translate=False)
-        backup = crash.get("backup")
-        if backup:
-            col.label(text=tr("Backup: {}").format(os.path.basename(backup)), translate=False)
+        newest = _newest_copy(crash)
         row = box.row(align=True)
-        if backup and os.path.isfile(backup):
-            row.operator("claude.crash_open_backup", icon='FILE_BACKUP')
+        if newest and not autosave._same(newest, bpy.data.filepath):
+            sub = row.row(align=True)
+            sub.scale_y = 1.3
+            sub.operator("claude.crash_open_backup", icon='FILE_REFRESH', text=tr("Continue: {} · {}").format(
+                os.path.basename(newest), time.strftime("%H:%M", time.localtime(os.path.getmtime(newest)))))
         row.operator("claude.open_crash_log", text="", icon='TEXT')
         row.operator("claude.open_backups", text="", icon='FILE_FOLDER')
         row.operator("claude.crash_dismiss", text="", icon='X')

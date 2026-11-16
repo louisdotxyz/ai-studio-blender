@@ -441,9 +441,12 @@ DE = {
     "Blender did not quit cleanly last time (crash?)": "Blender wurde letztes Mal nicht sauber beendet (Absturz?)",
     "Last step: {}": "Letzter Schritt: {}",
     "Backup: {}": "Sicherung: {}",
-    "Open Last Backup": "Letzte Sicherung öffnen",
-    "Open the last auto save copy from before the crash (the current file is replaced in Blender)":
-        "Letzte Sicherungskopie von vor dem Absturz öffnen (die aktuelle Datei wird in Blender ersetzt)",
+    "Continue: {} · {}": "Weiterarbeiten: {} · {}",
+    "Continue": "Weiterarbeiten",
+    "Open the newest saved state of the file from before the crash (the file, a backup copy or "
+    "Blender's auto save, whichever is newest) and the chat that was open":
+        "Den neusten Stand der Datei von vor dem Absturz öffnen (die Datei, eine Sicherung oder Blenders "
+        "Auto-Save, was am neusten ist) und den Chat, der offen war",
     "No backup found": "Keine Sicherung gefunden",
     "Dismiss": "Ausblenden",
 

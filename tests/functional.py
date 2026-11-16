@@ -2887,5 +2887,50 @@ def project_tools():
                     del scene[key]
 
 
+@section
+def reliability():
+    """A long code step is stopped (Blender would hang); a Blender in the background leaves the crash
+    marker alone; after a crash the newest copy of the file and its chat come back."""
+    bt, autosave, chats, core = mod("blender_tools"), mod("autosave"), mod("chats"), mod("core")
+    keep_limit, bt.CODE_TIME_LIMIT = bt.CODE_TIME_LIMIT, 0.5
+    try:
+        t0 = time.monotonic()
+        out, ok = bt.execute_python("n = 0\nwhile True:\n    try:\n        n += 1\n    except Exception:\n        pass")
+        check("a code step that runs too long is stopped", not ok and "Stopped after" in out
+              and time.monotonic() - t0 < 5, out[-200:])
+        out, ok = bt.execute_python("print(7 * 6)")
+        check("the next step runs normally", ok and "42" in out, out)
+    finally:
+        bt.CODE_TIME_LIMIT = keep_limit
+    marker = os.path.join(core.workdir(), "running.json")
+    before = os.path.getmtime(marker) if os.path.exists(marker) else None
+    autosave.write_marker()
+    check("background Blender: the crash marker is not written",
+          (os.path.getmtime(marker) if os.path.exists(marker) else None) == before)
+    folder = tempfile.mkdtemp(prefix="newest_")
+    main = os.path.join(folder, "Lamp_now.blend")
+    os.makedirs(os.path.join(folder, autosave.backup_dir_name()))
+    backup = os.path.join(folder, autosave.backup_dir_name(), "Lamp_2026-11-16_20-06.blend")
+    for path, age in ((main, 600), (backup, 60)):
+        open(path, "wb").close()
+        os.utime(path, (time.time() - age, time.time() - age))
+    check("after a crash: the newest copy of the file is opened", autosave.newest_copy(main) == backup,
+          autosave.newest_copy(main))
+    keep = core._chats
+    core._chats = [{"id": "c-old", "updated": 1, "file": chats._file_key(main), "messages": []},
+                   {"id": "c-new", "updated": 2, "file": chats._file_key(backup),
+                    "messages": [{"role": "user", "text": "hi"}]},
+                   {"id": "c-other", "updated": 3, "file": "/x/other", "messages": []}]
+    saved = list(core.messages), core.session_id
+    try:
+        core.messages.clear()
+        got = chats.restore_for_file(main)
+        check("the file's last chat comes back with it (a backup copy counts as the file)",
+              got == "c-new" and core.session_id == "c-new", got)
+    finally:
+        core.messages[:], core.session_id = saved
+        core._chats = keep
+
+
 ok = all(results)
 print("FUNCTIONAL_OK" if ok else "FUNCTIONAL_FAIL", "%d/%d" % (sum(results), len(results)))

@@ -104,6 +104,27 @@ for attr, v in (("media_type", "IMAGE"), ("file_format", cfg["format"])):
     except Exception as ex:
         print("RF format", ex)
 scene.render.use_sequencer = False
+keep = set()                                       # the job's scene and the scenes it needs
+s = scene
+while s is not None and s.name not in keep:
+    keep.add(s.name)
+    s = s.background_set
+for tree in (getattr(scene, "compositing_node_group", None), getattr(scene, "node_tree", None)):
+    for node in (getattr(tree, "nodes", None) or ()):
+        if getattr(node, "scene", None) is not None:
+            keep.add(node.scene.name)
+for other in [x for x in bpy.data.scenes if x.name not in keep]:
+    try:                                           # other scenes only make the upload bigger
+        bpy.data.scenes.remove(other)
+    except Exception as ex:
+        print("RF scene", other.name, ex)
+if bpy.context.window is not None:
+    bpy.context.window.scene = scene
+try:
+    removed = bpy.data.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
+    print("RF purged", removed, "unused data blocks")
+except Exception as ex:
+    print("RF purge", ex)
 for stamp in ("use_stamp_camera", "use_stamp_render_time", "use_stamp_hostname", "use_stamp_frame"):
     setattr(scene.render, stamp, True)             # into each frame's file: camera, time and which Mac
 bpy.ops.wm.save_as_mainfile(filepath=cfg["out"], compress=True, relative_remap=False)
@@ -120,8 +141,26 @@ def share_root():
     return bpy.path.abspath(root or DEFAULT_SHARE).rstrip("/\\")
 
 
+_conn = {"root": None, "ok": False, "time": -1e9, "busy": False}
+CONN_AGE = 10.0           # seconds a look at the share counts (a network folder can take seconds to answer)
+
+
+def _look(root):
+    ok = os.path.isdir(root)
+    _conn.update(root=root, ok=ok, time=time.monotonic(), busy=False)
+    return ok
+
+
 def connected(root=None):
-    return os.path.isdir(root or share_root())
+    """The share is mounted. Looked at in a thread at most every 10 s (a slow or gone network folder must not
+    freeze Blender's window); only the very first look waits for the answer."""
+    root = root or share_root()
+    if _conn["root"] != root:
+        return _look(root)
+    if time.monotonic() - _conn["time"] > CONN_AGE and not _conn["busy"]:
+        _conn["busy"] = True
+        threading.Thread(target=_look, args=(root,), daemon=True).start()
+    return _conn["ok"]
 
 
 def job_name(blend_path, scene_name, now=None):

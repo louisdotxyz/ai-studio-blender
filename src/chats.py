@@ -82,6 +82,12 @@ def save_current_chat():
         others = {c.get("title") for c in chats if c is not entry}
         entry["title"] = short_title(title, others)
     entry.update(updated=time.time(), messages=core.messages[-400:], context=dict(core.context))
+    try:
+        import bpy
+        if bpy.data.filepath:
+            entry["file"] = _file_key(bpy.data.filepath)   # reopened with this file (restore_for_file)
+    except AttributeError:
+        pass
     prefs = get_prefs()
     if prefs:  # the chat continues with the model it was used with
         entry["model"] = {key: getattr(prefs, key) for key in MODEL_KEYS}
@@ -132,6 +138,31 @@ def load_chat(chat_id):
     _restore_model(entry.get("model"))
     core.context.update((entry.get("context") or {"used": 0, "window": 0}))
     core.mark_dirty()
+
+
+def _file_key(filepath):
+    """A file and its backup copies count as one: <project folder>/<name>."""
+    from . import autosave
+    try:
+        return os.path.normcase(os.path.join(autosave.main_folder(filepath), autosave.project_name(filepath)))
+    except Exception:
+        return os.path.normcase(filepath)
+
+
+def restore_for_file(filepath, chat_id=""):
+    """Blender (re)opened a file and the chat is still empty: the chat that was open last with this file
+    comes back (after a crash: the chat that was open then). Returns the chat's id or ""."""
+    if core.messages or core.is_busy():
+        return ""
+    chats = list_chats()
+    entry = next((c for c in chats if chat_id and c.get("id") == chat_id), None)
+    if entry is None and filepath:
+        key = _file_key(filepath)
+        entry = max((c for c in chats if c.get("file") == key), key=lambda c: c.get("updated", 0), default=None)
+    if entry is None:
+        return ""
+    load_chat(entry["id"])
+    return entry["id"]
 
 
 def current_title():

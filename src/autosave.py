@@ -120,6 +120,7 @@ def _on_save_or_load(*_args):
         return   # the render queue saved its job copy, not the user's file
     _changed = False
     state["last"] = time.time()
+    write_marker()                  # the marker names the file now open (to reopen it after a crash)
     if _new_file[0] and bpy.data.filepath and _setting("project_folders", True) and not in_project_folder():
         # A new file was saved the first time: give it its own project folder.
         _new_file[0] = False
@@ -145,21 +146,47 @@ def _marker_path():
     return os.path.join(_workdir(), "running.json")
 
 
+_marker = {"file": "", "chat": ""}   # the last file and chat this Blender had open
+
+
 def write_marker():
+    """Only the Blender with a window keeps the marker: a Blender in the background (renders, packing,
+    the Claude app's headless calls) must not overwrite or remove it."""
+    if bpy.app.background:
+        return
     try:
         import json
-        with open(_marker_path(), "w", encoding="utf-8") as f:
-            try:
-                filepath = bpy.data.filepath
-            except AttributeError:  # during registration bpy.data is restricted
-                filepath = ""
-            json.dump({"time": time.time(), "file": filepath, "step": state["step"],
-                       "backup": state["path"], "pid": os.getpid()}, f)
+        try:
+            filepath = bpy.data.filepath
+        except AttributeError:  # during registration bpy.data is restricted
+            filepath = ""
+        if filepath:
+            _marker["file"] = filepath
+        try:
+            from . import core
+            if core.session_id:
+                _marker["chat"] = core.session_id
+        except Exception:
+            pass
+        tmp = _marker_path() + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"time": time.time(), "file": _marker["file"], "chat": _marker["chat"],
+                       "step": state["step"], "backup": state["path"], "pid": os.getpid()}, f)
+        os.replace(tmp, _marker_path())
     except OSError:
         pass
 
 
 def _clear_marker():
+    if bpy.app.background:
+        return
+    try:
+        import json
+        with open(_marker_path(), encoding="utf-8") as f:
+            if json.load(f).get("pid") not in (None, os.getpid()):
+                return          # another Blender's marker
+    except (OSError, ValueError):
+        pass
     try:
         os.remove(_marker_path())
     except OSError:
@@ -192,8 +219,38 @@ def _check_marker():
         except OSError:
             alive = False
     if not alive:
-        last_crash = {"time": info.get("time", 0), "file": info.get("file", ""),
+        last_crash = {"time": info.get("time", 0), "file": info.get("file", ""), "chat": info.get("chat", ""),
                       "step": info.get("step", ""), "backup": info.get("backup", "")}
+
+
+def newest_copy(filepath):
+    """The newest saved state of a file: the file itself, its backups in the project's autosave folder or
+    Blender's own auto save (all compared by time). None if there is none."""
+    if not filepath:
+        return None
+    stem = project_name(filepath)
+    found = [filepath]
+    folder = os.path.join(main_folder(filepath), backup_dir_name())
+    try:
+        found += [os.path.join(folder, n) for n in os.listdir(folder)
+                  if n.endswith(".blend") and project_name(n) == stem]
+    except OSError:
+        pass
+    base = os.path.splitext(os.path.basename(filepath))[0]
+    temp = os.path.dirname(bpy.app.tempdir.rstrip("/\\")) if bpy.app.tempdir else ""
+    for folder in {temp, os.environ.get("TMPDIR", ""), "/tmp"}:
+        try:
+            found += [os.path.join(folder, n) for n in os.listdir(folder)
+                      if n.startswith(base) and n.endswith("_autosave.blend")]
+        except OSError:
+            pass
+    dated = []
+    for path in found:
+        try:
+            dated.append((os.path.getmtime(path), path))
+        except OSError:
+            pass
+    return max(dated)[1] if dated else None
 
 
 def dismiss_crash():
@@ -656,12 +713,13 @@ def freeze_reports():
 
 def register():
     state["last"] = time.time()
-    _enable_crash_trace()
-    _start_watch()
-    _check_marker()
-    write_marker()
-    import atexit
-    atexit.register(_clear_marker)   # a clean quit removes the marker
+    if not bpy.app.background:      # renders and headless calls leave the window's crash watch alone
+        _enable_crash_trace()
+        _start_watch()
+        _check_marker()
+        write_marker()
+        import atexit
+        atexit.register(_clear_marker)   # a clean quit removes the marker
     for handlers, func in ((bpy.app.handlers.depsgraph_update_post, _on_change),
                            (bpy.app.handlers.save_pre, _on_save_pre),
                            (bpy.app.handlers.save_post, _on_save_or_load),

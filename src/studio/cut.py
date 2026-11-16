@@ -605,9 +605,38 @@ def build(scene):
     return scene, report
 
 
-def _reload(scene):
-    """The Video Editor reads the strips' files again (frames rendered again or new while rendering)."""
+_seen = {}   # (scene, strip) → the files it showed and their times the last time it was read
+
+
+def _files_signature(strip):
+    """What a strip shows: its files and their change times (a frame rendered again keeps its name)."""
+    out = []
+    try:
+        if strip.type == 'IMAGE':
+            folder = bpy.path.abspath(strip.directory)
+            names = [e.filename for e in strip.elements]
+            for name in dict.fromkeys(names):
+                try:
+                    out.append((name, os.stat(os.path.join(folder, name)).st_mtime_ns))
+                except OSError:
+                    out.append((name, 0))
+            return (folder, len(names), tuple(out))
+        path = bpy.path.abspath(getattr(strip, "filepath", "") or "")
+        return (path, os.stat(path).st_mtime_ns) if path else None
+    except (OSError, AttributeError, ReferenceError):
+        return None
+
+
+def _reload(scene, force=False):
+    """The Video Editor reads the files again, only of the strips whose files changed (new or rendered
+    again): reading every strip again each time frames arrive made the preview reload all frames and
+    Blender stutter. force: all strips and Blender's whole cache (refresh)."""
     for strip in ours(scene):
+        key = (scene.name, strip.name)
+        sig = _files_signature(strip)
+        if not force and sig is not None and _seen.get(key) == sig:
+            continue
+        _seen[key] = sig
         try:
             if hasattr(strip, "directory"):
                 strip.directory = strip.directory
@@ -615,6 +644,10 @@ def _reload(scene):
                 strip.filepath = strip.filepath
         except (AttributeError, RuntimeError):
             pass
+    if len(_seen) > 2000:
+        _seen.clear()
+    if not force:
+        return
     wm = bpy.context.window_manager
     for window in (wm.windows if wm else ()):
         for area in window.screen.areas:

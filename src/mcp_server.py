@@ -65,7 +65,10 @@ TOOLS = [
             "Execute Python code inside the running Blender instance. `bpy`, "
             "`bmesh`, `mathutils` and `math` are pre-imported. Use print() to "
             "return values. The code runs on the main thread with a 3D-viewport "
-            "context override and creates one undo step. Depending on the user's "
+            "context override and creates one undo step. Blender's window is frozen "
+            "while it runs and it is stopped after 30 s: keep each call to a few seconds "
+            "(no sleep/wait loops, no frame_set over many frames, few scene.ray_cast calls). "
+            "Depending on the user's "
             "settings the user has to approve the code first; if rejected, ask "
             "the user what they want instead."
         ),

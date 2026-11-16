@@ -32,7 +32,12 @@ bpy, bmesh, math, mathutils (Vector, Matrix, Euler), os, sys, re, json, time, np
 Plain values (numbers, strings, lists, vectors) and your functions stay for the next call of this chat; \
 Blender data (objects, materials) does not: look it up again by name. print() returns values to you. \
 Skill helpers are predefined: T (checks), M (photo match), V (render variants), api (AI Studio). \
-Never call bpy.ops.render.render yourself (it freezes Blender): use render_preview or the render queue.
+Never call bpy.ops.render.render yourself (it freezes Blender): use render_preview or the render queue. \
+Blender's window is frozen while your code runs, and a call is stopped after 30 s: keep each call to a few \
+seconds – no waiting or sleep loops (check again in a later call), no frame_set over many frames, at most a \
+few hundred scene.ray_cast calls (each tests every object of a scene with millions of polygons; for many \
+rays build mathutils.bvhtree.BVHTree.FromObject(obj, depsgraph) of the one object once), geometry with \
+foreach_get + numpy.
 - get_scene_info / get_object_info(name): inspect the scene or one object in detail.
 - get_viewport_screenshot: see the viewport as the user sees it. render_preview(camera): quick camera render.
 - ask_user(question, options): ask with answer buttons. remember(note, scope): save a lasting preference.
@@ -295,6 +300,27 @@ def _queue_file_changed(*_args):
     load_chat_queue()
     if chat_queue and not bpy.app.background:
         chat_queue_paused[0] = True     # opened again: the queued chats wait for the user
+    if not bpy.app.background and not bpy.app.timers.is_registered(_restore_chat):
+        bpy.app.timers.register(_restore_chat, first_interval=0.3)
+
+
+def _restore_chat():
+    """A file was opened and the chat is empty: its last chat comes back (after a crash: the chat open then)."""
+    try:
+        from . import chats
+        path = bpy.data.filepath
+        crash = autosave.last_crash or {}
+        chat = ""
+        if crash.get("chat") and path and crash.get("file") and \
+                chats._file_key(crash["file"]) == chats._file_key(path):
+            chat = crash["chat"]
+        if chats.restore_for_file(path, chat):
+            autosave.write_marker()
+        if crash.get("resumed"):
+            autosave.dismiss_crash()
+    except Exception:
+        traceback.print_exc()
+    return None
 
 
 def queue_chat(text, skill_names=None, connectors=()):
@@ -1660,12 +1686,21 @@ def _tick():
             _last_second = elapsed()
             _dirty = True
 
+        if current_run and session_id and len(messages) != _chat_saved["count"] \
+                and time.monotonic() - _chat_saved["time"] > CHAT_SAVE_GAP:
+            _chat_saved.update(count=len(messages), time=time.monotonic())
+            save_current_chat()   # also during a long answer: a crash keeps the question and the steps so far
+
         if _dirty:
             _dirty = False
             _tag_redraw()
     except Exception:
         traceback.print_exc()
     return TIMER_INTERVAL
+
+
+CHAT_SAVE_GAP = 20.0
+_chat_saved = {"count": -1, "time": 0.0}
 
 
 # ---------------------------------------------------------------------------
@@ -1707,10 +1742,14 @@ def register():
         bpy.app.timers.register(_tick, first_interval=0.5, persistent=True)
     if not bpy.app.background:
         _restore_model(default_model())   # Blender starts with a new chat: the default model
+        if not bpy.app.timers.is_registered(_restore_chat):
+            bpy.app.timers.register(_restore_chat, first_interval=1.0)   # a file opened with Blender: its chat
     check_login()   # show the Log in button before the first message if Claude is logged out
 
 
 def unregister():
+    if bpy.app.timers.is_registered(_restore_chat):
+        bpy.app.timers.unregister(_restore_chat)
     if _queue_file_changed in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_queue_file_changed)
     if bpy.app.timers.is_registered(_tick):

@@ -6,6 +6,8 @@ import io
 import math
 import os
 import tempfile
+import threading
+import time
 import traceback
 
 import bmesh
@@ -433,6 +435,65 @@ def _base_namespace():
     return namespace
 
 
+CODE_TIME_LIMIT = 30.0    # seconds a code step may block Blender (its window freezes meanwhile)
+
+
+class CodeTimeout(BaseException):
+    """Raised inside a code step that ran longer than CODE_TIME_LIMIT (not an Exception: the code's own
+    `except Exception` must not swallow it)."""
+
+
+class _TimeGuard:
+    """Stops a code step after `limit` seconds: a timer thread raises CodeTimeout in Blender's main thread
+    (between two of the model's lines; a long single Blender call finishes first). finish() makes sure it
+    never fires after the code ended."""
+
+    def __init__(self, limit):
+        import ctypes
+        self.lock = threading.Lock()
+        self.done = False
+        self.fired = False
+        self.tid = threading.main_thread().ident
+        self._set = ctypes.pythonapi.PyThreadState_SetAsyncExc
+        self._tid = ctypes.c_ulong(self.tid)
+        self.timer = threading.Timer(limit, self._fire)
+        self.timer.daemon = True
+
+    def _fire(self):
+        """Only inside the model's own lines: in the add-on's helpers (api …) or a Blender handler it waits
+        until they return, so they never stop half way."""
+        import sys
+        with self.lock:
+            if self.done:
+                return
+            frame = sys._current_frames().get(self.tid)
+            if frame is not None and frame.f_code.co_filename == "<claude>":
+                import ctypes
+                self.fired = True
+                self._set(self._tid, ctypes.py_object(CodeTimeout))
+                return
+            self.timer = threading.Timer(0.25, self._fire)
+            self.timer.daemon = True
+            self.timer.start()
+
+    def __enter__(self):
+        if threading.current_thread() is threading.main_thread():
+            self.timer.start()
+        return self
+
+    def finish(self):
+        self.timer.cancel()
+        with self.lock:
+            if not self.done:
+                self.done = True
+                if self.fired:
+                    self._set(self._tid, None)   # a CodeTimeout not raised yet is dropped
+
+    def __exit__(self, *_exc):
+        self.finish()
+        return False
+
+
 def execute_python(code, undo_message="Claude", step=None, max_output=6000, chat=None, live=False):
     """Run code, return (output_text, ok).
 
@@ -471,14 +532,28 @@ def execute_python(code, undo_message="Claude", step=None, max_output=6000, chat
     view = bpy.context.preferences.view
     render_display = view.render_display_type
     view.render_display_type = 'NONE'  # renders started by the code must not open a window
+    started = time.monotonic()
+    guard = _TimeGuard(CODE_TIME_LIMIT)
     try:
         compiled = compile(code, "<claude>", "exec")
         with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
             with viewport_context():
                 namespace["C"] = bpy.context
                 helpers["C"] = bpy.context
-                exec(compiled, namespace)
+                with guard:
+                    exec(compiled, namespace)
+                    guard.finish()
+    except CodeTimeout:
+        guard.finish()
+        ok = False
+        buffer.write("\n[Stopped after %.0f s: Blender's window was frozen the whole time. Split the work into "
+                     "several short calls (a few seconds each): no waiting or sleep loops, no frame_set over many "
+                     "frames, at most a few hundred scene.ray_cast calls (each one tests every object). For many "
+                     "rays build mathutils.bvhtree.BVHTree.FromObject(obj, depsgraph) of the one object once; for "
+                     "geometry use foreach_get + numpy. Changes made so far stay (one undo step).]"
+                     % (time.monotonic() - started))
     except Exception as exc:
+        guard.finish()
         ok = False
         # Hide this module's own frame, show only the frames of Claude's code.
         tb = exc.__traceback__.tb_next or exc.__traceback__
@@ -486,7 +561,12 @@ def execute_python(code, undo_message="Claude", step=None, max_output=6000, chat
         if isinstance(exc, NameError):
             buffer.write("\n" + _name_hint(getattr(exc, "name", "") or "", store))
     finally:
+        guard.finish()
         view.render_display_type = render_display
+        seconds = time.monotonic() - started
+        if ok and seconds > 8.0:
+            buffer.write("\n[Note: this call blocked Blender for %.0f s (its window froze). Keep calls short: split "
+                         "loops into several calls, cast fewer rays, use numpy.]" % seconds)
         shadowed = [n for n in HELPERS if n in base and namespace.get(n) is not helpers.get(n)]
         if shadowed:
             buffer.write("\n[Note: %s %s predefined helper%s (C = bpy.context, T/M/V/api = skill helpers); "

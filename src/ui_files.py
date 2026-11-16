@@ -172,19 +172,22 @@ class CLAUDE_OT_version_goto(bpy.types.Operator):
 
 class CLAUDE_OT_crash_open_backup(bpy.types.Operator):
     bl_idname = "claude.crash_open_backup"
-    bl_label = "Open Last Backup"
-    bl_description = "Open the last auto save copy from before the crash (the current file is replaced in Blender)"
+    bl_label = "Continue"
+    bl_description = ("Open the newest saved state of the file from before the crash (the file, a backup copy or "
+                      "Blender's auto save, whichever is newest) and the chat that was open")
 
     def invoke(self, context, event):
-        return context.window_manager.invoke_confirm(self, event)
+        if bpy.data.is_dirty and bpy.data.filepath:
+            return context.window_manager.invoke_confirm(self, event)
+        return self.execute(context)
 
     def execute(self, context):
         crash = autosave.last_crash or {}
-        path = crash.get("backup")
+        path = autosave.newest_copy(crash.get("file")) or crash.get("backup")
         if not path or not os.path.isfile(path):
             self.report({'WARNING'}, tr("No backup found"))
             return {'CANCELLED'}
-        autosave.dismiss_crash()
+        crash["resumed"] = True          # the chat of then comes back with the file (core._restore_chat)
         bpy.ops.wm.open_mainfile(filepath=path)
         return {'FINISHED'}
 
