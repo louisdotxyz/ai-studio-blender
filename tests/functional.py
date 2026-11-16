@@ -2964,6 +2964,9 @@ def reliability():
         os.utime(path, (time.time() - age, time.time() - age))
     check("after a crash: the newest copy of the file is opened", autosave.newest_copy(main) == backup,
           autosave.newest_copy(main))
+    temp_file = os.path.join(tempfile.gettempdir(), "VELO_now_123_autosave.blend")
+    check("a file in a temporary folder never gets a project folder there",
+          autosave.is_temp(temp_file) and autosave.project_folder_target(temp_file) is None)
     keep = core._chats
     core._chats = [{"id": "c-old", "updated": 1, "file": chats._file_key(main), "messages": []},
                    {"id": "c-new", "updated": 2, "file": chats._file_key(backup),

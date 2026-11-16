@@ -416,9 +416,21 @@ def projects_root(folder):
 def project_folder_target(filepath=None):
     """The project folder the open file should move to, or None if it is in one (or unsaved)."""
     filepath = filepath if filepath is not None else bpy.data.filepath
-    if not filepath or in_project_folder(filepath):
+    if not filepath or in_project_folder(filepath) or is_temp(filepath):
         return None
     return os.path.join(projects_root(main_folder(filepath)), project_name(filepath))
+
+
+def is_temp(filepath):
+    """A file in a temporary folder (Blender's own auto save, a recovered file): never a project folder there,
+    macOS empties those folders."""
+    import tempfile
+    path = os.path.realpath(filepath)
+    roots = {os.path.realpath(r) for r in (tempfile.gettempdir(), os.environ.get("TMPDIR", ""), "/tmp",
+                                           "/private/var/folders") if r}
+    if bpy.app.tempdir:
+        roots.add(os.path.realpath(os.path.dirname(bpy.app.tempdir.rstrip("/\\"))))
+    return any(path.startswith(r.rstrip("/") + "/") for r in roots if r and r != "/")
 
 
 def _dismissed_path():

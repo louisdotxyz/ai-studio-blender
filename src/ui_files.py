@@ -188,8 +188,37 @@ class CLAUDE_OT_crash_open_backup(bpy.types.Operator):
             self.report({'WARNING'}, tr("No backup found"))
             return {'CANCELLED'}
         crash["resumed"] = True          # the chat of then comes back with the file (core._restore_chat)
+        main = crash.get("file")
+        if main and not autosave._same(path, main) and autosave.is_temp(path):
+            _after_open[0] = main        # Blender's own auto save: saved as the main file right after opening
         bpy.ops.wm.open_mainfile(filepath=path)
+        if _after_open[0] and not bpy.app.timers.is_registered(_save_recovered):
+            bpy.app.timers.register(_save_recovered, first_interval=0.5)
         return {'FINISHED'}
+
+
+_after_open = [None]
+
+
+def _save_recovered():
+    """The newest state was Blender's auto save in a temporary folder: it becomes the main file again (the
+    main file of before goes to autosave/ first), so nothing is left in a folder macOS empties."""
+    import subprocess
+    main, _after_open[0] = _after_open[0], None
+    if not main:
+        return None
+    try:
+        if os.path.exists(main):
+            folder = os.path.join(autosave.main_folder(main), autosave.backup_dir_name())
+            os.makedirs(folder, exist_ok=True)
+            keep = autosave._unique_path(folder, autosave.project_name(main), os.path.getmtime(main))
+            if subprocess.run(["cp", "-c", "-p", main, keep]).returncode != 0:
+                import shutil
+                shutil.copy2(main, keep)
+        bpy.ops.wm.save_as_mainfile(filepath=main)
+    except Exception as ex:
+        print("AI Studio: recovered file not saved as the main file:", ex)
+    return None
 
 
 class CLAUDE_OT_save_as_original(bpy.types.Operator):
