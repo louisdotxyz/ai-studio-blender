@@ -1056,15 +1056,17 @@ class STUDIO_PT_render_queue(_SidebarPanel, Panel):
         text = "Photo · Queue & Compare (%d)" % len(images) if not waiting else \
             "Photo · %d waiting · %d renders" % (len(waiting), len(images))
         head.operator(STUDIO_OT_open_review.bl_idname, text=text, icon='IMAGE')
+        head.prop(rq, "farm_on", text="", icon='NETWORK_DRIVE')
         head.operator("studio.cut", text="", icon='SEQUENCE').action = 'OPEN'
         head.popover(STUDIO_PT_output.__name__, text="", icon='PREFERENCES')
 
-        from . import film
+        from . import film, renderfarm
         films = [f for f in film.films_here() if f[2] != 'DONE']
-        if RUN.busy or films:                      # what renders now (the list is in Photo)
-            box = layout.box()
+        if RUN.busy or films or renderfarm.active() or any(j["phase"] == "error" for j in renderfarm._jobs):
+            box = layout.box()                     # what renders now (the list is in Photo)
             col = box.column(align=True)
             film.draw(col)
+            renderfarm.draw_progress(col)
             if RUN.busy and RUN.current:
                 row = col.row(align=True)
                 row.progress(factor=RUN.render_progress, type='BAR', text="%s · %s" % (
@@ -1078,6 +1080,7 @@ class STUDIO_PT_render_queue(_SidebarPanel, Panel):
         from . import renderfarm
         from .ui_common import section
         box, head, is_open = section(layout, "render_farm", "Render Farm", 'NETWORK_DRIVE', default_open=False)
-        head.label(text="" if renderfarm.connected() else "share offline", translate=False)
+        head.label(text=("on" if rq.farm_on else "off") if renderfarm.connected() else "share offline",
+                   translate=False)
         if is_open:
             renderfarm.draw(box, context)

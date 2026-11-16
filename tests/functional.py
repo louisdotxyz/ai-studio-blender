@@ -2724,6 +2724,7 @@ def render_farm_folder():
           and job.get("state") == 'rendering' and view["halves"] == ["b_job.blend.part"]
           and view["workers"] == [("MD-1", "rendert a_job", "2026-11-16 18:00")], view)
     open(os.path.join(root, "queue", "a_job.done"), "w").close()
+    check("farm off: the queue renders on this Mac", not farm.takes(bpy.context.scene, None))
     check("farm: .done → done; job names are safe", farm.scan(root)["jobs"][0]["state"] == 'done'
           and farm.job_name("/x/VELO now.blend", "Szene 1", 0).startswith("VELO_now_Szene_1_"))
 

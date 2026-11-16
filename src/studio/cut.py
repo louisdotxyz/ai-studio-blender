@@ -1269,8 +1269,10 @@ class STUDIO_OT_cut_settings(Operator):
 
 def _rendering(section, fresh=False):
     """A film of this file renders the section now."""
-    from . import film
+    from . import film, renderfarm
     folder = os.path.normcase(frames_folder(section))
+    if renderfarm.renders_section(folder):
+        return True
     return any(os.path.normcase(f.get("folder", "")) == folder and k in {'RENDERING', 'ENCODING'} and film.mine(f)
                and not f.get("draft") for f, _s, k in film.films(fresh=fresh))
 

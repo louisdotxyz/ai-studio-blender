@@ -688,6 +688,24 @@ class Runner:
             log("job could not be prepared: %s" % ex)
             self._job_failed(scene, item.uid, label)
             return
+        from . import renderfarm
+        if renderfarm.takes(scene, item):   # the render farm: packed, sent, the result comes back by itself
+            try:
+                renderfarm.submit_item(scene, item, job, self.animation, path, camera, self.quality)
+            except Exception as ex:
+                log("not sent to the render farm: %s" % ex)
+                self._job_failed(scene, item.uid, label)
+                return
+            log("render farm: %s" % label)
+            self.current = None
+            self.phase = 'START'
+            self.processed.add(item.uid)
+            remove_item(scene, item.uid)
+            self.done += 1
+            if self.animation:
+                from . import cut
+                cut.on_film_done(scene.name)
+            return
         if self.animation:   # a film: its own process (goes on after a crash, resumes), in parts
             self._start_film(scene, item, job, path, camera, name, label)
             return

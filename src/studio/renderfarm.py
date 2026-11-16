@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The render farm over a server folder (Render tab · Render Farm): jobs go to the ZHdK Mac Studios
-through files on the DDE share only. There is no network connection to the render machines and no port
+through files on the DDE share only. With the switch on (scene.studio.farm_on) every render of the queue
+goes there: a still comes back into the renders (preview), a section's frames into animation/Frames/
+(the Video Editor shows them frame by frame). There is no network connection to the render machines and no port
 is used here; the workers (<share>/_worker/Mac_Render_Worker.command) read the same folder.
 
 Folder protocol (fixed, the workers rely on it):
@@ -42,8 +44,8 @@ REFRESH = 15.0                 # seconds between looks at the share while the pa
 CHUNK = 8 * 1024 * 1024        # bytes per step of the copy to the share
 
 PACK_SCRIPT = '''
-import bpy, sys
-out, scene_name, fmt = sys.argv[sys.argv.index("--") + 1:]
+import bpy, json, sys
+cfg = json.load(open(sys.argv[sys.argv.index("--") + 1]))
 local = 0
 for idb in list(bpy.data.user_map().keys()):      # linked library data becomes local (drivers untouched)
     if getattr(idb, "library", None) is not None:
@@ -52,26 +54,50 @@ for idb in list(bpy.data.user_map().keys()):      # linked library data becomes 
             local += 1
         except Exception as ex:
             print("RF make_local", idb.name, ex)
-try:
-    bpy.ops.file.make_paths_absolute()
-except Exception as ex:
-    print("RF absolute", ex)
-try:
-    bpy.ops.file.pack_all()
-except Exception as ex:
-    print("RF pack", ex)
-scene = bpy.data.scenes.get(scene_name)
-if scene is not None:                              # the job's format, so the worker can set it
-    images = scene.render.image_settings
+for op in (bpy.ops.file.make_paths_absolute, bpy.ops.file.pack_all):
     try:
-        images.media_type = 'IMAGE'
-    except Exception:
-        pass
+        op()
+    except Exception as ex:
+        print("RF", op, ex)
+scene = bpy.data.scenes.get(cfg["scene"]) or bpy.context.scene
+spec = cfg.get("camera_spec")
+overrides = cfg.get("overrides") or []
+if spec and bpy.data.objects.get(spec.get("source", "")) is not None:      # a still from a stored place
+    from mathutils import Matrix
+    source = bpy.data.objects[spec["source"]]
+    data = source.data.copy()
+    data.lens = spec.get("lens", data.lens)
+    cam = bpy.data.objects.new("farm_camera", data)
+    scene.collection.objects.link(cam)
+    m = spec["matrix"]
+    cam.matrix_world = Matrix([m[0:4], m[4:8], m[8:12], m[12:16]])
+    overrides = [[p, {"object": cam.name}] if p == "camera" else [p, v] for p, v in overrides]
+def value(v):
+    return bpy.data.objects.get(v["object"]) if isinstance(v, dict) and "object" in v else v
+pending = list(overrides)
+for _attempt in range(3):                          # some values fit only after others
+    failed = []
+    for path, v in pending:
+        head, _, attr = path.rpartition(".")
+        try:
+            setattr(scene.path_resolve(head) if head else scene, attr, value(v))
+        except Exception as ex:
+            failed.append((path, v, ex))
+    pending = [(p, v) for p, v, _ex in failed]
+    if not pending:
+        break
+for path, _v, ex in failed:
+    print("RF could not set", path, ex)
+if any(p == "camera" for p, _v in overrides):      # one camera for the job: no marker switches it
+    scene.timeline_markers.clear()
+images = scene.render.image_settings
+for attr, v in (("media_type", "IMAGE"), ("file_format", cfg["format"])):
     try:
-        images.file_format = fmt
+        setattr(images, attr, v)
     except Exception as ex:
         print("RF format", ex)
-bpy.ops.wm.save_as_mainfile(filepath=out, compress=True, relative_remap=False)
+scene.render.use_sequencer = False
+bpy.ops.wm.save_as_mainfile(filepath=cfg["out"], compress=True, relative_remap=False)
 print("RF packed, %d made local" % local)
 '''
 
@@ -210,92 +236,212 @@ def _tick():
     return REFRESH
 
 
-# ------------------------------------------------------------------ sending
+# ------------------------------------------------------------------ sending and collecting
 
-_send = {"phase": "", "job": "", "progress": 0.0, "error": "", "proc": None, "local": "", "cfg": None,
-         "root": "", "size": 0, "log": ""}
+LOCAL = os.path.expanduser("~/.cache/ai_studio_farm")
+REGISTRY = os.path.join(LOCAL, "jobs.json")
+EXT = {'PNG': "png", 'JPEG': "jpg", 'OPEN_EXR': "exr", 'TIFF': "tif"}
+SETTLE = 5.0              # seconds a frame on the share stays unchanged before it is taken
+_jobs = []                # the jobs of this Blender: queued → packing → copying → sent (collected) → done / error
+_raw = {}                 # (file, scene state) → the saved copy several jobs pack from
+
+
+def enabled(scene):
+    return bool(getattr(scene.studio, "farm_on", False))
+
+
+def takes(scene, item):
+    """The render farm renders this queue item (on, share there, no material variant)."""
+    return enabled(scene) and connected() and not getattr(item, "variant", "")
+
+
+def active():
+    return [j for j in _jobs if j["phase"] in {"queued", "packing", "copying", "sent"}]
 
 
 def sending():
-    return _send["phase"] in {"saving", "packing", "copying"}
+    return any(j["phase"] in {"queued", "packing", "copying"} for j in _jobs)
 
 
-def _fail(message):
-    _send.update(phase="error", error=message)
-    print("AI Studio farm:", message)
+def renders_section(folder):
+    folder = os.path.normcase(folder)
+    return any(j.get("kind") == 'ANIM' and os.path.normcase(j.get("folder", "")) == folder for j in active())
 
 
-def send(scene, start, end, fmt, note):
-    """Start sending (see the module). Returns the job's name; the rest runs in the background."""
-    if sending():
-        raise ValueError("A job is still being sent")
+def _save_registry():
+    keep = [j for j in _jobs if j["phase"] == "sent"]
+    try:
+        os.makedirs(LOCAL, exist_ok=True)
+        with open(REGISTRY + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(keep, f, indent=1)
+        os.replace(REGISTRY + ".tmp", REGISTRY)
+    except OSError as ex:
+        print("AI Studio farm: jobs not kept:", ex)
+
+
+def _load_registry():
+    try:
+        with open(REGISTRY, encoding="utf-8") as f:
+            for job in json.load(f):
+                if not any(j["job"] == job["job"] for j in _jobs):
+                    _jobs.append(job)
+    except (OSError, ValueError):
+        pass
+
+
+def _raw_copy(scene):
+    """The working file saved as a copy once per scene state (the working file stays as it is)."""
+    from . import runner
+    key = (bpy.data.filepath, getattr(runner, "_generation", [0])[0], scene.name)
+    path = _raw.get(key)
+    if path and os.path.isfile(path):
+        return path
+    os.makedirs(LOCAL, exist_ok=True)
+    need = os.path.getsize(bpy.data.filepath) * 3 if bpy.data.filepath and os.path.exists(bpy.data.filepath) else 0
+    free = shutil.disk_usage(LOCAL).free
+    if need and free < need:
+        raise ValueError("Not enough space on this Mac (%.1f GB free, about %.1f GB needed)" % (free / 1e9, need / 1e9))
+    path = os.path.join(LOCAL, "copy_%s.blend" % time.strftime("%Y%m%d-%H%M%S"))
+    runner.RUN.preparing = True                  # saving is no scene change
+    try:
+        bpy.ops.wm.save_as_mainfile(filepath=path, copy=True, compress=False, relative_remap=True,
+                                    check_existing=False)
+    finally:
+        runner.RUN.preparing = False
+    _raw[key] = path
+    return path
+
+
+def _format_of(overrides, fallback='PNG'):
+    fmt = next((v for p, v in overrides if p == "render.image_settings.file_format"), fallback)
+    return fmt if fmt in EXT else 'PNG'
+
+
+def submit(scene, start, end, fmt=None, note="", kind='MANUAL', overrides=None, camera_spec=None, **extra):
+    """A job into the send queue (packed and copied one after another in the background). Returns it."""
     root = share_root()
     if not connected(root):
         raise ValueError("Share not connected: %s" % CONNECT_HINT)
     if end < start:
         raise ValueError("The last frame is before the first")
-    job = job_name(bpy.data.filepath, scene.name)
-    local = os.path.join(os.path.expanduser("~/.cache/ai_studio_farm"), job)
-    os.makedirs(local, exist_ok=True)
-    need = os.path.getsize(bpy.data.filepath) * 3 if bpy.data.filepath and os.path.exists(bpy.data.filepath) else 0
-    free = shutil.disk_usage(local).free
-    if need and free < need:
-        raise ValueError("Not enough space on this Mac (%.1f GB free, about %.1f GB needed)"
-                         % (free / 1e9, need / 1e9))
-    raw = os.path.join(local, "copy.blend")
-    _send.update(phase="saving", job=job, progress=0.0, error="", root=root, local=local, size=0,
-                 log=os.path.join(local, "pack.log"),
-                 cfg={"scene": scene.name, "start": int(start), "end": int(end), "format": fmt,
-                      "sent_by": "%s@%s" % (getpass.getuser(), socket.gethostname().split(".")[0]),
-                      "note": note})
-    try:
-        bpy.ops.wm.save_as_mainfile(filepath=raw, copy=True, compress=False, relative_remap=True,
-                                    check_existing=False)
-    except RuntimeError as ex:
-        _fail("Copy not saved: %s" % ex)
-        raise ValueError(_send["error"])
-    script = os.path.join(local, "pack.py")
-    with open(script, "w", encoding="utf-8") as f:
-        f.write(PACK_SCRIPT)
-    with open(_send["log"], "w", encoding="utf-8") as log:
-        _send["proc"] = subprocess.Popen(
-            [bpy.app.binary_path, "-b", raw, "--factory-startup", "-noaudio", "--python", script, "--",
-             os.path.join(local, job + ".blend"), scene.name, fmt],
-            stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
-    _send["phase"] = "packing"
-    if not bpy.app.timers.is_registered(_send_tick):
-        bpy.app.timers.register(_send_tick, first_interval=1.0)
+    overrides = [[p, v] for p, v in (overrides or []) if p != "render.filepath"]
+    fmt = fmt or _format_of(overrides)
+    name = job_name(bpy.data.filepath, extra.get("section") or scene.name)
+    while any(j["job"] == name for j in _jobs):
+        name += "x"
+    job = {"job": name, "scene": scene.name, "kind": kind, "start": int(start), "end": int(end), "format": fmt,
+           "ext": EXT.get(fmt, "png"), "overrides": overrides, "camera_spec": camera_spec, "note": note,
+           "root": root, "raw": _raw_copy(scene), "phase": "queued", "progress": 0.0, "error": "", "size": 0,
+           "have": 0, "blend": bpy.data.filepath, "added": time.time(),
+           "sent_by": "%s@%s" % (getpass.getuser(), socket.gethostname().split(".")[0])}
+    job.update(extra)
+    _jobs.append(job)
+    if not bpy.app.timers.is_registered(_pump):
+        bpy.app.timers.register(_pump, first_interval=0.5, persistent=True)
     return job
 
 
-def _send_tick():
+def submit_item(scene, item, job, animation, path, camera, quality):
+    """A queue item of the runner on the farm: a still into its output file, a section's frames into
+    animation/Frames/<section>/ (the Video Editor shows them frame by frame)."""
+    from . import cut, film
+    label = item.variant or camera.name
+    overrides = job["overrides"]
+    if animation:
+        own = item.frame_end > 0 and item.frame_end >= item.frame_start
+        a, b = (item.frame_start, item.frame_end) if own else (scene.frame_start, scene.frame_end)
+        section = item.section or cut.WHOLE
+        stem = cut.frame_stem(section)
+        overrides = [["camera", {"object": camera.name}]] + [o for o in overrides if o[0] != "camera"]
+        fmt = _format_of(overrides)
+        if not item.keep_frames:                     # a new render: older frames go to archiv first
+            film._clear_old_frames(path, stem, cut.archive_folder())
+        meta = os.path.join(path, film.FILM_DIR)     # what the Video Editor reads: quality and size
+        os.makedirs(meta, exist_ok=True)
+        keep = [o for o in overrides if o[0] in {"render.resolution_x", "render.resolution_y",
+                                                  "render.resolution_percentage", "render.image_settings.file_format"}]
+        with open(os.path.join(meta, "job.json"), "w", encoding="utf-8") as f:
+            json.dump({"scene": scene.name, "quality": quality, "section": section, "frames": [a, b],
+                       "overrides": keep, "farm": True}, f, indent=1)
+        return submit(scene, a, b, fmt, "%s · %s" % (section, "HQ" if quality == 'HIGH' else "LQ"), kind='ANIM',
+                      overrides=overrides, folder=path, stem=stem, section=section, quality=quality)
+    frame = scene.frame_current
+    return submit(scene, frame, frame, None, "%s · %s" % (label, "HQ" if quality == 'HIGH' else "LQ"),
+                  kind='STILL', overrides=overrides, camera_spec=job.get("camera"), target=path, quality=quality)
+
+
+def _pump():
+    """One job at a time: pack (own Blender process) → copy (thread) → sent; collects the frames of sent
+    jobs every 10 s."""
     from . import runner
-    runner.tag_redraw()
-    if _send["phase"] == "packing":
-        proc = _send["proc"]
-        if proc is None or proc.poll() is None:
-            return 1.0
-        packed = os.path.join(_send["local"], _send["job"] + ".blend")
-        if proc.returncode != 0 or not os.path.isfile(packed):
-            tail = ""
-            try:
-                with open(_send["log"], encoding="utf-8", errors="replace") as f:
-                    tail = [line.strip() for line in f if line.strip()][-1]
-            except (OSError, IndexError):
-                pass
-            _fail("Packing failed: %s" % (tail or "code %s" % proc.returncode))
-            return None
-        _send.update(phase="copying", size=os.path.getsize(packed), progress=0.0)
-        threading.Thread(target=_copy, args=(packed,), daemon=True).start()
+    try:
+        busy = next((j for j in _jobs if j["phase"] in {"packing", "copying"}), None)
+        if busy is not None and busy["phase"] == "packing":
+            _packed(busy)
+        elif busy is None:
+            nxt = next((j for j in _jobs if j["phase"] == "queued"), None)
+            if nxt is not None:
+                _pack(nxt)
+        _collect_all()
+        runner.tag_redraw()
+    except Exception as ex:                      # never stop the timer
+        print("AI Studio farm:", ex)
+    if sending():
         return 1.0
-    return 1.0 if _send["phase"] == "copying" else None
+    return 10.0 if active() else None
 
 
-def _copy(packed):
+def _pack(job):
+    local = os.path.join(LOCAL, job["job"])
+    os.makedirs(local, exist_ok=True)
+    cfg = os.path.join(local, "pack.json")
+    with open(cfg, "w", encoding="utf-8") as f:
+        json.dump({"out": os.path.join(local, job["job"] + ".blend"), "scene": job["scene"], "format": job["format"],
+                   "overrides": job["overrides"], "camera_spec": job.get("camera_spec")}, f)
+    script = os.path.join(local, "pack.py")
+    with open(script, "w", encoding="utf-8") as f:
+        f.write(PACK_SCRIPT)
+    job["log"] = os.path.join(local, "pack.log")
+    with open(job["log"], "w", encoding="utf-8") as log:
+        proc = subprocess.Popen([bpy.app.binary_path, "-b", job["raw"], "--factory-startup", "-noaudio", "--python",
+                                 script, "--", cfg], stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                start_new_session=True)
+    _procs[job["job"]] = proc
+    job["phase"] = "packing"
+
+
+_procs = {}
+
+
+def _packed(job):
+    proc = _procs.get(job["job"])
+    if proc is not None and proc.poll() is None:
+        return
+    _procs.pop(job["job"], None)
+    packed = os.path.join(LOCAL, job["job"], job["job"] + ".blend")
+    if proc is None or proc.returncode != 0 or not os.path.isfile(packed):
+        tail = ""
+        try:
+            with open(job.get("log", ""), encoding="utf-8", errors="replace") as f:
+                tail = [line.strip() for line in f if line.strip()][-1]
+        except (OSError, IndexError):
+            pass
+        job.update(phase="error", error="Packing failed: %s" % (tail or "process ended"))
+    else:
+        job.update(phase="copying", size=os.path.getsize(packed), progress=0.0)
+        threading.Thread(target=_copy, args=(job, packed), daemon=True).start()
+    if not any(j["raw"] == job["raw"] and j["phase"] in {"queued", "packing"} for j in _jobs):
+        try:                                     # our own local copy, no longer needed
+            os.remove(job["raw"])
+        except OSError:
+            pass
+
+
+def _copy(job, packed):
     """The packed copy onto the share: <job>.blend.part → <job>.blend, then <job>.json (last)."""
-    root, job, size = _send["root"], _send["job"], _send["size"]
+    root, name, size = job["root"], job["job"], job["size"]
     queue = os.path.join(root, "queue")
-    part = os.path.join(queue, job + ".blend.part")
+    part = os.path.join(queue, name + ".blend.part")
     try:
         if not os.path.isdir(root):
             raise OSError("Share not connected: %s" % CONNECT_HINT)
@@ -311,22 +457,108 @@ def _copy(packed):
                     break
                 dst.write(block)
                 copied += len(block)
-                _send["progress"] = copied / size if size else 1.0
+                job["progress"] = copied / size if size else 1.0
             dst.flush()
             os.fsync(dst.fileno())
         if os.path.getsize(part) != size:
             raise OSError("The copy on the share is incomplete")
-        os.replace(part, os.path.join(queue, job + ".blend"))
-        meta = os.path.join(queue, job + ".json.part")
+        os.replace(part, os.path.join(queue, name + ".blend"))
+        meta = os.path.join(queue, name + ".json.part")
         with open(meta, "w", encoding="utf-8") as f:
-            json.dump(_send["cfg"], f, indent=1)
-        os.replace(meta, os.path.join(queue, job + ".json"))      # now the job is ready
-        _send.update(phase="sent", progress=1.0)
-        shutil.rmtree(_send["local"], ignore_errors=True)            # the local copies (ours, not the queue)
+            json.dump({"scene": job["scene"], "start": job["start"], "end": job["end"], "format": job["format"],
+                       "sent_by": job["sent_by"], "note": job["note"]}, f, indent=1)
+        os.replace(meta, os.path.join(queue, name + ".json"))      # now the job is ready
+        job.update(phase="sent" if job["kind"] in {'STILL', 'ANIM'} else "done", progress=1.0)
+        shutil.rmtree(os.path.join(LOCAL, name), ignore_errors=True)
         _view["scan"] = None
+        _save_registry()
     except OSError as ex:
         reason = "the share is full" if getattr(ex, "errno", 0) == 28 else str(ex)
-        _fail("Copy to the share stopped: %s (%s stays, it is never a job)" % (reason, os.path.basename(part)))
+        job.update(phase="error", error="Copy to the share stopped: %s (%s stays, it is never a job)"
+                   % (reason, os.path.basename(part)))
+
+
+def _collect_all():
+    now = time.time()
+    for job in [j for j in _jobs if j["phase"] == "sent"]:
+        if now - job.get("looked", 0.0) < 10.0:
+            continue
+        job["looked"] = now
+        try:
+            _collect(job)
+        except OSError as ex:
+            job["error"] = "Frames not fetched: %s" % ex
+
+
+def _collect(job):
+    """The finished frames of a job into AI Studio's folders."""
+    from . import cut, runner
+    folder = os.path.join(job["root"], "renders", job["job"])
+    if not os.path.isdir(folder):
+        return
+    now, new = time.time(), 0
+    if job["kind"] == 'STILL':
+        source = os.path.join(folder, "%s_%04d.%s" % (job["job"], job["start"], job["ext"]))
+        try:
+            st = os.stat(source)
+        except OSError:
+            return
+        if st.st_size > 0 and now - st.st_mtime > SETTLE:
+            target = os.path.splitext(job["target"])[0] + "." + job["ext"]
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            shutil.copyfile(source, target + ".part")
+            os.replace(target + ".part", target)
+            job.update(phase="done", have=1)
+            runner.RUN.last_path = target
+            try:
+                runner.show_in_preview(target)
+            except Exception:
+                pass
+            runner.notify("%s ready (render farm)" % job["note"])
+            _save_registry()
+        return
+    have = 0
+    for frame in range(job["start"], job["end"] + 1):
+        name = "%s_%04d.%s" % (job["stem"], frame, job["ext"])
+        local = os.path.join(job["folder"], name)
+        if os.path.exists(local) and os.path.getsize(local) > 0:
+            have += 1
+            continue
+        source = os.path.join(folder, "%s_%04d.%s" % (job["job"], frame, job["ext"]))
+        try:
+            st = os.stat(source)
+        except OSError:
+            continue
+        if st.st_size > 0 and now - st.st_mtime > SETTLE:
+            shutil.copyfile(source, local + ".part")
+            os.replace(local + ".part", local)
+            have += 1
+            new += 1
+    job["have"] = have
+    if new:
+        cut.on_progress(job["scene"])
+    if have >= job["end"] - job["start"] + 1:
+        job["phase"] = "done"
+        cut.on_film_done(job["scene"])
+        runner.notify("%s ready (render farm)" % job["note"])
+        _save_registry()
+
+
+def draw_progress(layout):
+    """The farm's jobs of this Blender as bars (Render tab, Video Editor)."""
+    for job in [j for j in _jobs if j["phase"] in {"queued", "packing", "copying", "sent", "error"}]:
+        row = layout.row(align=True)
+        total = job["end"] - job["start"] + 1
+        if job["phase"] == "error":
+            row.alert = True
+            row.label(text="%s: %s" % (job["note"] or job["job"], job["error"]), icon='ERROR', translate=False)
+            row.operator(STUDIO_OT_farm_dismiss.bl_idname, text="", icon='X', emboss=False).job = job["job"]
+            continue
+        text = {"queued": "waiting to be sent", "packing": "packing (background)",
+                "copying": "to the share %.1f/%.1f GB" % (job["progress"] * job["size"] / 1e9, job["size"] / 1e9),
+                "sent": "farm %d/%d" % (job["have"], total)}[job["phase"]]
+        factor = job["progress"] if job["phase"] == "copying" else (job["have"] / total if job["phase"] == "sent" else 0.0)
+        row.progress(factor=factor, type='BAR', text="%s · %s" % (job["note"] or job["job"], text))
 
 
 # ------------------------------------------------------------------ into the Video Editor
@@ -369,110 +601,113 @@ STATE_ICONS = {'waiting': 'TIME', 'rendering': 'RENDER_ANIMATION', 'done': 'CHEC
 
 
 def draw(layout, context):
-    """Render tab · Render Farm."""
+    """Render tab · Render Farm: on/off (every render goes to the farm), its jobs, the workers, sending by
+    hand."""
     _view["drawn"] = time.monotonic()
     if not bpy.app.timers.is_registered(_tick):
         bpy.app.timers.register(_tick, first_interval=0.1)
     wm = context.window_manager
+    scene = context.scene
     root = share_root()
     online = connected(root)
-    col = layout.column(align=True)
-    col.prop(wm, "studio_farm_scene", text="", icon='SCENE_DATA')
-    row = col.row(align=True)
-    row.prop(wm, "studio_farm_range", expand=True)
-    scene, start, end = _range(context)
-    if wm.studio_farm_range == 'CUSTOM':
-        row = col.row(align=True)
-        row.prop(wm, "studio_farm_start", text="Start")
-        row.prop(wm, "studio_farm_end", text="End")
-    row = col.row(align=True)
-    row.label(text="%d–%d · %d frames" % (start, end, max(0, end - start + 1)), translate=False)
-    row.operator(STUDIO_OT_farm_frame.bl_idname, text="Current Frame", icon='TIME')
-    col.prop(wm, "studio_farm_format", text="")
-    col.prop(wm, "studio_farm_note", text="", icon='TEXT')
-    render = scene.render
-    pct = render.resolution_percentage
-    hint = layout.row()
-    hint.active = False
-    hint.label(text="%d × %d (%d %%) · %s" % (render.resolution_x * pct // 100, render.resolution_y * pct // 100,
-                                              pct, render.engine.replace("BLENDER_", "").title()), translate=False)
     row = layout.row()
-    row.scale_y = 1.4
-    row.enabled = online and not sending()
-    row.operator(STUDIO_OT_farm_send.bl_idname, text="Send to Render Farm", icon='EXPORT')
+    row.scale_y = 1.3
+    row.prop(scene.studio, "farm_on", text="Render on the Farm" if scene.studio.farm_on else "Render on this Mac",
+             toggle=True, icon='NETWORK_DRIVE' if scene.studio.farm_on else 'DESKTOP')
     if not online:
         warn = layout.column(align=True)
         warn.alert = True
-        warn.label(text="Share not connected", icon='ERROR')
+        warn.label(text="Share not connected%s" % (": renders stay on this Mac" if scene.studio.farm_on else ""),
+                   icon='ERROR')
         warn.label(text=CONNECT_HINT, translate=False)
-    phase = _send["phase"]
-    if phase in {"saving", "packing"}:
-        layout.label(text="%s: %s" % (_send["job"], "saving a copy" if phase == "saving" else
-                                      "packing resources (background)"), icon='TIME', translate=False)
-    elif phase == "copying":
-        layout.progress(factor=_send["progress"], type='BAR', text="To the share · %.1f of %.1f GB" % (
-            _send["progress"] * _send["size"] / 1e9, _send["size"] / 1e9))
-    elif phase == "sent":
-        layout.label(text="Sent: %s" % _send["job"], icon='CHECKMARK', translate=False)
-    elif phase == "error":
-        box = layout.box()
-        box.alert = True
-        box.label(text=_send["error"], icon='ERROR', translate=False)
+    elif scene.studio.farm_on:
+        hint = layout.row()
+        hint.active = False
+        hint.label(text="Stills and sections render on the workers and come back by themselves", icon='INFO')
+    col = layout.column(align=True)
+    draw_progress(col)
     if not online:
         return
     _refresh()
     view = _view["scan"]
-    box = layout.box()
-    head = box.row(align=True)
-    head.label(text="Jobs", icon='SORTTIME')
+    if view is not None:
+        box = layout.box()
+        box.label(text="Workers", icon='DESKTOP')
+        for name, what, when in view["workers"]:
+            row = box.row(align=True)
+            row.label(text=name, icon='RENDER_ANIMATION' if what.startswith("rendert") else 'TIME', translate=False)
+            sub = row.row()
+            sub.alignment = 'RIGHT'
+            sub.active = False
+            sub.label(text="%s · %s" % (what, when[-5:]), translate=False)
+        if not view["workers"]:
+            hint = box.row()
+            hint.active = False
+            hint.label(text="No worker has reported yet")
+    from .ui_common import section
+    box, head, is_open = section(layout, "farm_jobs", "Jobs on the Share", 'SORTTIME', default_open=False)
     head.operator(STUDIO_OT_farm_folder.bl_idname, text="", icon='FILE_FOLDER', emboss=False).job = ""
     head.operator(STUDIO_OT_farm_refresh.bl_idname, text="", icon='FILE_REFRESH', emboss=False)
-    if view is None:
-        box.label(text="Looking at the share …", icon='TIME')
-        return
-    if view.get("error"):
-        warn = box.row()
-        warn.alert = True
-        warn.label(text=view["error"], icon='ERROR', translate=False)
-    for job in view["jobs"][:12]:
+    if is_open:
+        if view is None:
+            box.label(text="Looking at the share …", icon='TIME')
+        else:
+            if view.get("error"):
+                warn = box.row()
+                warn.alert = True
+                warn.label(text=view["error"], icon='ERROR', translate=False)
+            for job in view["jobs"][:12]:
+                col = box.column(align=True)
+                row = col.row(align=True)
+                row.label(text=job["job"], icon=STATE_ICONS[job["state"]], translate=False)
+                sub = row.row(align=True)
+                sub.alignment = 'RIGHT'
+                sub.label(text="%d/%d · %s" % (job["done"], job["total"], job["state"]), translate=False)
+                row = col.row(align=True)
+                if job["total"]:
+                    row.progress(factor=min(1.0, job["done"] / job["total"]), type='BAR',
+                                 text=job["note"] or job["scene"])
+                row.operator(STUDIO_OT_farm_folder.bl_idname, text="", icon='FILE_FOLDER').job = job["job"]
+                load = row.row(align=True)
+                load.enabled = job["done"] > 0
+                load.operator(STUDIO_OT_farm_load.bl_idname, text="", icon='SEQUENCE').job = job["job"]
+            if not view["jobs"]:
+                hint = box.row()
+                hint.active = False
+                hint.label(text="No job in queue/")
+            for half in view["halves"]:
+                hint = box.row()
+                hint.active = False
+                hint.label(text="%s: incomplete, never a job" % half, icon='INFO', translate=False)
+    box, _head, is_open = section(layout, "farm_manual", "Send by Hand", 'EXPORT', default_open=False)
+    if is_open:
         col = box.column(align=True)
+        col.prop(wm, "studio_farm_scene", text="", icon='SCENE_DATA')
         row = col.row(align=True)
-        row.label(text=job["job"], icon=STATE_ICONS[job["state"]], translate=False)
-        sub = row.row(align=True)
-        sub.alignment = 'RIGHT'
-        sub.label(text="%d/%d · %s" % (job["done"], job["total"], job["state"]), translate=False)
+        row.prop(wm, "studio_farm_range", expand=True)
+        scene_, start, end = _range(context)
+        if wm.studio_farm_range == 'CUSTOM':
+            row = col.row(align=True)
+            row.prop(wm, "studio_farm_start", text="Start")
+            row.prop(wm, "studio_farm_end", text="End")
         row = col.row(align=True)
-        if job["total"]:
-            row.progress(factor=min(1.0, job["done"] / job["total"]), type='BAR',
-                         text=job["note"] or job["scene"])
-        row.operator(STUDIO_OT_farm_folder.bl_idname, text="", icon='FILE_FOLDER').job = job["job"]
-        load = row.row(align=True)
-        load.enabled = job["done"] > 0
-        load.operator(STUDIO_OT_farm_load.bl_idname, text="", icon='SEQUENCE').job = job["job"]
-    if not view["jobs"]:
+        row.label(text="%d–%d · %d frames" % (start, end, max(0, end - start + 1)), translate=False)
+        row.operator(STUDIO_OT_farm_frame.bl_idname, text="Current Frame", icon='TIME')
+        col.prop(wm, "studio_farm_format", text="")
+        col.prop(wm, "studio_farm_note", text="", icon='TEXT')
+        render = scene_.render
+        pct = render.resolution_percentage
         hint = box.row()
         hint.active = False
-        hint.label(text="No job in queue/")
-    for half in view["halves"]:
-        hint = box.row()
-        hint.active = False
-        hint.label(text="%s: incomplete, never a job" % half, icon='INFO', translate=False)
-    box = layout.box()
-    box.label(text="Workers", icon='DESKTOP')
-    for name, what, when in view["workers"]:
-        row = box.row(align=True)
-        row.label(text=name, icon='RENDER_ANIMATION' if what.startswith("rendert") else 'TIME', translate=False)
-        sub = row.row()
-        sub.alignment = 'RIGHT'
-        sub.active = False
-        sub.label(text="%s · %s" % (what, when[-5:]), translate=False)
-    if not view["workers"]:
-        hint = box.row()
-        hint.active = False
-        hint.label(text="No worker has reported yet")
-    gear = layout.row()
-    gear.active = False
-    gear.label(text=root, icon='NETWORK_DRIVE', translate=False)
+        hint.label(text="%d × %d (%d %%) · %s · as the scene is" % (
+            render.resolution_x * pct // 100, render.resolution_y * pct // 100, pct,
+            render.engine.replace("BLENDER_", "").title()), translate=False)
+        row = box.row()
+        row.scale_y = 1.3
+        row.operator(STUDIO_OT_farm_send.bl_idname, text="Send to Render Farm", icon='EXPORT')
+    info = layout.row()
+    info.active = False
+    info.label(text=root, icon='NETWORK_DRIVE', translate=False)
 
 
 # ------------------------------------------------------------------ operators
@@ -488,11 +723,24 @@ class STUDIO_OT_farm_send(Operator):
         wm = context.window_manager
         scene, start, end = _range(context)
         try:
-            job = send(scene, start, end, wm.studio_farm_format, wm.studio_farm_note)
-        except (ValueError, OSError) as ex:
+            job = submit(scene, start, end, wm.studio_farm_format, wm.studio_farm_note)
+        except (ValueError, OSError, RuntimeError) as ex:
             self.report({'WARNING'}, str(ex))
             return {'CANCELLED'}
-        self.report({'INFO'}, "Render farm: sending %s" % job)
+        self.report({'INFO'}, "Render farm: sending %s" % job["job"])
+        return {'FINISHED'}
+
+
+class STUDIO_OT_farm_dismiss(Operator):
+    bl_idname = "studio.farm_dismiss"
+    bl_label = "Dismiss"
+    bl_description = "Hide this message (half files on the share stay as .part and are never a job)"
+    bl_options = {'INTERNAL'}
+
+    job: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    def execute(self, _context):
+        _jobs[:] = [j for j in _jobs if j["job"] != self.job]
         return {'FINISHED'}
 
 
@@ -558,7 +806,7 @@ class STUDIO_OT_farm_load(Operator):
         return {'FINISHED'}
 
 
-classes = (STUDIO_OT_farm_send, STUDIO_OT_farm_frame, STUDIO_OT_farm_refresh, STUDIO_OT_farm_folder,
+classes = (STUDIO_OT_farm_send, STUDIO_OT_farm_dismiss, STUDIO_OT_farm_frame, STUDIO_OT_farm_refresh, STUDIO_OT_farm_folder,
            STUDIO_OT_farm_load)
 
 
@@ -576,10 +824,13 @@ def register():
                                          default="", options={'SKIP_SAVE'})
     for cls in classes:
         bpy.utils.register_class(cls)
+    _load_registry()                             # jobs sent before a restart: their frames still come
+    if active() and not bpy.app.timers.is_registered(_pump):
+        bpy.app.timers.register(_pump, first_interval=5.0, persistent=True)
 
 
 def unregister():
-    for timer in (_tick, _send_tick):
+    for timer in (_tick, _pump):
         if bpy.app.timers.is_registered(timer):
             bpy.app.timers.unregister(timer)
     for cls in reversed(classes):

@@ -445,8 +445,9 @@ class STUDIO_PT_cut(Panel):
             return
         scene = cut._scene(context)
         wm = context.window_manager
-        from . import film
+        from . import film, renderfarm
         film.draw(layout)
+        renderfarm.draw_progress(layout.column(align=True))
         _tabs(layout, wm, "studio_cut_tab_film", FILM_TABS)
         tab = wm.studio_cut_tab_film
         {'SECTIONS': _sections_tab, 'CUT': _cut_tab, 'MUSIC': _music_tab, 'EXPORT': _export_tab}[tab](

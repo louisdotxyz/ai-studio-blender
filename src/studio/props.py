@@ -522,6 +522,9 @@ class STUDIO_Settings(PropertyGroup):
         items=[('ALL', "Whole Film", "All strips"),
                ('PREVIEW', "Preview Range", "Only the timeline's preview range (Ctrl P in the timeline)"),
                ('CLIP', "Active Clip", "Only the clip that is selected")])
+    farm_on: BoolProperty(name="Render Farm", description="Every render (stills and sections) goes to the "
+                          "ZHdK render farm over the DDE share and comes back by itself: stills into the "
+                          "renders, a section's frames into the Video Editor", default=False, options=set())
     cut_export_music: BoolProperty(name="With Music", description="The music strip goes into the video",
                                    default=True, options=set())
     cut_export_name: StringProperty(name="File Name", description="Name of the export (empty: the scene's "
