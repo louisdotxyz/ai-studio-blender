@@ -42,7 +42,7 @@ def _state_icon(st):
         return _icon(STATE_ICONS['HIGH'], 'CHECKMARK')
     if st.get("done"):
         return _icon(STATE_ICONS['LOW'], 'RENDER_ANIMATION')
-    if st.get("drafts"):
+    if st.get("drafts") or st.get("poster"):
         return _icon(STATE_ICONS['DRAFT'], 'SHADING_SOLID')
     return _icon(STATE_ICONS[''], 'DOT')
 

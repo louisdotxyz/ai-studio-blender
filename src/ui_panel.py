@@ -430,6 +430,9 @@ class _ChatPanel:
         """A render runs (the queue, or a preview for Claude): its progress, also in the chat."""
         from .studio import film, runner
         from .studio.ui_common import _queue_progress_text
+        area = bpy.context.area
+        if area is not None and area.type == 'SEQUENCE_EDITOR':
+            return                    # the Video Editor: the queue is in its Studio tab below, shown once
         film.draw(layout)             # films in their own process: part, frame, time left
         from .studio import renderfarm
         renderfarm.draw_rows(layout.column(align=True), buttons=False)   # and what the render farm does

@@ -175,6 +175,7 @@ class STUDIO_OT_add(Operator):
                 return {'CANCELLED'}
         waiting = {i.section for i in scene.studio.items if i.mode == 'ANIM' and i.camera is not None}
         added, skipped = [], []
+        added_sections = []
         no_camera = []
         for name, start, end, marker in found:
             if marker is not None:          # a section renders from its own camera only (never another one)
@@ -213,7 +214,15 @@ class STUDIO_OT_add(Operator):
             item.frame_start, item.frame_end = a, b
             if not keep:
                 autoquality.record(scene, key)
+                added_sections.append(name)
             added.append("%s %s" % (name, "HQ" if quality == 'HIGH' else "LQ"))
+        fresh = [n for n in added_sections if n]
+        if fresh:                                  # until frames come: one preview image over each section
+            from . import film_tools
+            try:
+                film_tools.queue_posters(scene, fresh)
+            except (ValueError, OSError, RuntimeError) as ex:
+                print("AI Studio: preview images:", ex)
         missing = (" · no camera: %s (set one in the Video Editor, Sections)" % ", ".join(no_camera)
                    if no_camera else "")
         if not added:

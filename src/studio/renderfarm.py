@@ -263,9 +263,10 @@ REGISTRY = os.path.join(LOCAL, "jobs.json")
 EXT = {'PNG': "png", 'JPEG': "jpg", 'OPEN_EXR': "exr", 'TIFF': "tif"}
 SETTLE = 5.0              # seconds a frame on the share stays unchanged before it is taken
 _jobs = []                # the farm's queue of this Mac, in order: queued → packing → copying → sent → done / error
-TRANSIENT = {"fetching", "new", "arrived", "looked", "t0", "h0", "per", "cancel"}
+TRANSIENT = {"fetching", "new", "arrived", "looked", "t0", "h0", "per", "cancel", "seeded"}
 _rate = [0.0]             # seconds per frame the farm made lately (for jobs that wait)
 _hosts = {}               # worker → [frames, render seconds] of the frames fetched since Blender started
+_events = []              # (finished, worker, render seconds) of every frame fetched: the graph
 _raw = {}                 # (file, scene state) → the saved copy several jobs pack from
 
 
@@ -540,9 +541,16 @@ def _note_frame(job, path):
     meta = cut.png_text(path)
     host = meta.get("Hostname", "").split(".")[0]
     if host:
+        secs = cut.render_seconds(meta.get("RenderTime", ""))
         entry = _hosts.setdefault(host.lower(), [0, 0.0, host])
         entry[0] += 1
-        entry[1] += cut.render_seconds(meta.get("RenderTime", ""))
+        entry[1] += secs
+        try:
+            finished = time.mktime(time.strptime(meta.get("Date", ""), "%Y/%m/%d %H:%M:%S"))
+        except (ValueError, OverflowError):
+            finished = time.time()
+        _events.append((finished, host.lower(), secs))
+        del _events[:-5000]
     wanted = job.get("camera_name", "")
     if wanted and meta.get("Camera") and meta["Camera"] != wanted:
         job["wrong_camera"] = meta["Camera"]
@@ -597,6 +605,8 @@ def _fetch(job):
             local = os.path.join(job["folder"], "%s_%04d.%s" % (job["stem"], frame, job["ext"]))
             if os.path.exists(local) and os.path.getsize(local) > 0:
                 have += 1
+                if not job.get("seeded"):              # after a restart: the graph and speeds again
+                    _note_frame(job, local)
                 continue
             source = os.path.join(folder, "%s_%04d.%s" % (job["job"], frame, job["ext"]))
             try:
@@ -612,6 +622,7 @@ def _fetch(job):
                 if new % 8 == 0:                  # many at once: show them as they come
                     job["new"] = job.get("new", 0) + 8
                     _note_progress(job, have)
+        job["seeded"] = True
         if new:
             job["new"] = job.get("new", 0) + new
         _note_progress(job, have)
@@ -751,10 +762,32 @@ def total_left():
     return secs if known else None
 
 
+SENDING = {"queued", "packing", "copying"}
+
+
+def _send_text(job):
+    if job["phase"] == "queued":
+        return "%s · waits to be sent" % (job["note"] or job["job"])
+    if job["phase"] == "packing":
+        return "%s · packing the file" % (job["note"] or job["job"])
+    return "%s · upload %d %% of %.1f GB" % (job["note"] or job["job"], round(job["progress"] * 100),
+                                            job["size"] / 1e9)
+
+
 def draw_rows(layout, buttons=True):
-    """The farm's part of the queue: a bar per job (frames, time left), ▲ up, ✕ remove."""
+    """The farm's part of the queue: what is being sent as a line each (no bar: it is not the render),
+    then a bar per job on the farm (frames, time left); ▲ up, ✕ remove."""
     mine, other = rows()
-    for n, job in enumerate(mine):
+    sending = [j for j in mine if j["phase"] in SENDING]
+    farm = [j for j in mine if j["phase"] not in SENDING]
+    for job in sending:
+        row = layout.row(align=True)
+        sub = row.row(align=True)
+        sub.active = False
+        sub.label(text=_send_text(job), icon='EXPORT' if job["phase"] == "copying" else 'TIME', translate=False)
+        if buttons:
+            row.operator(STUDIO_OT_farm_remove.bl_idname, text="", icon='X', emboss=False).job = job["job"]
+    for n, job in enumerate(farm):
         row = layout.row(align=True)
         if job["phase"] == "error":
             row.alert = True
@@ -762,9 +795,7 @@ def draw_rows(layout, buttons=True):
             row.operator(STUDIO_OT_farm_remove.bl_idname, text="", icon='X', emboss=False).job = job["job"]
             continue
         total = total_of(job)
-        factor = job["progress"] if job["phase"] == "copying" else \
-            (job.get("have", 0) / total if job["phase"] == "sent" and total else 0.0)
-        row.progress(factor=min(1.0, factor), type='BAR', text=_row_text(job))
+        row.progress(factor=min(1.0, job.get("have", 0) / total if total else 0.0), type='BAR', text=_row_text(job))
         if buttons:
             up = row.row(align=True)
             up.enabled = n > 0
@@ -779,6 +810,30 @@ def draw_rows(layout, buttons=True):
             row.label(text="", icon='BLANK1')
             row.operator(STUDIO_OT_farm_remove.bl_idname, text="", icon='X', emboss=False).job = job["job"]
     return bool(mine or other)
+
+
+BLOCKS = "▁▂▃▄▅▆▇█"
+BUCKET = 300.0            # seconds per bar of the graph
+BARS = 12                 # the last hour
+
+
+def frames_per_bucket(host=None, now=None):
+    """Frames finished per 5 minutes over the last hour (oldest first), of one worker or all."""
+    now = now or time.time()
+    counts = [0] * BARS
+    for finished, who, _secs in _events:
+        if host is not None and who != host:
+            continue
+        index = BARS - 1 - int((now - finished) // BUCKET)
+        if 0 <= index < BARS:
+            counts[index] += 1
+    return counts
+
+
+def sparkline(values, top=None):
+    """A small bar graph in text: ▁▂▃▅▇ (a dot where nothing was done)."""
+    top = top or max(values) or 1
+    return "".join(BLOCKS[min(7, max(0, round(v / top * 7)))] if v else "·" for v in values)
 
 
 def draw_progress(layout, sent=True):
@@ -829,6 +884,15 @@ def draw_state(layout, context):
         right = head.row()
         right.alignment = 'RIGHT'
         right.label(text="~%s left" % format_time(secs), translate=False)
+    every = frames_per_bucket()
+    top = max(every) or 1
+    if any(every):                                   # the farm over the last hour, frames per 5 minutes
+        row = col.row()
+        row.label(text="Farm", icon='GRAPH')
+        right = row.row()
+        right.alignment = 'RIGHT'
+        right.label(text="%s  %.1f /min" % (sparkline(every, top), every[-1] / (BUCKET / 60) if every[-1] else
+                                            every[-2] / (BUCKET / 60)), translate=False)
     for name, what, _when, fresh in view.get("worker_rows", []):
         if not fresh:
             continue
@@ -838,11 +902,16 @@ def draw_state(layout, context):
         stats = _hosts.get(name.lower())
         right = row.row()
         right.alignment = 'RIGHT'
-        right.active = False
-        if stats and stats[0]:                      # its speed: seconds per frame, and its share
-            right.label(text="%.1f s/frame · %d frames" % (stats[1] / stats[0], stats[0]), translate=False)
+        right.active = busy
+        if stats and stats[0]:                      # its graph and speed: seconds per frame, its frames
+            right.label(text="%s  %.0f s/frame · %d" % (sparkline(frames_per_bucket(name.lower()), top),
+                                                        stats[1] / stats[0], stats[0]), translate=False)
         else:
             right.label(text="renders" if busy else "waits", translate=False)
+    hint = col.row()
+    hint.active = False
+    hint.scale_y = 0.8
+    hint.label(text="Graph: frames per 5 min, last hour", translate=False)
 
 
 # ------------------------------------------------------------------ operators

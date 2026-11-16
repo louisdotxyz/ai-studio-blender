@@ -382,15 +382,16 @@ def _draft_running():
     return any(f.get("draft") and k in {'RENDERING', 'ENCODING'} for f, _s, k in film.films(fresh=True))
 
 
-def queue_drafts(scene, names=None):
-    """Drafts of the sections (all, or `names`) one after another. Returns the sections queued."""
+def queue_drafts(scene, names=None, kind='DRAFT'):
+    """Drafts (kind 'DRAFT') or preview images ('POSTER') of the sections (all, or `names`), one after
+    another in the background. Returns the sections queued."""
     queued = []
     for name, _s, _e, marker in _sections(scene):
         if names and name not in names:
             continue
-        if _camera_of(scene, marker) is None or (scene.name, name) in _drafts:
+        if _camera_of(scene, marker) is None or (scene.name, name, kind) in _drafts:
             continue
-        _drafts.append((scene.name, name))
+        _drafts.insert(0, (scene.name, name, kind)) if kind == 'POSTER' else _drafts.append((scene.name, name, kind))
         queued.append(name)
     if queued and not bpy.app.timers.is_registered(_draft_tick):
         bpy.app.timers.register(_draft_tick, first_interval=0.1)
@@ -402,10 +403,10 @@ def _draft_tick():
         if _draft_running():
             return 2.0
         while _drafts:
-            scene_name, name = _drafts.pop(0)
+            scene_name, name, kind = _drafts.pop(0)
             scene = bpy.data.scenes.get(scene_name)
             if scene is not None:
-                start_draft(scene, name)
+                (start_poster if kind == 'POSTER' else start_draft)(scene, name)
                 return 2.0
     except Exception as ex:                       # never stop the timer with an error
         print("AI Studio: draft:", ex)
@@ -445,6 +446,59 @@ def start_draft(scene, name):
                       fresh=False, film_dir=DRAFT_DIR, extra={"draft": True})
 
 
+POSTER_DIR = ".poster"
+POSTER_SAMPLES = 16
+
+
+def start_poster(scene, name):
+    """One Low Quality image of the section (its middle frame, few samples, denoised) at full size, in
+    its own process: until frames are rendered, its strip shows this image over its whole length."""
+    from . import film
+    from .tab_queue import _user_resolution
+    found = next(((s, e, m) for n, s, e, m in _sections(scene) if n == name), None)
+    if found is None:
+        raise ValueError("No section %s" % name)
+    start, end, marker = found
+    cam = _camera_of(scene, marker)
+    if cam is None:
+        raise ValueError("%s has no camera" % name)
+    middle = (start + end) // 2
+    folder = cut.frames_folder(name)
+    stem = "%s_%s" % (cut.frame_stem(name), cut.POSTER)
+    for old in os.listdir(folder) if os.path.isdir(folder) else []:      # one preview image per section
+        if old.startswith(stem + "_"):
+            try:
+                os.remove(os.path.join(folder, old))
+            except OSError:
+                pass
+    rx, ry = _user_resolution(scene, cam)
+    overrides = [["render.resolution_x", rx], ["render.resolution_y", ry], ["render.resolution_percentage", 100],
+                 ["render.image_settings.media_type", "IMAGE"], ["render.image_settings.file_format", "PNG"],
+                 ["render.image_settings.color_mode", "RGB"], ["render.image_settings.color_depth", "8"]]
+    if scene.render.engine == 'CYCLES':
+        overrides += [["cycles.samples", min(POSTER_SAMPLES, scene.cycles.samples)], ["cycles.use_denoising", True],
+                      ["cycles.use_adaptive_sampling", True]]
+    elif hasattr(scene, "eevee"):
+        overrides += [["eevee.taa_render_samples", 8]]
+    overrides.append(["camera", {"object": cam.name}])
+    job = {"overrides": overrides, "camera": None, "variant": [], "runs": None, "titles": None,
+           "quality": "POSTER", "section": name}
+    return film.start(scene, job, folder, stem, (middle, middle), 1, None, "%s · Preview" % name,
+                      fresh=False, film_dir=POSTER_DIR, extra={"draft": True})
+
+
+def queue_posters(scene, names=None):
+    """Preview images for the sections that have none (or `names`, made again)."""
+    wanted = []
+    for name, start, end, marker in _sections(scene):
+        if names is not None and name not in names:
+            continue
+        st = cut.frame_status(name, start, end, fresh=True)
+        if names is not None or not (st["poster"] or st["done"] == st["total"]):
+            wanted.append(name)
+    return queue_drafts(scene, wanted, kind='POSTER') if wanted else []
+
+
 # ------------------------------------------------------------------ lock
 
 def toggle_lock(scene, section):
@@ -472,6 +526,7 @@ def _keep_locks():
 # ------------------------------------------------------------------ marks in the timeline
 
 COLORS = {'HIGH': (0.33, 0.80, 0.40, 0.95), 'LOW': (1.0, 0.60, 0.16, 0.95), 'DRAFT': (0.62, 0.62, 0.66, 0.95),
+          'POSTER': (0.45, 0.55, 0.75, 0.95),
           '': (0.85, 0.22, 0.22, 0.95)}
 BAND = (0.07, 0.19)        # the band's bottom and top inside a channel
 
@@ -504,6 +559,8 @@ def label_of(st, rendering=False):
         text = tag if st["done"] == st["total"] else "%s %d/%d" % (tag, st["done"], st["total"])
     elif st.get("drafts"):
         text = "Draft"
+    elif st.get("poster"):
+        text = "Preview"
     else:
         text = ""
     return text + (" · rendering" if rendering and text else "")

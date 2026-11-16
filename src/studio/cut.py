@@ -134,6 +134,7 @@ def shown_names(names, there):
 
 
 DRAFT = "draft"     # a draft's frames: <section>_draft_0001.png next to the real ones
+POSTER = "poster"   # one Low Quality image of the section: <section>_poster_0119.png (its middle frame)
 
 
 def draft_names(section, start, end):
@@ -262,6 +263,10 @@ def frame_status(section, start, end, fresh=False):
     first_draft = next((d for d in drafts if d in there), None)
     draft_width = png_width(os.path.join(folder, first_draft)) if first_draft else 0
     use_drafts = bool(first_draft) and (not done or abs(draft_width - real_width) <= 1)
+    poster = max((n for n in there if n.startswith("%s_%s_" % (frame_stem(section), POSTER))), default=None)
+    poster_width = png_width(os.path.join(folder, poster)) if poster else 0
+    use_poster = bool(poster) and (not done or abs(poster_width - real_width) <= 1) and \
+        (not use_drafts or abs(poster_width - draft_width) <= 1)
     quality = job.get("quality", "") if done else ""
     codes, base = [], []
     for n, d, r in zip(names, drafts, real):
@@ -275,11 +280,16 @@ def frame_status(section, start, end, fresh=False):
         elif use_drafts and d in there:
             codes.append('DRAFT')
             base.append(d)
+        elif use_poster:                             # not rendered yet: the section's preview image
+            codes.append('POSTER')
+            base.append(poster)
         else:
             codes.append('')
             base.append(None)
     out = {"folder": folder, "names": names, "done": done, "total": len(names), "ext": ext,
-           "quality": quality, "width": real_width if done else (draft_width if use_drafts else job_width),
+           "quality": quality, "width": real_width if done else (draft_width if use_drafts else
+                                                                 poster_width if use_poster else job_width),
+           "poster": poster if use_poster else "",
            "job": bool(job), "job_width": job_width, "drafts": codes.count('DRAFT'), "codes": codes,
            "shown": fill_gaps(base)}
     _status[key] = (now, out)
@@ -288,7 +298,7 @@ def frame_status(section, start, end, fresh=False):
 
 def status_text(st):
     if not st["done"]:
-        return "Draft" if st.get("drafts") else "—"
+        return "Draft" if st.get("drafts") else "Preview" if st.get("poster") else "—"
     quality = {"HIGH": "HQ", "LOW": "LQ"}.get(st["quality"], "")
     return quality if st["done"] == st["total"] else "%s %d/%d" % (quality, st["done"], st["total"])
 
@@ -406,7 +416,7 @@ def _image(strips, name, paths, channel, start, fit='FIT'):
     return strip
 
 
-MARKS = {'HIGH': 'COLOR_04', 'LOW': 'COLOR_02', 'DRAFT': 'COLOR_09'}   # green, orange, grey
+MARKS = {'HIGH': 'COLOR_04', 'LOW': 'COLOR_02', 'DRAFT': 'COLOR_09'}   # green, orange, grey (draft, preview)
 
 
 def mark(strip, st):
@@ -477,7 +487,7 @@ def _sources(scene):
     old = None
     for name, start, end, _marker in sections_of(scene):
         st = frame_status(name, start, end, fresh=True)
-        if st["job"] or st["done"] or st["drafts"]:
+        if st["job"] or st["done"] or st["drafts"] or st["poster"]:
             out.append((name, start, end, "FRAMES", st))
             continue
         if old is None:
