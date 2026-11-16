@@ -2675,6 +2675,13 @@ def unfinished_frames_and_folders():
     open(os.path.join(inner, "Lampe" + autosave.main_suffix() + ".blend"), "wb").close()
     check("a file saved inside a project folder gets its folder next to it", autosave.projects_root(inner) == root
           and autosave.projects_root(root) == root, autosave.projects_root(inner))
+    topic = os.path.join(TMP, "projects_topic", "VELO-LUME")
+    for sub in (autosave.backup_dir_name(), autosave.archive_dir_name()):
+        os.makedirs(os.path.join(topic, sub), exist_ok=True)
+    main = os.path.join(topic, "VELO" + autosave.main_suffix() + ".blend")
+    open(main, "wb").close()
+    check("a folder laid out as a project counts as one, whatever its name",
+          autosave.in_project_folder(main) and autosave.project_folder_target(main) is None)
 
 
 @section

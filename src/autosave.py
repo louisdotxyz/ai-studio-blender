@@ -9,7 +9,8 @@
   before a crash from running out of memory.
 
 Project folder (one per .blend file, made when a new file is saved the first time, or with
-the button "Make project folder" for older files):
+the button "Make project folder" for older files; a folder with another name counts as one too when
+it is laid out like this, e.g. VELO-LUME/VELO_now.blend; new project folders never go inside one):
 
     <name>/<name>.blend              the main file (with a suffix if set, e.g. <name>_now.blend)
     <name>/<name>.blend1             Blender's previous save
@@ -318,16 +319,33 @@ def _prune_project(backups, stem):
     _prune(backups, stem, _keep(_prefs()))
 
 
+def _has_project_layout(folder):
+    """The folder is laid out as a project: autosave/ and archiv/ next to a main file (<name>_now.blend).
+    Its name may differ from the file's (VELO-LUME/VELO_now.blend)."""
+    if not all(os.path.isdir(os.path.join(folder, sub)) for sub in (backup_dir_name(), archive_dir_name())):
+        return False
+    try:
+        return any(n.endswith(main_suffix() + ".blend") for n in os.listdir(folder))
+    except OSError:
+        return False
+
+
 def in_project_folder(filepath=None):
-    """The main file lies in a folder named after the project (…/2.2/2.2_now.blend)."""
+    """The main file lies in its project folder: one named after the project (…/2.2/2.2_now.blend), or
+    any folder laid out as one (…/VELO-LUME/VELO_now.blend with autosave/ and archiv/)."""
     filepath = filepath if filepath is not None else bpy.data.filepath
-    return bool(filepath) and os.path.basename(main_folder(filepath)) == project_name(filepath)
+    if not filepath:
+        return False
+    folder = main_folder(filepath)
+    return os.path.basename(folder) == project_name(filepath) or _has_project_layout(folder)
 
 
 def is_project_folder(folder):
-    """A folder of a project: <name>/ with <name>_now.blend or its project memory <name>.claude.md."""
+    """A folder of a project: <name>/ with <name>_now.blend or its project memory <name>.claude.md, or any
+    folder laid out as one (a main file with autosave/ and archiv/)."""
     name = os.path.basename(os.path.normpath(folder))
-    return any(os.path.isfile(os.path.join(folder, name + end)) for end in (main_suffix() + ".blend", ".claude.md"))
+    return any(os.path.isfile(os.path.join(folder, name + end)) for end in (main_suffix() + ".blend", ".claude.md")) \
+        or _has_project_layout(folder)
 
 
 def projects_root(folder):
