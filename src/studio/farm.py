@@ -19,6 +19,7 @@ import time
 import urllib.request
 
 import bpy
+from bpy.props import StringProperty
 
 from . import cut, film
 
@@ -217,7 +218,7 @@ class STUDIO_OT_farm(bpy.types.Operator):
     bl_label = "Render Farm"
     bl_options = {'INTERNAL'}
 
-    action: bpy.props.StringProperty(default="CHECK", options={'HIDDEN', 'SKIP_SAVE'})
+    action: StringProperty(default="CHECK", options={'HIDDEN', 'SKIP_SAVE'})
 
     @classmethod
     def description(cls, _context, props):

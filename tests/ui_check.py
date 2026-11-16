@@ -52,6 +52,9 @@ class Fake:
     def _prop(self, data, prop, *args, **kwargs):
         if data is None:
             errors.append(f"{self._where}: prop {prop!r} on None")
+        elif prop.startswith('["') and prop.endswith('"]'):          # a custom property
+            if prop[2:-2] not in data.keys():
+                errors.append(f"{self._where}: {type(data).__name__} has no custom property {prop!r}")
         elif prop not in data.bl_rna.properties:
             errors.append(f"{self._where}: {type(data).__name__} has no property {prop!r}")
         elif args and isinstance(args[0], str) and data.bl_rna.properties[prop].type == 'ENUM':
