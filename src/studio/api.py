@@ -979,16 +979,78 @@ def cut_build(transitions=None):
     return dict(report, scene=made.name)
 
 
-def cut_export(edl=False):
-    """All strips as one MP4 (H.264 high; ProRes if that is the animation format) in the background, into
-    animation/Export; edl=True also writes an EDL. Returns the paths."""
+def cut_export(edl=False, format=None, quality=None, size=None, range=None, music=None, name=None):
+    """The film as one video (or PNG frames) in the background into animation/Export, with the Export tab's
+    settings; given values change them first: format 'MP4' / 'H265' / 'PRORES' / 'WEBM' / 'PNG', quality
+    'PERC_LOSSLESS' / 'HIGH' / 'MEDIUM' / 'LOW', size 100 / 50 / 25, range 'ALL' / 'PREVIEW' / 'CLIP',
+    music True/False, name (file name). edl=True also writes an EDL. Returns the paths."""
     from . import cut
     scene = bpy.context.scene
+    rq = scene.studio
+    for prop, value in (("cut_export_format", format), ("cut_export_quality", quality),
+                        ("cut_export_size", None if size is None else str(int(size))),
+                        ("cut_export_range", range), ("cut_export_music", music), ("cut_export_name", name)):
+        if value is not None:
+            setattr(rq, prop, value)
     video, log = cut.export(scene)
     out = {"video": video, "log": log}
     if edl:
         out["edl"] = cut.edl(scene)
     return out
+
+
+def section_proof(section=None):
+    """A quick viewport image from the section's camera (None: every section) at its middle frame, into
+    animation/Frames/<section>/.proof.png (shown in the Video Editor's Sections tab). Returns the paths:
+    look at them to check camera and framing before rendering."""
+    from . import film_tools
+    made = film_tools.make_proofs(bpy.context.scene, [section] if section else None)
+    return {name: film_tools.proof_path(name) for name in made}
+
+
+def section_draft(section=None):
+    """The section (None: every section) as a quick Workbench draft in the background, straight into the
+    Video Editor (frames not rendered yet show their draft). Returns the sections queued."""
+    from . import film_tools
+    return film_tools.queue_drafts(bpy.context.scene, [section] if section else None)
+
+
+def film_check():
+    """What would go wrong in a render, and the estimate: {"problems": [[section, code, text]] (code
+    NO_CAMERA blocks that section's render; SHARED; OUTDATED), "sections": [{"section", "camera", "locked",
+    "state", "next", "seconds"}], "total_seconds"}."""
+    from . import cut, film_tools
+    scene = bpy.context.scene
+    items = {c.section: c for c in scene.studio.cut_items}
+    sections = []
+    for name, start, end, marker in cut.sections_of(scene):
+        st = cut.frame_status(name, start, end, fresh=True)
+        quality = film_tools.next_quality(scene, name, st)
+        secs = film_tools.estimate(scene, name, quality, st) if quality else 0
+        cam = marker.camera if marker is not None else scene.camera
+        sections.append({"section": name, "camera": cam.name if cam else None,
+                         "locked": bool(getattr(items.get(name), "camera_lock", False)),
+                         "state": film_tools.label_of(st) or "nothing", "next": quality,
+                         "seconds": round(secs) if secs else None})
+    total = film_tools.total_estimate(scene)
+    return {"problems": [list(p) for p in film_tools.problems(scene)], "sections": sections,
+            "total_seconds": round(total) if total else None}
+
+
+def section_camera(section, own=False, lock=None):
+    """own=True: the section gets its own camera (where its camera is at its start). lock True/False: the
+    section keeps its camera (set back when the marker's camera changes). Returns the camera's name."""
+    from . import cut, film_tools, motion
+    scene = bpy.context.scene
+    found = motion.find(scene, section)
+    if found is None:
+        raise ValueError("No section %s" % section)
+    if own:
+        film_tools.own_camera(scene, section)
+    if lock is not None and bool(lock) != cut.settings(scene, section).camera_lock:
+        film_tools.toggle_lock(scene, section)
+    cam = found[0].camera
+    return cam.name if cam else None
 
 
 def _cut_scene():

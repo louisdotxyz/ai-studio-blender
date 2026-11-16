@@ -21,12 +21,17 @@ before the next one. Its camera is marker.camera (own camera P_<name>_01 on a pi
 - api.motion_chain("02 Hero", [("PULL_OUT", 24, 140), ("HOLD", 12), ("TURNTABLE", 0, 90)]): steps one after
   the other (frames 0 = to the end). Motion is in the Camera tab.
 - api.key_pose(): the viewport's view as a key at this frame (with the lens).
-- Render: api.section_render(section=None, quality=None, frames=None) (⌘E, or Render in the Video Editor's
-  Studio tab): each section renders its frames in its own process into animation/Frames/<section>/,
-  strictly one after the other. quality None = by itself: Low Quality first, High Quality once nothing
-  changed; sections already in High Quality with nothing changed are skipped. frames=(a, b) renders only
-  those frames again (the others stay). No video per section. Each section renders from its marker's
-  camera; check a section's camera (marker.camera) and its framing at a frame before rendering it.
+- Before rendering: api.film_check() lists problems (NO_CAMERA blocks that section; SHARED camera; OUTDATED
+  strip) and the time of the next render per section. api.section_proof(section=None) makes a quick
+  viewport image per section from its camera (look at the returned files: right camera, framing?).
+  api.section_draft(section=None) renders a Workbench draft in seconds straight into the Video Editor.
+  api.section_camera(section, own=False, lock=None): own camera for a section, lock it.
+- Render: api.section_render(section=None, quality=None, frames=None) (⌘E, or the render button of a
+  section in the Video Editor's Studio tab): each section renders its frames in its own process into
+  animation/Frames/<section>/, strictly one after the other, always from its marker's camera (a section
+  without one is skipped). quality None = by itself: Low Quality first, High Quality once nothing changed;
+  sections already in High Quality with nothing changed are skipped. frames=(a, b) renders only those
+  frames again (the others stay). No video per section. High Quality renders at full size.
   api.render_status() says what renders (frame, seconds left); studio_render_queue 'wait' answers only
   when the films are done. Never start own background renders to check a film.
 - The Video Editor of the same scene shows every section as an image strip (they come in and fill in by
@@ -34,7 +39,10 @@ before the next one. Its camera is marker.camera (own camera P_<name>_01 on a pi
   12, 0), "02 Hero": ("BLACK", 8, 24)}) sets the transition into the next section, its frames and hold
   frames, and builds the strips again (ours are replaced, the user's own stay). Music + BPM:
   scene.studio.cut_music / cut_bpm, studio.cut(action='SNAP') puts sections on whole beats (ask first, it
-  moves keys). api.cut_export(edl=False) renders all strips into one MP4 at the end (animation/Export).
+  moves keys). api.cut_export(edl=False, format=None, quality=None, size=None, range=None, music=None,
+  name=None) renders all strips at the end (animation/Export): format MP4 / H265 / PRORES / WEBM / PNG.
+- In the timeline every section strip has a band: green High Quality, orange Low Quality, grey draft, red
+  not rendered yet (the strip shows the nearest rendered frame there).
 - Explosion view (Camera tab): api.explode_group("Lampenkopf", [parts]) gives a handle "Griff | Lampenkopf";
   the parts follow it only while scene["Explosion"] > 0 (0 = exactly as in CAD). Place groups by moving /
   turning their handles with the explosion open, never the parts themselves. api.explode_arrange(names,

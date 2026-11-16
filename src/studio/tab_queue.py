@@ -170,11 +170,14 @@ class STUDIO_OT_add(Operator):
                 return {'CANCELLED'}
         waiting = {i.section for i in scene.studio.items if i.mode == 'ANIM' and i.camera is not None}
         added, skipped = [], []
+        no_camera = []
         for name, start, end, marker in found:
-            cam = (marker.camera if marker is not None and marker.camera is not None else None) or \
-                (scene.objects.get(self.camera) if self.camera else None) or active_camera(scene)
+            if marker is not None:          # a section renders from its own camera only (never another one)
+                cam = marker.camera
+            else:
+                cam = (scene.objects.get(self.camera) if self.camera else None) or active_camera(scene)
             if cam is None or cam.type != 'CAMERA':
-                skipped.append(name)
+                no_camera.append(name)
                 continue
             if name in waiting or cut._rendering(name, fresh=True):
                 skipped.append(name)
@@ -204,11 +207,13 @@ class STUDIO_OT_add(Operator):
             if not keep:
                 autoquality.record(scene, key)
             added.append("%s %s" % (name, "HQ" if quality == 'HIGH' else "LQ"))
+        missing = (" · no camera: %s (set one in the Video Editor, Sections)" % ", ".join(no_camera)
+                   if no_camera else "")
         if not added:
-            self.report({'INFO'}, "Nothing to render: %s" % (
-                "everything is in High Quality and nothing changed" if skipped else "no camera"))
+            self.report({'WARNING'} if no_camera else {'INFO'}, "Nothing to render%s" % (
+                missing or ": everything is in High Quality and nothing changed"))
             return {'CANCELLED'}
-        self.report({'INFO'}, "Rendering %s" % ", ".join(added))
+        self.report({'WARNING'} if no_camera else {'INFO'}, "Rendering %s%s" % (", ".join(added), missing))
         return self._start(context)
 
 

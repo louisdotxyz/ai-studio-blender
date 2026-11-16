@@ -378,7 +378,10 @@ def format_time(seconds):
         return ""
     if seconds < 60:
         return "%d s" % max(1, round(seconds))
-    return "%d min" % round(seconds / 60)
+    if seconds < 90 * 60:
+        return "%d min" % round(seconds / 60)
+    hours, minutes = divmod(round(seconds / 60), 60)
+    return "%d h %02d" % (hours, minutes) if hours < 10 else "%d h" % round(seconds / 3600)
 
 
 class Runner:

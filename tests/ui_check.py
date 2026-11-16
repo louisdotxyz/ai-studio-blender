@@ -195,9 +195,15 @@ wm.studio_tab = 'RENDER'                     # Camera tab with Motion and Explos
 wm.studio_sections = "anim_motion\nanim_explode"
 run(bpy.types.STUDIO_PT_camera, ctx)
 wm.studio_sections = ""
-_marker = bpy.context.scene.timeline_markers.new("01 Check", frame=1)   # the Video Editor's film sidebar
-run(bpy.types.STUDIO_PT_cut, ctx)
+_marker = bpy.context.scene.timeline_markers.new("01 Check", frame=1)   # the Video Editor's sidebar
+for _tab in ('SECTIONS', 'CUT', 'MUSIC', 'EXPORT'):
+    wm.studio_cut_tab_film = _tab
+    run(bpy.types.STUDIO_PT_cut, ctx)
+for _tab in ('CLIP', 'LOOK', 'FADE', 'TITLE'):
+    wm.studio_cut_tab_clip = _tab
+    run(bpy.types.STUDIO_PT_cut_clip, ctx)
 bpy.context.scene.timeline_markers.remove(_marker)
+wm.studio_cut_tab_film = 'SECTIONS'
 run(bpy.types.STUDIO_PT_cut, ctx)
 wm.studio_tab = 'QUEUE'
 run(bpy.types.STUDIO_PT_render_queue, ctx)

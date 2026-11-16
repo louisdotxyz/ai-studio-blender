@@ -93,12 +93,14 @@ def _launch(film_dir):
     return proc.pid
 
 
-def start(scene, job, folder, stem, frames, parts, video, label, fresh=True, archive=None):
+def start(scene, job, folder, stem, frames, parts, video, label, fresh=True, archive=None, film_dir=FILM_DIR,
+          extra=None):
     """Save a copy of the file into <folder>/.film, write the job and start the film's process.
     `job` is the queue's job (overrides, camera, variant). fresh: older frames go to archiv first, else
-    only the frames of `frames` render again (the others stay). Returns the film's entry."""
+    only the frames of `frames` render again (the others stay). film_dir: the job's folder in `folder`
+    (a draft has its own, .draft); extra: more values on the film's entry. Returns the film's entry."""
     from . import runner
-    film_dir = os.path.join(folder, FILM_DIR)
+    film_dir = os.path.join(folder, film_dir)
     os.makedirs(film_dir, exist_ok=True)
     if fresh:
         moved = _clear_old_frames(folder, stem, archive)
@@ -125,7 +127,9 @@ def start(scene, job, folder, stem, frames, parts, video, label, fresh=True, arc
     with open(os.path.join(film_dir, "job.json"), "w", encoding="utf-8") as f:
         json.dump(data, f, indent=1)
     entry = {"dir": film_dir, "folder": folder, "label": label, "pid": _launch(film_dir),
-             "added": time.time(), "blend": bpy.data.filepath, "scene": scene.name}
+             "added": time.time(), "blend": bpy.data.filepath, "scene": scene.name,
+             "quality": job.get("quality", ""), "section": job.get("section", "")}
+    entry.update(extra or {})
     films = [f for f in _load() if f["dir"] != film_dir] + [entry]
     _save(films)
     runner.log("film %s started (%d frames, %d parts, pid %s)" % (label, frames[1] - frames[0] + 1,
@@ -234,8 +238,12 @@ _FRAME_EXTS = (".png", ".jpg", ".jpeg", ".exr", ".tif", ".tiff", ".webp")
 
 
 def _frames_of(folder, stem):
+    """A film's frame files; the drafts next to them (<stem>_draft_0001.png) are not the film's (they stay
+    until the real frames are there)."""
+    draft = stem + "_draft_"
     try:
-        return [n for n in os.listdir(folder) if n.startswith(stem + "_") and n.lower().endswith(_FRAME_EXTS)]
+        return [n for n in os.listdir(folder) if n.startswith(stem + "_") and n.lower().endswith(_FRAME_EXTS)
+                and (stem.endswith("_draft") or not n.startswith(draft))]
     except OSError:
         return []
 
@@ -399,20 +407,26 @@ def _poll():
         if kind == 'RENDERING' and film.get("scene") and mine(film):     # its new frames into the strips
             done = st.get("done", 0)
             last = _filled.get(key, (0, 0.0))
-            if done != last[0] and time.monotonic() - last[1] > 6.0:
+            try:
+                from . import film_tools
+                film_tools.record_time(film, st)
+            except Exception as ex:                  # never stop the bars
+                print("AI Studio: render times:", ex)
+            if done != last[0] and time.monotonic() - last[1] > 3.0:
                 _filled[key] = (done, time.monotonic())
                 from . import cut
                 cut.on_progress(film["scene"])
         if kind == 'DONE' and _seen.get(key) != 'DONE':
             runner.log("film done: %s" % film.get("label"))
-            if mine(film):
+            if mine(film) and not film.get("draft"):
                 runner.notify("%s is ready" % film.get("label", "The film"))
             result = _video_or_frame(film)
             if result:
                 runner.log("film result: %s" % result)
-            whole, parts = results(film.get("folder") or os.path.dirname(key))
+            whole, parts = ("", []) if film.get("draft") else results(film.get("folder") or os.path.dirname(key))
             try:
-                scene_name = _publish(film.get("folder") or os.path.dirname(key), whole, parts)
+                scene_name = "" if film.get("draft") else _publish(film.get("folder") or os.path.dirname(key),
+                                                                    whole, parts)
             except OSError as ex:
                 runner.log("film videos not put next to the films: %s" % ex)
                 scene_name = ""

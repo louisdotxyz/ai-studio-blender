@@ -23,5 +23,8 @@ Sections render as frames (animation/Frames/<section>/); every section is an ima
   api.cut_hold(section, frames): the section's last image stands still after it.
 - api.cut_letterbox(2.39) (0 = none), api.cut_title(text, frame=None, length=48, place="CENTER"/"LOWER").
 - Render again: api.section_render(section, frames=(a, b)) with 3D frames (the line tells which 3D frame
-  the playhead shows). api.cut_export() makes the MP4 at the end.
+  the playhead shows). api.cut_export(format=None, quality=None, size=None, range=None, music=None,
+  name=None) makes the video at the end (MP4 / H265 / PRORES / WEBM / PNG; range ALL / PREVIEW / CLIP).
+- Strip colours: green = all High Quality, orange = rendered (Low Quality or not all), grey = draft only;
+  the band under a strip shows it per frame (red = not rendered yet). api.film_check() for problems.
 - Everything is one undo step each; the user can also change it by hand in the Video Editor.

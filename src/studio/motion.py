@@ -143,12 +143,10 @@ def shift_after(scene, frame, delta, move_keys=True):
     return moved
 
 
-def new_section(scene, name, frame=None, context=None, from_view=False):
-    """A section from `frame` on: a marker "NN name" with its own camera P_<name>_01 on a pivot in the
-    collection Camera, starting where the active camera is (or the viewport looks from). Returns the marker."""
-    frame = scene.frame_current if frame is None else frame
+def section_camera(scene, name, source=None, context=None):
+    """A new camera P_<name>_01 on a pivot in the collection Camera, where `source` is now (its settings),
+    or where the viewport looks from (source None)."""
     name = (name or "Shot").strip()
-    source = None if from_view else cameras.active_camera(scene)
     data = source.data.copy() if source is not None else bpy.data.cameras.new(name)
     if data.animation_data is not None:
         data.animation_data_clear()
@@ -168,6 +166,16 @@ def new_section(scene, name, frame=None, context=None, from_view=False):
     cam.matrix_world = matrix
     bpy.context.view_layer.update()
     orbit.rig(cam, max(distance, orbit.MIN_DISTANCE))
+    return cam
+
+
+def new_section(scene, name, frame=None, context=None, from_view=False):
+    """A section from `frame` on: a marker "NN name" with its own camera P_<name>_01 on a pivot in the
+    collection Camera, starting where the active camera is (or the viewport looks from). Returns the marker."""
+    frame = scene.frame_current if frame is None else frame
+    name = (name or "Shot").strip()
+    source = None if from_view else cameras.active_camera(scene)
+    cam = section_camera(scene, name, source, context)
     marker = scene.timeline_markers.new(name, frame=frame)
     marker.camera = cam
     renumber(scene)

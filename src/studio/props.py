@@ -348,6 +348,11 @@ class STUDIO_CutItem(PropertyGroup):
     hold: IntProperty(name="Hold", description="Frames the last image stands still after the section "
                       "(0 = none)", default=0, min=0, soft_max=240, options=set(),
                       update=lambda s, _c: _cut_changed(s))
+    camera_lock: BoolProperty(name="Lock Camera", description="The section keeps this camera: changed on its "
+                              "marker by hand or by a tool, it is set back", default=False, options=set())
+    camera: PointerProperty(type=bpy.types.Object, poll=_is_camera, name="Locked Camera")
+    shared_ok: BoolProperty(name="Shared Camera is Fine", description="This section uses the camera of another "
+                            "section on purpose", default=False, options=set())
 
 
 def _cut_changed(item):
@@ -497,6 +502,30 @@ class STUDIO_Settings(PropertyGroup):
                            default=0, min=0, options=set())
     cut_music: StringProperty(name="Music", description="Sound file under the film (Video Editor)",
                               subtype='FILE_PATH', options=set(), update=lambda s, _c: _cut_changed(s))
+    cut_export_format: EnumProperty(
+        name="Format", options=set(), default='MP4',
+        items=[('MP4', "MP4 · H.264", "One video that plays everywhere"),
+               ('H265', "MP4 · H.265", "Smaller file at the same quality (newer players)"),
+               ('PRORES', "MOV · ProRes 422 HQ", "For further editing (large)"),
+               ('WEBM', "WebM · VP9", "For the web"),
+               ('PNG', "PNG Frames", "One PNG per frame, lossless")])
+    cut_export_quality: EnumProperty(
+        name="Quality", options=set(), default='HIGH',
+        items=[('PERC_LOSSLESS', "Lossless", "Visually lossless, large file"), ('HIGH', "High", "Recommended"),
+               ('MEDIUM', "Medium", "Smaller file"), ('LOW', "Low", "Small file, for previews")])
+    cut_export_size: EnumProperty(
+        name="Size", options=set(), default='100',
+        items=[('100', "100 %", "The scene's resolution"), ('50', "50 %", "Half the width and height"),
+               ('25', "25 %", "A quarter, to send around")])
+    cut_export_range: EnumProperty(
+        name="Range", options=set(), default='ALL',
+        items=[('ALL', "Whole Film", "All strips"),
+               ('PREVIEW', "Preview Range", "Only the timeline's preview range (Ctrl P in the timeline)"),
+               ('CLIP', "Active Clip", "Only the clip that is selected")])
+    cut_export_music: BoolProperty(name="With Music", description="The music strip goes into the video",
+                                   default=True, options=set())
+    cut_export_name: StringProperty(name="File Name", description="Name of the export (empty: the scene's "
+                                    "name); an older file of that name goes to archiv", default="", options=set())
     cut_bpm: FloatProperty(name="BPM", description="Beats per minute of the music: section lengths on whole "
                            "beats (0 = none)", default=0.0, min=0.0, max=300.0, options=set())
     film_parts: IntProperty(

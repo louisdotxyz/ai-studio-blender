@@ -133,9 +133,59 @@ def shown_names(names, there):
     return out
 
 
+DRAFT = "draft"     # a draft's frames: <section>_draft_0001.png next to the real ones
+
+
+def draft_names(section, start, end):
+    stem = frame_stem(section)
+    return ["%s_%s_%04d.png" % (stem, DRAFT, f) for f in range(start, end + 1)]
+
+
+_widths = {}
+
+
+def png_width(path):
+    """The width of a PNG from its header (cached per file and change), 0 if it is no PNG."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return 0
+    key = (path, st.st_mtime_ns, st.st_size)
+    if key not in _widths:
+        width = 0
+        try:
+            with open(path, "rb") as f:
+                head = f.read(24)
+            if head[:8] == b"\x89PNG\r\n\x1a\n" and head[12:16] == b"IHDR":
+                width = int.from_bytes(head[16:20], "big")
+        except OSError:
+            pass
+        if len(_widths) > 20000:
+            _widths.clear()
+        _widths[key] = width
+    return _widths[key]
+
+
+def fill_gaps(base):
+    """Every None takes the nearest file before it (after it at the start); None when all are None."""
+    known = [b for b in base if b is not None]
+    if not known:
+        return None
+    out, last = [], known[0]
+    for b in base:
+        if b is not None:
+            last = b
+        out.append(last)
+    return out
+
+
 def frame_status(section, start, end, fresh=False):
     """What is rendered of a section: {"folder", "names", "done", "total", "quality" ('LOW'/'HIGH'/''),
-    "width" (pixels of its frames, 0 = unknown), "job" (a render was started)}. Read again after 1 s."""
+    "width" (pixels of the frames the strip shows, 0 = unknown), "job" (a render was started), "drafts"
+    (draft frames shown), "codes" (per frame 'HIGH' / 'LOW' / 'DRAFT' / ''), "shown" (the file each
+    frame of the strip shows)}. Read again after 1 s.
+    A frame not rendered yet shows its draft when the draft has the size of the real frames (one strip
+    has one scale), else the nearest rendered frame."""
     folder = frames_folder(section)
     key = (folder, start, end)
     now = time.monotonic()
@@ -146,27 +196,52 @@ def frame_status(section, start, end, fresh=False):
     ov = _overrides(job)
     ext = ".png" if job.get("video") else _EXTS.get(ov.get("render.image_settings.file_format"), ".png")
     names = frame_names(section, start, end, ext)
+    drafts = draft_names(section, start, end)
     there = finished_files(folder)
-    done = sum(1 for n in names if n in there)
-    width = 0
+    real = [n in there for n in names]
+    done = sum(real)
+    job_width = base_x = 0
     scene = bpy.context.scene
     if job and scene is not None:
         x = ov.get("render.resolution_x", scene.render.resolution_x)
         pct = ov.get("render.resolution_percentage", scene.render.resolution_percentage)
         try:
-            width = int(round(float(x) * float(pct) / 100))
+            job_width = int(round(float(x) * float(pct) / 100))
+            base_x = int(x)
         except (TypeError, ValueError):
-            width = 0
+            job_width = base_x = 0
+    first_real = next((n for n, r in zip(names, real) if r), None)
+    real_width = (png_width(os.path.join(folder, first_real)) if first_real else 0) or job_width
+    first_draft = next((d for d in drafts if d in there), None)
+    draft_width = png_width(os.path.join(folder, first_draft)) if first_draft else 0
+    use_drafts = bool(first_draft) and (not done or abs(draft_width - real_width) <= 1)
+    quality = job.get("quality", "") if done else ""
+    codes, base = [], []
+    for n, d, r in zip(names, drafts, real):
+        if r:
+            code = quality or 'LOW'
+            w = png_width(os.path.join(folder, n)) if ext == ".png" else 0
+            if w and job_width and abs(w - job_width) > 1:     # rendered by an earlier job in another size
+                code = 'HIGH' if base_x and w >= base_x * 0.98 else 'LOW'
+            codes.append(code)
+            base.append(n)
+        elif use_drafts and d in there:
+            codes.append('DRAFT')
+            base.append(d)
+        else:
+            codes.append('')
+            base.append(None)
     out = {"folder": folder, "names": names, "done": done, "total": len(names), "ext": ext,
-           "quality": job.get("quality", "") if done else "", "width": width, "job": bool(job),
-           "shown": shown_names(names, there)}
+           "quality": quality, "width": real_width if done else (draft_width if use_drafts else job_width),
+           "job": bool(job), "job_width": job_width, "drafts": codes.count('DRAFT'), "codes": codes,
+           "shown": fill_gaps(base)}
     _status[key] = (now, out)
     return out
 
 
 def status_text(st):
     if not st["done"]:
-        return "—"
+        return "Draft" if st.get("drafts") else "—"
     quality = {"HIGH": "HQ", "LOW": "LQ"}.get(st["quality"], "")
     return quality if st["done"] == st["total"] else "%s %d/%d" % (quality, st["done"], st["total"])
 
@@ -284,6 +359,22 @@ def _image(strips, name, paths, channel, start, fit='FIT'):
     return strip
 
 
+MARKS = {'HIGH': 'COLOR_04', 'LOW': 'COLOR_02', 'DRAFT': 'COLOR_09'}   # green, orange, grey
+
+
+def mark(strip, st):
+    """A section strip's colour: green when all its frames are High Quality, orange when rendered (Low
+    Quality or not all yet), grey with drafts only."""
+    codes = st.get("codes") or []
+    tag = MARKS['HIGH'] if codes and all(c == 'HIGH' for c in codes) else \
+        MARKS['LOW'] if st.get("done") else MARKS['DRAFT']
+    try:
+        if strip.color_tag != tag:
+            strip.color_tag = tag
+    except (AttributeError, TypeError):
+        pass
+
+
 def _fit(scene, strip, width):
     """Frames of another size (Low Quality) fill the picture: scaled to the scene's width."""
     if width > 0 and hasattr(strip, "transform"):
@@ -339,7 +430,7 @@ def _sources(scene):
     old = None
     for name, start, end, _marker in sections_of(scene):
         st = frame_status(name, start, end, fresh=True)
-        if st["job"] or st["done"]:
+        if st["job"] or st["done"] or st["drafts"]:
             out.append((name, start, end, "FRAMES", st))
             continue
         if old is None:
@@ -382,6 +473,7 @@ def _make_section_strip(scene, name, kind, data, channel, at):
         paths = [os.path.join(data["folder"], n) for n in data["shown"]]
         strip = _image(strips, name, paths, channel, at, fit='ORIGINAL')
         _fit(scene, strip, data["width"])
+        mark(strip, data)
     elif kind == "OLD":
         paths = data
         strip = _image(strips, name, paths, channel, at)
@@ -507,6 +599,7 @@ def sync(scene):
                     _fit(scene, strip, data["width"])
                     if _get(strip, KIND_KEY) == "SECTION" and data["shown"]:
                         _point_to(strip, data["names"], data["shown"])
+                        mark(strip, data)
     repair(scene)
     _reload(scene)
     return "synced"
@@ -709,22 +802,68 @@ def strip_range(scene):
 
 # ------------------------------------------------------------------ export
 
+VIDEO_FORMATS = {     # export format → (container, codec, extension, audio codec)
+    'MP4': ('MPEG4', 'H264', ".mp4", 'AAC'), 'H265': ('MPEG4', 'H265', ".mp4", 'AAC'),
+    'PRORES': ('QUICKTIME', 'PRORES', ".mov", 'AAC'), 'WEBM': ('WEBM', 'WEBM', ".webm", 'OPUS')}
+
+
+def _set(owner, attr, value):
+    """Set an option if this Blender has it (codecs differ between versions)."""
+    try:
+        setattr(owner, attr, value)
+        return True
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def export_range(scene):
+    """(first, last) frame the export renders: all strips, the preview range or the active clip."""
+    rq = scene.studio
+    choice = getattr(rq, "cut_export_range", 'ALL')
+    if choice == 'PREVIEW' and scene.use_preview_range:
+        return scene.frame_preview_start, scene.frame_preview_end
+    sed = scene.sequence_editor
+    active = sed.active_strip if sed is not None else None
+    if choice == 'CLIP' and active is not None:
+        return int(active.frame_final_start), int(active.frame_final_end) - 1
+    return strip_range(scene)
+
+
+def export_target(scene):
+    """(path without extension, extension) of the export with its settings now."""
+    rq = scene.studio
+    fmt = getattr(rq, "cut_export_format", 'MP4')
+    name = video_name(getattr(rq, "cut_export_name", "").strip() or scene.name)
+    if fmt == 'PNG':
+        return os.path.join(cut_folder(), name, name + "_"), ".png"
+    return os.path.join(cut_folder(), name), VIDEO_FORMATS[fmt][2]
+
+
 def export(scene, path=None):
-    """The strips as one video (MP4 H.264 high, or ProRes when that is the animation format) in its own
-    Blender process; the older export goes to archiv. Returns (video path, log path)."""
+    """The strips as one video (or PNG frames) with the export settings of the Video Editor's Export tab
+    (format, quality, size, range, music) in its own Blender process; the older export of that name goes
+    to archiv. Returns (video path or frames folder, log path)."""
     if not ours(scene):
         build(scene)
-    frames = strip_range(scene)
+    frames = export_range(scene)
     if frames is None:
         raise ValueError("Nothing rendered yet: render the sections first")
+    rq = scene.studio
+    fmt = getattr(rq, "cut_export_format", 'MP4')
     folder = cut_folder()
     from . import film
     work = os.path.join(folder, film.FILM_DIR)       # like a film: its bar shows the progress
     os.makedirs(work, exist_ok=True)
-    path = path or os.path.join(folder, video_name(scene.name))
-    prores = scene.studio.anim_format == 'PRORES'
-    ext = ".mov" if prores else ".mp4"
-    if os.path.isfile(path + ext):
+    target, ext = export_target(scene)
+    path = path or target
+    if fmt == 'PNG':
+        frames_dir = os.path.dirname(path)
+        if os.path.isdir(frames_dir) and os.listdir(frames_dir):
+            old = os.path.join(folder, "archiv", "%s %s" % (os.path.basename(frames_dir), time.strftime("%Y-%m-%d %H%M%S")))
+            os.makedirs(os.path.dirname(old), exist_ok=True)
+            os.replace(frames_dir, old)
+        os.makedirs(frames_dir, exist_ok=True)
+    elif os.path.isfile(path + ext):
         old = os.path.join(folder, "archiv", "%s %s%s" % (os.path.basename(path), time.strftime("%Y-%m-%d %H%M%S"), ext))
         os.makedirs(os.path.dirname(old), exist_ok=True)
         os.replace(path + ext, old)
@@ -733,18 +872,37 @@ def export(scene, path=None):
     ff = render.ffmpeg
     keep = (render.filepath, images.file_format, getattr(images, "media_type", None), render.use_file_extension,
             render.use_sequencer, scene.frame_start, scene.frame_end, ff.format, ff.codec, ff.audio_codec,
-            ff.constant_rate_factor)
+            ff.constant_rate_factor, render.resolution_percentage, images.color_mode,
+            getattr(ff, "ffmpeg_prores_profile", None))
+    muted = []
     from .runner import RUN
     try:
-        if hasattr(images, "media_type"):
-            images.media_type = 'VIDEO'
-        images.file_format = 'FFMPEG'
-        if prores:
-            ff.format, ff.codec = 'QUICKTIME', 'PRORES'
+        if fmt == 'PNG':
+            _set(images, "media_type", 'IMAGE')
+            images.file_format = 'PNG'
+            images.color_mode = 'RGB'
         else:
-            ff.format, ff.codec, ff.constant_rate_factor = 'MPEG4', 'H264', 'HIGH'
-        if any(_get(s, KIND_KEY) == "MUSIC" for s in ours(scene)):
-            ff.audio_codec = 'AAC'
+            container, codec, _ext, audio = VIDEO_FORMATS[fmt]
+            _set(images, "media_type", 'VIDEO')
+            images.file_format = 'FFMPEG'
+            ff.format = container
+            if not _set(ff, "codec", codec):
+                ff.format, ff.codec = 'MPEG4', 'H264'
+            if fmt == 'PRORES':
+                _set(ff, "ffmpeg_prores_profile", 'HQ')
+            else:
+                _set(ff, "constant_rate_factor", getattr(rq, "cut_export_quality", 'HIGH'))
+            music = [s for s in ours(scene) if _get(s, KIND_KEY) == "MUSIC"]
+            if music and getattr(rq, "cut_export_music", True):
+                if not _set(ff, "audio_codec", audio):
+                    _set(ff, "audio_codec", 'AAC')
+            else:
+                _set(ff, "audio_codec", 'NONE')
+                for strip in music:                       # no music: muted in the copy only
+                    if not strip.mute:
+                        strip.mute = True
+                        muted.append(strip)
+        render.resolution_percentage = int(getattr(rq, "cut_export_size", '100'))
         render.filepath = path
         render.use_file_extension = True
         render.use_sequencer = True                   # the copy renders the strips
@@ -756,10 +914,20 @@ def export(scene, path=None):
     finally:
         render.filepath, images.file_format = keep[0], keep[1]
         if keep[2] is not None:
-            images.media_type = keep[2]
+            _set(images, "media_type", keep[2])
+            images.file_format = keep[1]
         render.use_file_extension, render.use_sequencer = keep[3], keep[4]
         scene.frame_start, scene.frame_end = keep[5], keep[6]
-        ff.format, ff.codec, ff.audio_codec, ff.constant_rate_factor = keep[7], keep[8], keep[9], keep[10]
+        _set(ff, "format", keep[7])
+        _set(ff, "codec", keep[8])
+        _set(ff, "audio_codec", keep[9])
+        _set(ff, "constant_rate_factor", keep[10])
+        render.resolution_percentage = keep[11]
+        _set(images, "color_mode", keep[12])
+        if keep[13] is not None:
+            _set(ff, "ffmpeg_prores_profile", keep[13])
+        for strip in muted:
+            strip.mute = False
         RUN.preparing = False
     with open(os.path.join(work, "job.json"), "w", encoding="utf-8") as f:
         json.dump({"scene": scene.name, "out": path, "frames": list(frames), "cut": True}, f)
@@ -780,7 +948,7 @@ def export(scene, path=None):
             "bpy.app.handlers.render_write.append(step)\n"
             "put(state='rendering', done=0)\n"
             "bpy.ops.render.render(animation=True)\n"
-            "made = [f for f in glob.glob(glob.escape(P) + '*') if re.fullmatch(r'\\d+-\\d+\\.(mp4|mov)', f[len(P):])]\n"
+            "made = [f for f in glob.glob(glob.escape(P) + '*') if re.fullmatch(r'\\d+-\\d+\\.(mp4|mov|webm)', f[len(P):])]\n"
             "if made:\n"
             "    m = max(made, key=os.path.getmtime); os.replace(m, P + os.path.splitext(m)[1])\n"
             "put(state='done', done=T, finished=time.time())\n" % (status, total, path))
@@ -788,7 +956,7 @@ def export(scene, path=None):
                                  "--python-expr", script],
                                 stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
     film.register(work, folder, "Export %s" % scene.name, proc.pid)
-    return path + ext, log
+    return (os.path.dirname(path) if fmt == 'PNG' else path + ext), log
 
 
 def edl(scene, path=None):
@@ -1103,195 +1271,7 @@ def _rendering(section, fresh=False):
     from . import film
     folder = os.path.normcase(frames_folder(section))
     return any(os.path.normcase(f.get("folder", "")) == folder and k in {'RENDERING', 'ENCODING'} and film.mine(f)
-               for f, _s, k in film.films(fresh=fresh))
-
-
-def _draw_look(layout, strip):
-    col = layout.column(align=True)
-    row = col.row(align=True)
-    row.prop(strip, "studio_brightness", text="Brightness", slider=True)
-    row.prop(strip, "studio_contrast", text="Contrast", slider=True)
-    row = col.row(align=True)
-    row.prop(strip, "studio_saturation", text="Saturation", slider=True)
-    row.prop(strip, "studio_warmth", text="Warmth", slider=True)
-
-
-def _draw_clip(layout, scene, context):
-    """The active strip: render again, its look, fades, freeze, still."""
-    sed = scene.sequence_editor
-    strip = sed.active_strip if sed is not None else None
-    if strip is None or _get(strip, KIND_KEY) in {"BARS", "MUSIC", "DIP", "CROSS", "FADE"} or \
-            strip.type not in {'IMAGE', 'MOVIE', 'ADJUSTMENT', 'TEXT'}:
-        return
-    section = _get(strip, SECTION_KEY)
-    box = layout.box()
-    head = box.row(align=True)
-    head.label(text=section or strip.name, icon='SEQUENCE', translate=False)
-    if section and strip.type == 'IMAGE':
-        shown = scene_frame(scene, strip)[1]
-        sub = head.row()
-        sub.alignment = 'RIGHT'
-        sub.active = False
-        sub.label(text="3D frame %s" % shown if shown is not None else "", translate=False)
-    if section and _get(strip, KIND_KEY) == "SECTION":
-        row = box.row(align=True)
-        row.label(text="Render again:")
-        for action, icon in (('FRAME', 'IMAGE_DATA'), ('REST', 'FRAME_NEXT')):
-            op = row.operator(STUDIO_OT_cut_strip.bl_idname, icon=icon,
-                              text=next(i[1] for i in STRIP_ACTIONS if i[0] == action))
-            op.action, op.section = action, section
-    if strip.type in {'IMAGE', 'MOVIE', 'ADJUSTMENT'}:
-        _draw_look(box, strip)
-        row = box.row(align=True)
-        row.operator(STUDIO_OT_cut_tool.bl_idname, text="To All Clips", icon='DUPLICATE').action = 'LOOK_ALL'
-        row.operator(STUDIO_OT_cut_tool.bl_idname, text="", icon='LOOP_BACK').action = 'LOOK_RESET'
-    wm = context.window_manager
-    row = box.row(align=True)
-    row.operator(STUDIO_OT_cut_tool.bl_idname, text="In", icon='TRIA_RIGHT_BAR').action = 'FADE_IN'
-    row.operator(STUDIO_OT_cut_tool.bl_idname, text="Out", icon='TRIA_LEFT_BAR').action = 'FADE_OUT'
-    row.prop(wm, "studio_cut_fade", text="Fade")
-    if strip.type == 'IMAGE':
-        row = box.row(align=True)
-        row.operator(STUDIO_OT_cut_tool.bl_idname, text="Freeze Here", icon='PAUSE').action = 'FREEZE'
-        row.prop(wm, "studio_cut_hold", text="Frames")
-    if section:
-        row = box.row(align=True)
-        for action, icon in (('STILL', 'OUTPUT'), ('LENGTH', 'ARROW_LEFTRIGHT'), ('GO', 'VIEW3D')):
-            op = row.operator(STUDIO_OT_cut_strip.bl_idname, icon=icon,
-                              text=next(i[1] for i in STRIP_ACTIONS if i[0] == action))
-            op.action, op.section = action, section
-
-
-def _draw_sections(layout, scene):
-    from . import autoquality
-    from .ui_common import section
-    box, head, _open = section(layout, "vse_sections", "Sections", 'MARKER_HLT')
-    head.operator("studio.section", text="", icon='ADD', emboss=False).action = 'ADD'
-    if not _open:
-        return
-    frame = scene.frame_current
-    sed = scene.sequence_editor
-    active = sed.active_strip if sed is not None else None
-    found = sections_of(scene)
-    for n, (name, start, end, marker) in enumerate(found):
-        st = frame_status(name, start, end)
-        strip = section_strip(scene, name)
-        here = (strip is not None and active is not None and _get(active, SECTION_KEY) == name) or \
-            (strip is None and start <= frame <= end)
-        card = box.box() if here else box.column()
-        col = card.column(align=True)
-        row = col.row(align=True)                    # ▶ name · state · render
-        row.operator(STUDIO_OT_cut_go.bl_idname, text="", icon='PLAY' if here else 'TRIA_RIGHT',
-                     emboss=here).section = name
-        if marker is not None:
-            row.prop(marker, "name", text="")
-        else:
-            row.label(text=name, translate=False)
-        state = row.row(align=True)
-        state.ui_units_x = 3.4
-        rendering = _rendering(name)
-        state.label(text=status_text(st), icon='SORTTIME' if rendering else 'NONE', translate=False)
-        if outdated(scene, name, start, end):
-            fix = row.operator(STUDIO_OT_cut_strip.bl_idname, text="", icon='FILE_REFRESH')
-            fix.action, fix.section = 'UPDATE', name
-        clean = autoquality.clean(scene, autoquality.section_key(name)) and st["done"] == st["total"]
-        op = row.operator("studio.add", text="", icon='CHECKMARK' if clean and st["quality"] == 'HIGH'
-                          else 'RENDER_ANIMATION')
-        op.mode, op.section = 'ANIM', name
-        row = col.row(align=True)                    # camera · frames · seconds
-        if marker is not None:
-            row.prop(marker, "camera", text="")
-            edit = row.operator("studio.section_edit", text="%d–%d · %.1f s" % (
-                start, end, motion.seconds(scene, end - start + 1)), emboss=False, translate=False)
-            edit.name = name
-        else:
-            sub = row.row()
-            sub.active = False
-            sub.label(text="%d–%d · %.1f s" % (start, end, motion.seconds(scene, end - start + 1)),
-                      translate=False)
-        if n == len(found) - 1 or marker is None:
-            continue
-        item = next((c for c in scene.studio.cut_items if c.section == name), None)
-        row = box.row(align=True)                    # between two sections: transition · hold
-        row.label(text="", icon='SORT_ASC')
-        if item is None:
-            row.operator(STUDIO_OT_cut_settings.bl_idname, text="Cut", emboss=False).section = name
-            continue
-        row.prop(item, "transition", text="")
-        sub = row.row(align=True)
-        sub.active = item.transition != 'CUT'
-        sub.prop(item, "frames", text="")
-        row.prop(item, "hold", text="Hold")
-
-
-def _draw_film(layout, scene, context):
-    """The whole film: its look, letterbox, fades, a title."""
-    from . import film_edit
-    from .ui_common import section
-    box, _head, is_open = section(layout, "vse_film", "Film Look", 'COLOR', default_open=False)
-    if not is_open:
-        return
-    look = film_edit.film_look(scene, create=False)
-    row = box.row(align=True)
-    row.operator(STUDIO_OT_cut_tool.bl_idname, text="Look over Everything", icon='CHECKBOX_HLT' if look else
-                 'CHECKBOX_DEHLT', depress=look is not None).action = 'FILM_LOOK'
-    if look is not None:
-        _draw_look(box, look)
-    wm = context.window_manager
-    row = box.row(align=True)
-    row.label(text="Letterbox")
-    row.prop(wm, "studio_cut_ratio", text="")
-    row = box.row(align=True)
-    row.operator(STUDIO_OT_cut_tool.bl_idname, text="In", icon='TRIA_RIGHT_BAR').action = 'FILM_FADE_IN'
-    row.operator(STUDIO_OT_cut_tool.bl_idname, text="Out", icon='TRIA_LEFT_BAR').action = 'FILM_FADE_OUT'
-    row.prop(wm, "studio_cut_fade", text="Fade")
-    box.operator(STUDIO_OT_cut_tool.bl_idname, text="Title at the Playhead", icon='FONT_DATA').action = 'TITLE'
-
-
-class STUDIO_PT_cut(Panel):
-    """The film's place: render, the clip under the playhead, the sections, the film's look, music, export."""
-    bl_space_type = 'SEQUENCE_EDITOR'
-    bl_region_type = 'UI'
-    bl_category = "Studio"
-    bl_label = "Film"
-    bl_options = {'HIDE_HEADER'}
-
-    def draw(self, context):
-        layout = self.layout
-        scene = _scene(context)
-        if scene is not context.scene and not scene.timeline_markers and context.scene.timeline_markers:
-            col = layout.column()
-            col.label(text="The film is in %s" % context.scene.name, icon='INFO', translate=False)
-            col.operator(STUDIO_OT_cut.bl_idname, text="Show it Here", icon='SEQUENCE').action = 'OPEN'
-            return
-        row = layout.row(align=True)
-        row.scale_y = 1.3
-        row.operator("studio.add", text="Render", icon='RENDER_ANIMATION').mode = 'ANIM'
-        row.operator(STUDIO_OT_cut.bl_idname, text="Export", icon='EXPORT').action = 'EXPORT'
-        from . import film
-        film.draw(layout)
-
-        _draw_clip(layout, scene, context)
-        _draw_sections(layout, scene)
-        _draw_film(layout, scene, context)
-
-        from .ui_common import section
-        box, _head, is_open = section(layout, "vse_music", "Music", 'SOUND', default_open=False)
-        if is_open:
-            box.prop(scene.studio, "cut_music", text="")
-            row = box.row(align=True)
-            row.prop(scene.studio, "cut_bpm")
-            row.operator(STUDIO_OT_cut.bl_idname, text="On Beats", icon='SNAP_ON').action = 'SNAP'
-
-        row = layout.row(align=True)
-        span = strip_range(scene)
-        info = row.row()
-        info.active = False
-        info.label(text="Strips %d–%d · %.1f s" % (span[0], span[1], motion.seconds(scene, span[1] - span[0] + 1))
-                   if span else "Nothing rendered yet", translate=False)
-        row.operator(STUDIO_OT_cut.bl_idname, text="", icon='FILE_REFRESH', emboss=False).action = 'BUILD'
-        row.operator(STUDIO_OT_cut.bl_idname, text="", icon='TEXT', emboss=False).action = 'EDL'
-        row.operator(STUDIO_OT_cut.bl_idname, text="", icon='VIEW3D', emboss=False).action = 'BACK'
+               and not f.get("draft") for f, _s, k in film.films(fresh=fresh))
 
 
 def _ratio_changed(wm, context):
@@ -1340,8 +1320,7 @@ def _loaded(_dummy=None):
         bpy.app.timers.register(_migrate, first_interval=2.0)
 
 
-classes = (STUDIO_OT_cut, STUDIO_OT_cut_strip, STUDIO_OT_cut_tool, STUDIO_OT_cut_go, STUDIO_OT_cut_settings,
-           STUDIO_PT_cut)
+classes = (STUDIO_OT_cut, STUDIO_OT_cut_strip, STUDIO_OT_cut_tool, STUDIO_OT_cut_go, STUDIO_OT_cut_settings)
 
 
 def register():
@@ -1356,6 +1335,9 @@ def register():
                                      max=1200, options={'SKIP_SAVE'})
     wm.studio_cut_ratio = EnumProperty(name="Letterbox", items=film_edit.RATIOS, default='0', update=_ratio_changed,
                                        options={'SKIP_SAVE'})
+    from . import cut_panel, film_tools
+    cut_panel.register()
+    film_tools.register()
     if _loaded not in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.append(_loaded)
     _loaded()
@@ -1367,6 +1349,9 @@ def unregister():
     for timer in (_apply_now, _migrate):
         if bpy.app.timers.is_registered(timer):
             bpy.app.timers.unregister(timer)
+    from . import cut_panel, film_tools
+    film_tools.unregister()
+    cut_panel.unregister()
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
     for prop in ("studio_cut_fade", "studio_cut_hold", "studio_cut_ratio"):

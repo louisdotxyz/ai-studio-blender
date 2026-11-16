@@ -2537,6 +2537,23 @@ def motion_sections():
             film._remove_frames(folder, "02 Hero", (60, 62))
             left = cut.frame_status("02 Hero", 51, 110, fresh=True)
             check("render again from a frame: only those frames go", left["done"] == 57, left["done"])
+            real = os.path.join(folder, "02 Hero_0051.png")
+            for f in range(60, 63):                   # drafts (same size) fill the frames not rendered
+                draft = os.path.join(folder, "02 Hero_draft_%04d.png" % f)
+                shutil.copyfile(real, draft)
+                os.utime(draft, (old, old))
+            filled = cut.frame_status("02 Hero", 51, 110, fresh=True)
+            check("drafts fill the gaps, marked per frame; a render keeps them",
+                  filled["done"] == 57 and filled["codes"][9:12] == ['DRAFT'] * 3
+                  and filled["shown"][9] == "02 Hero_draft_0060.png" and filled["codes"][0] == 'LOW'
+                  and not any("draft" in n for n in film._frames_of(folder, "02 Hero")), filled["codes"][8:13])
+            cut.sync(scene)
+            check("an orange strip: rendered in Low Quality",
+                  cut.section_strip(scene, "02 Hero").color_tag == cut.MARKS['LOW'])
+            tools = mod("studio.film_tools")
+            no_cam = {m.name for m in scene.timeline_markers if m.camera is None}
+            check("check: sections without a camera are found",
+                  {p[0] for p in tools.problems(scene) if p[1] == 'NO_CAMERA'} == no_cam, tools.problems(scene))
             fe = mod("studio.film_edit")
             before = cut.strip_range(scene)[1]
             fe.set_hold(scene, "01 Intro", 10)        # in place: what follows moves along, the cross stays
