@@ -310,8 +310,15 @@ def _tick():
     """Looks at the share every 15 s while the panel is drawn; stops when it has not been for a while."""
     if time.monotonic() - _view["drawn"] > 2 * REFRESH:
         return None
-    _refresh()
     from . import runner
+    if not _conn["ok"]:                     # not connected: look every 2 s, so it shows as soon as it is
+        was = _conn["ok"]
+        _look(share_root())
+        if _conn["ok"] and not was:
+            _refresh(force=True)
+        runner.tag_redraw()
+        return 2.0
+    _refresh()
     runner.tag_redraw()
     return REFRESH
 
@@ -1198,7 +1205,12 @@ def draw_state(layout, context):
         warn = layout.column(align=True)
         warn.alert = True
         warn.label(text="Share not connected" + (": renders stay on this Mac" if rq.farm_on else ""), icon='ERROR')
-        warn.label(text=CONNECT_HINT, translate=False)
+        row = layout.row(align=True)
+        row.operator(STUDIO_OT_farm_connect.bl_idname, icon='LINKED')
+        row.operator(STUDIO_OT_farm_refresh.bl_idname, text="", icon='FILE_REFRESH')
+        hint = layout.row()
+        hint.active = False
+        hint.label(text="From home: VPN first, then connect", translate=False)
         return
     view = _view["scan"]
     if view is None:
@@ -1332,7 +1344,7 @@ class STUDIO_OT_farm_refresh(Operator):
     bl_options = {'INTERNAL'}
 
     def execute(self, _context):
-        _conn["time"] = -1e9                        # the share is looked at again
+        _look(share_root())                         # the share is looked at again, right now
         for job in _jobs:
             job["looked"] = 0.0                     # frames fetched right away
         _refresh(force=True)
@@ -1343,7 +1355,21 @@ class STUDIO_OT_farm_refresh(Operator):
         return {'FINISHED'}
 
 
-classes = (STUDIO_OT_farm_move, STUDIO_OT_farm_remove, STUDIO_OT_farm_refresh)
+class STUDIO_OT_farm_connect(Operator):
+    bl_idname = "studio.farm_connect"
+    bl_label = "Connect Share"
+    bl_description = "Connect the DDE share (Finder asks for the ZHdK login); from home: VPN first"
+    bl_options = {'INTERNAL'}
+
+    def execute(self, _context):
+        subprocess.Popen(["open", "smb://fileredu.ad.zhdk.ch/DDE"], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        _conn["time"] = -1e9
+        watch()
+        return {'FINISHED'}
+
+
+classes = (STUDIO_OT_farm_move, STUDIO_OT_farm_remove, STUDIO_OT_farm_refresh, STUDIO_OT_farm_connect)
 
 
 def register():
