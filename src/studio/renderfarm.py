@@ -31,7 +31,7 @@ import threading
 import time
 
 import bpy
-from bpy.props import EnumProperty, IntProperty, PointerProperty, StringProperty
+from bpy.props import StringProperty
 from bpy.types import Operator
 
 DEFAULT_SHARE = "/Volumes/DDE/BDE_VID/BA/02_Studierende/Louis Widmer/Flamenco"
@@ -41,6 +41,7 @@ FORMATS = (('PNG', "PNG", "8-bit PNG frames", 'IMAGE_DATA', 0),
            ('OPEN_EXR', "OpenEXR", "32-bit float frames for grading", 'IMAGE_RGB_ALPHA', 2))
 EXTENSIONS = {'PNG': "png", 'JPEG': "jpg", 'OPEN_EXR': "exr"}
 REFRESH = 15.0                 # seconds between looks at the share while the panel is open
+ONLINE = 180.0                 # a waiting worker writes its status every 20 s: older than this = gone
 CHUNK = 8 * 1024 * 1024        # bytes per step of the copy to the share
 
 PACK_SCRIPT = '''
@@ -148,7 +149,7 @@ def scan(root):
     """What the share says: {"ok", "error", "jobs": [{"job", "scene", "start", "end", "total", "done",
     "state" ('waiting' / 'rendering' / 'done'), "note", "sent_by", "time"}], "halves": [names],
     "workers": [(name, what, when)]} (newest job first)."""
-    out = {"ok": False, "error": "", "jobs": [], "halves": [], "workers": [], "time": time.time()}
+    out = {"ok": False, "error": "", "jobs": [], "halves": [], "workers": [], "online": 0, "time": time.time()}
     if not os.path.isdir(root):
         out["error"] = "Share not connected (%s)" % CONNECT_HINT
         return out
@@ -159,17 +160,21 @@ def scan(root):
         names = []
         if os.path.exists(queue):
             out["error"] = "queue/ not readable: %s" % ex
-    workers = []
+    workers, online = [], 0
     for path in sorted(glob.glob(os.path.join(root, "_worker", "status", "*-render.txt"))):
         try:
             with open(path, encoding="utf-8-sig", errors="replace") as f:
                 line = f.readline().strip()
+            fresh = time.time() - os.path.getmtime(path) < ONLINE
         except OSError:
             continue
         parts = [p.strip() for p in line.split("|")]
         if parts and parts[0]:
-            workers.append((parts[0], parts[1] if len(parts) > 1 else "", parts[2] if len(parts) > 2 else ""))
+            what = parts[1] if len(parts) > 1 else ""
+            workers.append((parts[0], what, parts[2] if len(parts) > 2 else ""))
+            online += fresh or what.startswith("rendert")
     out["workers"] = workers
+    out["online"] = online
     busy = {w[1].split(" ", 1)[1].strip() for w in workers if w[1].startswith("rendert ")}
     for name in names:
         if name.endswith(".part"):
@@ -544,9 +549,11 @@ def _collect(job):
         _save_registry()
 
 
-def draw_progress(layout):
-    """The farm's jobs of this Blender as bars (Render tab, Video Editor)."""
-    for job in [j for j in _jobs if j["phase"] in {"queued", "packing", "copying", "sent", "error"}]:
+def draw_progress(layout, sent=True):
+    """The farm's jobs of this Blender as bars (Render tab, Video Editor); sent=False: only those not on
+    the share yet (and errors)."""
+    phases = {"queued", "packing", "copying", "sent", "error"} if sent else {"queued", "packing", "copying", "error"}
+    for job in [j for j in _jobs if j["phase"] in phases]:
         row = layout.row(align=True)
         total = job["end"] - job["start"] + 1
         if job["phase"] == "error":
@@ -589,147 +596,50 @@ def load_into_editor(context, job):
 
 # ------------------------------------------------------------------ panel
 
-def _range(context):
-    wm = context.window_manager
-    scene = wm.studio_farm_scene or context.scene
-    if wm.studio_farm_range == 'SCENE':
-        return scene, scene.frame_start, scene.frame_end
-    return scene, wm.studio_farm_start, wm.studio_farm_end
-
-
-STATE_ICONS = {'waiting': 'TIME', 'rendering': 'RENDER_ANIMATION', 'done': 'CHECKMARK'}
+STATE_TEXT = {'waiting': "waiting", 'rendering': "rendering", 'done': "done"}
 
 
 def draw(layout, context):
-    """Render tab · Render Farm: on/off (every render goes to the farm), its jobs, the workers, sending by
-    hand."""
+    """Render tab · Render Farm: on / off, how many workers are there, the queue with its bars."""
     _view["drawn"] = time.monotonic()
     if not bpy.app.timers.is_registered(_tick):
         bpy.app.timers.register(_tick, first_interval=0.1)
-    wm = context.window_manager
-    scene = context.scene
-    root = share_root()
-    online = connected(root)
-    row = layout.row()
-    row.scale_y = 1.3
-    row.prop(scene.studio, "farm_on", text="Render on the Farm" if scene.studio.farm_on else "Render on this Mac",
-             toggle=True, icon='NETWORK_DRIVE' if scene.studio.farm_on else 'DESKTOP')
+    rq = context.scene.studio
+    online = connected()
+    row = layout.row(align=True)                 # on / off
+    row.scale_y = 1.4
+    row.prop_enum(rq, "farm_mode", 'OFF')
+    row.prop_enum(rq, "farm_mode", 'ON')
     if not online:
         warn = layout.column(align=True)
         warn.alert = True
-        warn.label(text="Share not connected%s" % (": renders stay on this Mac" if scene.studio.farm_on else ""),
-                   icon='ERROR')
+        warn.label(text="Share not connected" + (": renders stay on this Mac" if rq.farm_on else ""), icon='ERROR')
         warn.label(text=CONNECT_HINT, translate=False)
-    elif scene.studio.farm_on:
-        hint = layout.row()
-        hint.active = False
-        hint.label(text="Stills and sections render on the workers and come back by themselves", icon='INFO')
-    col = layout.column(align=True)
-    draw_progress(col)
-    if not online:
+        draw_progress(layout.column(align=True), sent=False)
         return
     _refresh()
-    view = _view["scan"]
-    if view is not None:
-        box = layout.box()
-        box.label(text="Workers", icon='DESKTOP')
-        for name, what, when in view["workers"]:
-            row = box.row(align=True)
-            row.label(text=name, icon='RENDER_ANIMATION' if what.startswith("rendert") else 'TIME', translate=False)
-            sub = row.row()
-            sub.alignment = 'RIGHT'
-            sub.active = False
-            sub.label(text="%s · %s" % (what, when[-5:]), translate=False)
-        if not view["workers"]:
-            hint = box.row()
-            hint.active = False
-            hint.label(text="No worker has reported yet")
-    from .ui_common import section
-    box, head, is_open = section(layout, "farm_jobs", "Jobs on the Share", 'SORTTIME', default_open=False)
-    head.operator(STUDIO_OT_farm_folder.bl_idname, text="", icon='FILE_FOLDER', emboss=False).job = ""
-    head.operator(STUDIO_OT_farm_refresh.bl_idname, text="", icon='FILE_REFRESH', emboss=False)
-    if is_open:
-        if view is None:
-            box.label(text="Looking at the share …", icon='TIME')
-        else:
-            if view.get("error"):
-                warn = box.row()
-                warn.alert = True
-                warn.label(text=view["error"], icon='ERROR', translate=False)
-            for job in view["jobs"][:12]:
-                col = box.column(align=True)
-                row = col.row(align=True)
-                row.label(text=job["job"], icon=STATE_ICONS[job["state"]], translate=False)
-                sub = row.row(align=True)
-                sub.alignment = 'RIGHT'
-                sub.label(text="%d/%d · %s" % (job["done"], job["total"], job["state"]), translate=False)
-                row = col.row(align=True)
-                if job["total"]:
-                    row.progress(factor=min(1.0, job["done"] / job["total"]), type='BAR',
-                                 text=job["note"] or job["scene"])
-                row.operator(STUDIO_OT_farm_folder.bl_idname, text="", icon='FILE_FOLDER').job = job["job"]
-                load = row.row(align=True)
-                load.enabled = job["done"] > 0
-                load.operator(STUDIO_OT_farm_load.bl_idname, text="", icon='SEQUENCE').job = job["job"]
-            if not view["jobs"]:
-                hint = box.row()
-                hint.active = False
-                hint.label(text="No job in queue/")
-            for half in view["halves"]:
-                hint = box.row()
-                hint.active = False
-                hint.label(text="%s: incomplete, never a job" % half, icon='INFO', translate=False)
-    box, _head, is_open = section(layout, "farm_manual", "Send by Hand", 'EXPORT', default_open=False)
-    if is_open:
-        col = box.column(align=True)
-        col.prop(wm, "studio_farm_scene", text="", icon='SCENE_DATA')
-        row = col.row(align=True)
-        row.prop(wm, "studio_farm_range", expand=True)
-        scene_, start, end = _range(context)
-        if wm.studio_farm_range == 'CUSTOM':
-            row = col.row(align=True)
-            row.prop(wm, "studio_farm_start", text="Start")
-            row.prop(wm, "studio_farm_end", text="End")
-        row = col.row(align=True)
-        row.label(text="%d–%d · %d frames" % (start, end, max(0, end - start + 1)), translate=False)
-        row.operator(STUDIO_OT_farm_frame.bl_idname, text="Current Frame", icon='TIME')
-        col.prop(wm, "studio_farm_format", text="")
-        col.prop(wm, "studio_farm_note", text="", icon='TEXT')
-        render = scene_.render
-        pct = render.resolution_percentage
-        hint = box.row()
+    view = _view["scan"] or {}
+    workers = view.get("online", 0)
+    rendering = sum(1 for w in view.get("workers", []) if w[1].startswith("rendert"))
+    row = layout.row()
+    row.label(text="%d worker%s online%s" % (workers, "" if workers == 1 else "s",
+                                             " · %d rendering" % rendering if rendering else ""),
+              icon='DESKTOP' if workers else 'ERROR', translate=False)
+    col = layout.column(align=True)              # the queue
+    draw_progress(col, sent=False)
+    jobs = view.get("jobs", [])
+    shown = [j for j in jobs if j["state"] != 'done'] + [j for j in jobs if j["state"] == 'done'][:3]
+    for job in shown[:10]:
+        total = max(1, job["total"])
+        col.progress(factor=min(1.0, job["done"] / total), type='BAR', text="%s · %d/%d · %s" % (
+            job["note"] or job["job"], job["done"], job["total"], STATE_TEXT[job["state"]]))
+    if not shown and not active():
+        hint = layout.row()
         hint.active = False
-        hint.label(text="%d × %d (%d %%) · %s · as the scene is" % (
-            render.resolution_x * pct // 100, render.resolution_y * pct // 100, pct,
-            render.engine.replace("BLENDER_", "").title()), translate=False)
-        row = box.row()
-        row.scale_y = 1.3
-        row.operator(STUDIO_OT_farm_send.bl_idname, text="Send to Render Farm", icon='EXPORT')
-    info = layout.row()
-    info.active = False
-    info.label(text=root, icon='NETWORK_DRIVE', translate=False)
+        hint.label(text="Queue empty")
 
 
 # ------------------------------------------------------------------ operators
-
-class STUDIO_OT_farm_send(Operator):
-    bl_idname = "studio.farm_send"
-    bl_label = "Send to Render Farm"
-    bl_description = ("A packed copy of the scene (the working file stays as it is) into the share's queue: the "
-                      "Mac Studios render it into renders/<job>/")
-    bl_options = {'INTERNAL'}
-
-    def execute(self, context):
-        wm = context.window_manager
-        scene, start, end = _range(context)
-        try:
-            job = submit(scene, start, end, wm.studio_farm_format, wm.studio_farm_note)
-        except (ValueError, OSError, RuntimeError) as ex:
-            self.report({'WARNING'}, str(ex))
-            return {'CANCELLED'}
-        self.report({'INFO'}, "Render farm: sending %s" % job["job"])
-        return {'FINISHED'}
-
 
 class STUDIO_OT_farm_dismiss(Operator):
     bl_idname = "studio.farm_dismiss"
@@ -741,20 +651,6 @@ class STUDIO_OT_farm_dismiss(Operator):
 
     def execute(self, _context):
         _jobs[:] = [j for j in _jobs if j["job"] != self.job]
-        return {'FINISHED'}
-
-
-class STUDIO_OT_farm_frame(Operator):
-    bl_idname = "studio.farm_frame"
-    bl_label = "Current Frame"
-    bl_description = "Only the current frame goes to the render farm"
-    bl_options = {'INTERNAL'}
-
-    def execute(self, context):
-        wm = context.window_manager
-        scene = wm.studio_farm_scene or context.scene
-        wm.studio_farm_range = 'CUSTOM'
-        wm.studio_farm_start = wm.studio_farm_end = scene.frame_current
         return {'FINISHED'}
 
 
@@ -806,22 +702,11 @@ class STUDIO_OT_farm_load(Operator):
         return {'FINISHED'}
 
 
-classes = (STUDIO_OT_farm_send, STUDIO_OT_farm_dismiss, STUDIO_OT_farm_frame, STUDIO_OT_farm_refresh, STUDIO_OT_farm_folder,
+classes = (STUDIO_OT_farm_dismiss, STUDIO_OT_farm_refresh, STUDIO_OT_farm_folder,
            STUDIO_OT_farm_load)
 
 
 def register():
-    wm = bpy.types.WindowManager
-    wm.studio_farm_scene = PointerProperty(type=bpy.types.Scene, name="Scene",
-                                           description="The scene that renders on the farm (empty: this one)")
-    wm.studio_farm_range = EnumProperty(name="Frames", options={'SKIP_SAVE'}, default='SCENE',
-                                        items=(('SCENE', "Scene Range", "The scene's start to end frame"),
-                                               ('CUSTOM', "Custom", "Frames of your choice")))
-    wm.studio_farm_start = IntProperty(name="Start", default=1, options={'SKIP_SAVE'})
-    wm.studio_farm_end = IntProperty(name="End", default=250, options={'SKIP_SAVE'})
-    wm.studio_farm_format = EnumProperty(name="Format", items=FORMATS, default='PNG', options={'SKIP_SAVE'})
-    wm.studio_farm_note = StringProperty(name="Note", description="A note for the job (shown in the list)",
-                                         default="", options={'SKIP_SAVE'})
     for cls in classes:
         bpy.utils.register_class(cls)
     _load_registry()                             # jobs sent before a restart: their frames still come
@@ -835,7 +720,3 @@ def unregister():
             bpy.app.timers.unregister(timer)
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
-    for prop in ("studio_farm_scene", "studio_farm_range", "studio_farm_start", "studio_farm_end",
-                 "studio_farm_format", "studio_farm_note"):
-        if hasattr(bpy.types.WindowManager, prop):
-            delattr(bpy.types.WindowManager, prop)

@@ -525,6 +525,12 @@ class STUDIO_Settings(PropertyGroup):
     farm_on: BoolProperty(name="Render Farm", description="Every render (stills and sections) goes to the "
                           "ZHdK render farm over the DDE share and comes back by itself: stills into the "
                           "renders, a section's frames into the Video Editor", default=False, options=set())
+    farm_mode: EnumProperty(
+        name="Render Farm", options=set(),
+        items=[('OFF', "Off · this Mac", "Everything renders on this Mac", 'DESKTOP', 0),
+               ('ON', "On · Farm", "Every render goes to the ZHdK workers and comes back by itself", 'NETWORK_DRIVE', 1)],
+        get=lambda self: 1 if self.farm_on else 0,
+        set=lambda self, value: setattr(self, "farm_on", bool(value)))
     cut_export_music: BoolProperty(name="With Music", description="The music strip goes into the video",
                                    default=True, options=set())
     cut_export_name: StringProperty(name="File Name", description="Name of the export (empty: the scene's "
