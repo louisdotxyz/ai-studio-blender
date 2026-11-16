@@ -229,6 +229,7 @@ def scan(root):
     out["worker_rows"] = rows
     out["online"] = online
     busy = {w[1].split(" ", 1)[1].strip() for w in workers if w[1].startswith("rendert ")}
+    out["last_frame"] = _last_frames(root, busy)
     for name in names:
         if name.endswith(".part"):
             out["halves"].append(name)
@@ -261,6 +262,26 @@ def scan(root):
                             "blend": os.path.exists(os.path.join(queue, job + ".blend"))})
     out["jobs"].sort(key=lambda j: j["time"], reverse=True)
     out["ok"] = True
+    return out
+
+
+def _last_frames(root, jobs):
+    """(thread) worker → time of its newest frame on the share, read from the newest frames of the jobs
+    that render (also jobs not sent from this Blender): a worker writes no line while it renders, its
+    frames show it is alive."""
+    from . import cut
+    out = {}
+    for job in jobs:
+        folder = os.path.join(root, "renders", job)
+        try:
+            entries = [e for e in os.scandir(folder) if e.is_file() and e.name.endswith(".png")]
+            full = sorted(((e.stat().st_mtime, e.path) for e in entries if e.stat().st_size > 0), reverse=True)
+        except OSError:
+            continue
+        for mtime, path in full[:12]:
+            host = cut.png_text(path).get("Hostname", "").split(".")[0].lower()
+            if host and mtime > out.get(host, 0.0):
+                out[host] = mtime
     return out
 
 
@@ -1125,7 +1146,7 @@ def worker_states(view=None):
         key = name.lower()
         status_time = now - age
         frames = [t + _clock_offset(key) for t, _s in _stamps.get(key, ())]
-        last_frame = max(frames) if frames else 0.0
+        last_frame = max(frames + [view.get("last_frame", {}).get(key, 0.0)])
         per = seconds_per_frame(key) or 0.0
         since = max(status_time, last_frame)
         if what.startswith("rendert "):
@@ -1150,8 +1171,13 @@ def online_count(view=None):
 
 
 def _job_note(name):
+    """The job's name as the queue shows it ("01 Hero · HQ"); a job not of this Blender (or removed): its
+    section from the job name ("01 Hero, older job")."""
     job = next((j for j in _jobs if j["job"] == name), None)
-    return (job["note"] or name) if job else name
+    if job:
+        return job["note"] or name
+    short = re.sub(r"^.*?_\d{8}-\d{6}_", "", name).replace("_", " ")
+    return "%s (older job)" % short if short != name else name
 
 
 def draw_state(layout, context):
