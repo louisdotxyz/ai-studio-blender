@@ -2698,8 +2698,9 @@ def tabs_without_switch():
           ui.studio_tab(bpy.context) in ui.visible_tabs()
           and ui.visible_tabs() == ('RENDER', 'LIGHT', 'MATERIAL', 'QUEUE'), ui.visible_tabs())
     skills = mod("skills")
-    anim = next((s for s in skills.list_skills(mod("core").workdir()) if s["name"] == "anim"), None)
-    check("the ANIM skill is not in the skill row (it comes by itself)", anim is None or not anim["in_chat"])
+    found = {s["name"]: s for s in skills.list_skills(mod("core").workdir())}
+    check("ANIM in the skill row, CUT comes by itself", ("anim" not in found or found["anim"]["in_chat"])
+          and ("cut" not in found or not found["cut"]["in_chat"]))
     wm.studio_tab = keep
 
 

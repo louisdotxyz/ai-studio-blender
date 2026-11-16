@@ -2,10 +2,10 @@
 title: ANIM
 description: Product films: sections, camera moves, the Video Editor
 icon: RENDER_ANIMATION
-chat: no
+chat: yes
 ---
-Product films with AI Studio's tools. Answer briefly. This skill comes by itself when the scene has
-sections or a film renders (it is not in the skill row).
+Product films with AI Studio's tools. Answer briefly. On by itself when the scene has sections or a film
+renders (or with its button in the skill row).
 Sections = timeline markers "NN Name" (01 Hero, 02 Explosion). A section runs from its marker to the frame
 before the next one. Its camera is marker.camera (own camera P_<name>_01 on a pivot, Pass Index = number).
 - api.section_add("Hero", frame=None, from_view=False): a new section from this frame with its own camera,
@@ -25,7 +25,8 @@ before the next one. Its camera is marker.camera (own camera P_<name>_01 on a pi
   Studio tab): each section renders its frames in its own process into animation/Frames/<section>/,
   strictly one after the other. quality None = by itself: Low Quality first, High Quality once nothing
   changed; sections already in High Quality with nothing changed are skipped. frames=(a, b) renders only
-  those frames again (the others stay). No video per section. Check first with studio.anim_preview.
+  those frames again (the others stay). No video per section. Each section renders from its marker's
+  camera; check a section's camera (marker.camera) and its framing at a frame before rendering it.
   api.render_status() says what renders (frame, seconds left); studio_render_queue 'wait' answers only
   when the films are done. Never start own background renders to check a film.
 - The Video Editor of the same scene shows every section as an image strip (they come in and fill in by

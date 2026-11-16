@@ -198,6 +198,8 @@ class STUDIO_OT_add(Operator):
                 continue
             item = self._item(scene, cam, quality, 'ANIM')
             item.section, item.keep_frames = name, keep
+            item.percentage = 100       # a film: High Quality at full size (Low: its share of it), whatever
+            #                             size the scene is set to for the viewport
             item.frame_start, item.frame_end = a, b
             if not keep:
                 autoquality.record(scene, key)

@@ -138,7 +138,6 @@ def draw_inline(layout, context):
     if context.area is not None and context.area.type == 'SEQUENCE_EDITOR':   # the cut chat: the film's row
         row = layout.row(align=True)
         row.scale_y = 1.2
-        row.operator("studio.anim_preview", text="Check", icon='PLAY')
         row.operator("studio.add", text="Render", icon='RENDER_ANIMATION').mode = 'ANIM'
         row.operator("studio.cut", text="Export", icon='EXPORT').action = 'EXPORT'
         return

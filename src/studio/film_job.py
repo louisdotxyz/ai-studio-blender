@@ -84,6 +84,23 @@ def _apply(scene, overrides):
         print("FILM could not set %s: %s" % (path, ex), flush=True)
 
 
+def _pin_camera(scene):
+    """The film's camera stays the camera on every frame. Unbinding the timeline markers' cameras is not
+    enough: Blender still switched to a marker's camera on a frame change (the films of 4.0 rendered from
+    the last section's camera). This copy only renders, so its markers go, and the camera is set again
+    on every frame."""
+    wanted = scene.camera
+    scene.timeline_markers.clear()
+
+    def keep(sc, *_args):
+        if wanted is not None and sc.camera != wanted:
+            sc.camera = wanted
+    for handlers in (bpy.app.handlers.frame_change_pre, bpy.app.handlers.frame_change_post,
+                     bpy.app.handlers.render_pre):
+        handlers.append(keep)
+    print("FILM camera", wanted.name if wanted else None, flush=True)
+
+
 def _camera(scene, spec):
     source = bpy.data.objects[spec["source"]]
     temp = source.copy()
@@ -189,6 +206,7 @@ def main():
         overrides = list(overrides) + [["cycles.device", 'GPU']]
     _variant(job.get("variant") or [])
     _apply(scene, overrides)
+    _pin_camera(scene)
     render = scene.render
     render.compositor_device = 'CPU'       # the GPU compositor gets a windowless Blender killed
     render.use_sequencer = False           # the film's strips are in this scene's Video Editor: render 3D

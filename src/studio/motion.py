@@ -875,7 +875,6 @@ def draw_timeline(self, context):
         return
     row = self.layout.row(align=True)
     row.operator(STUDIO_OT_section.bl_idname, text="Section", icon='MARKER_HLT').action = 'ADD'
-    row.operator(STUDIO_OT_anim_preview.bl_idname, text="", icon='PLAY')
     row.operator("studio.add", text="", icon='RENDER_ANIMATION').mode = 'ANIM'
     row.operator("studio.cut", text="", icon='SEQUENCE').action = 'OPEN'
 

@@ -602,9 +602,29 @@ def selection_info(max_objects=5, max_chars=1200):
 # ---------------------------------------------------------------------------
 # Viewport screenshot
 
+def find_sequencer_preview():
+    """(window, area, region) of the largest Video Editor preview (the film as it plays), or None."""
+    best = None
+    for window in bpy.context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type != 'SEQUENCE_EDITOR':
+                continue
+            space = area.spaces.active
+            if getattr(space, "view_type", "") not in {'PREVIEW', 'SEQUENCER_PREVIEW'}:
+                continue
+            region = next((r for r in area.regions if r.type == 'PREVIEW'), None) or \
+                next((r for r in area.regions if r.type == 'WINDOW'), None)
+            if region is not None and (best is None or area.width * area.height > best[1].width * best[1].height):
+                best = (window, area, region)
+    return best
+
+
 def capture_viewport(max_size=1280):
-    """Screenshot of the largest 3D viewport (without the sidebar). Returns PNG bytes."""
-    found = find_view3d()
+    """Screenshot of the largest 3D viewport (without the sidebar); in the Video Editing workspace (the cut
+    chat) of the Video Editor's preview, which shows the film. Returns PNG bytes."""
+    from . import film_chat
+    found = (find_sequencer_preview() if film_chat.video_mode() else None) or find_view3d() \
+        or find_sequencer_preview()
     if not found:
         raise RuntimeError(tr("No 3D viewport found"))
     window, area, region = found

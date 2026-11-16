@@ -1266,7 +1266,6 @@ class STUDIO_PT_cut(Panel):
             return
         row = layout.row(align=True)
         row.scale_y = 1.3
-        row.operator("studio.anim_preview", text="Check", icon='PLAY')
         row.operator("studio.add", text="Render", icon='RENDER_ANIMATION').mode = 'ANIM'
         row.operator(STUDIO_OT_cut.bl_idname, text="Export", icon='EXPORT').action = 'EXPORT'
         from . import film

@@ -227,6 +227,26 @@ def _draft(scene, spec, uid):
             print("W draft %s %d" % (uid, n), flush=True)   # also after a failure: the real render follows
 
 
+_wanted = [None]
+
+
+@bpy.app.handlers.persistent
+def _keep_camera(scene, *_args):
+    """Blender switched to a timeline marker's camera on a frame change even with the markers unbound:
+    the job's camera is set again before every frame and render."""
+    cam = _wanted[0]
+    try:
+        if cam is not None and scene.camera != cam:
+            scene.camera = cam
+    except ReferenceError:
+        _wanted[0] = None
+
+
+for _handlers in (bpy.app.handlers.frame_change_pre, bpy.app.handlers.frame_change_post,
+                  bpy.app.handlers.render_pre):
+    _handlers.append(_keep_camera)
+
+
 def run(job):
     uid = job["uid"]
     print("W job %s" % uid, flush=True)
@@ -243,6 +263,7 @@ def run(job):
             overrides = list(overrides) + [["cycles.device", 'GPU']]
         _variant(job.get("variant") or [], saved)
         _apply(scene, overrides, saved)
+        _wanted[0] = scene.camera          # no timeline marker may switch to its camera while it renders
         animation = bool(job.get("animation"))
         if job.get("draft") and not animation and scene.render.engine == 'CYCLES':
             _draft(scene, job["draft"], uid)
@@ -252,6 +273,7 @@ def run(job):
     except Exception:
         print("W fail %s %s" % (uid, traceback.format_exc(limit=3).replace("\n", " | ")), flush=True)
     finally:
+        _wanted[0] = None
         _restore(saved)
 
 
