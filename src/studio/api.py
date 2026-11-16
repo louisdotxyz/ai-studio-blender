@@ -910,13 +910,28 @@ def section_frames(name, start=None, length=None, move_keys=True):
 
 
 def motion_preset(preset, start=None, end=None, amount=0.0, reverse=False, replace=True, ease='SMOOTH',
-           camera=None, drop_focus=False):
+           camera=None, drop_focus=False, in_render=False):
     """A motion preset (TURNTABLE degrees, SWING ± degrees, PUSH_IN / PULL_OUT % of the distance, CRANE
     degrees, FOCUS start %, FADE_IN / FADE_OUT frames, HOLD) on the camera's pivot over the frames
-    (default: the current section). replace: keys of this kind in the frames go first. Returns the keys set."""
+    (default: the current section). replace: keys of this kind in the frames go first. Returns the keys set.
+    FADE_IN / FADE_OUT make a fade in the cut (on the section's strip: it can be changed later without
+    rendering; returns {"cut_fade": strip}); in_render=True keys the exposure instead (baked into the
+    render), only when the user asks for exactly that."""
     from . import cameras, motion as m
     scene = bpy.context.scene
     a, b, _name = m.current_range(scene)
+    if preset in m.FADES and not in_render:
+        section = _name
+        if start is not None:
+            section = next((mk.name for mk, s, e in m.sections(scene) if s <= start <= e), _name)
+        frames = int(m.amount_of(preset, amount))
+        try:
+            made = cut_fade("IN" if preset == 'FADE_IN' else "OUT", frames, "WHITE" if reverse else "BLACK",
+                            section or None)
+        except ValueError as ex:
+            return {"cut_fade": None, "note": "%s: render the section first, then the fade goes on its strip "
+                                              "(in_render=True keys the exposure instead)" % ex}
+        return {"cut_fade": made, "frames": frames}
     cam = bpy.data.objects[camera] if isinstance(camera, str) else camera or cameras.active_camera(scene)
     return m.apply(scene, cam, preset, a if start is None else start, b if end is None else end, ease, amount,
                    reverse, replace, drop_focus)
@@ -952,13 +967,15 @@ def key_pose(from_view=True):
     return m.key_pose(scene, cameras.active_camera(scene), from_view=from_view)
 
 
-def section_render(section=None, quality=None, frames=None):
+def section_render(section=None, quality=None, frames=None, force=False):
     """Render a section's frames (None: every section that needs it) into animation/Frames/<section>/;
     they come into the Video Editor by themselves. quality None = by itself (Low first, High once nothing
-    changed), else 'LOW' / 'HIGH'. frames=(a, b): only those frames again. Returns what was queued."""
+    changed), else 'LOW' / 'HIGH'. frames=(a, b): only those frames again. force=True: render again though
+    nothing changed (e.g. after frames from a wrong camera): the frames there go to animation/archiv first.
+    With the render farm on (scene.studio.farm_on) the sections render there. Returns what was queued."""
     scene = bpy.context.scene
     result = bpy.ops.studio.add(mode='ANIM', section=section or "", quality=quality or 'DEFAULT',
-                                frames="%d-%d" % tuple(frames) if frames else "")
+                                frames="%d-%d" % tuple(frames) if frames else "", force=bool(force))
     return [{"section": i.section, "quality": i.quality, "frames": [i.frame_start, i.frame_end]}
             for i in scene.studio.items if i.mode == 'ANIM'] if 'FINISHED' in result else []
 
@@ -1017,7 +1034,8 @@ def section_draft(section=None):
 
 def film_check():
     """What would go wrong in a render, and the estimate: {"problems": [[section, code, text]] (code
-    NO_CAMERA blocks that section's render; SHARED; OUTDATED), "sections": [{"section", "camera", "locked",
+    NO_CAMERA blocks that section's render; CAMERA: its frames are from another camera than the section's,
+    render it again with force=True; SHARED; OUTDATED; EXPOSURE: a fade keyed into the render; SAMPLES), "sections": [{"section", "camera", "locked",
     "state", "next", "seconds"}], "total_seconds"}."""
     from . import cut, film_tools
     scene = bpy.context.scene

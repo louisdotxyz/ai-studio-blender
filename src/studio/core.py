@@ -400,7 +400,14 @@ class PlanOverrides(Overrides):
 
     def as_list(self):
         """[[path, value]] with JSON values; objects as {"object": name}."""
-        return [[path, _jsonable(value)] for path, value in self.plan.items()]
+        out = [[path, _jsonable(value)] for path, value in self.plan.items()]
+        return camera_last(out)
+
+
+def camera_last(overrides):
+    """The camera as the last override: unbinding the timeline markers' cameras (the overrides before it)
+    makes Blender 5.3 jump to another marker's camera, so the job's camera has to be set after them."""
+    return [o for o in overrides if o[0] != "camera"] + [o for o in overrides if o[0] == "camera"]
 
 
 def _jsonable(value):

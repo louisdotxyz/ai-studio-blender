@@ -205,9 +205,18 @@ def main():
     if gpu and scene.render.engine == 'CYCLES':
         overrides = list(overrides) + [["cycles.device", 'GPU']]
     _variant(job.get("variant") or [])
+    overrides = [o for o in overrides if o[0] != "camera"] + [o for o in overrides if o[0] == "camera"]
     _apply(scene, overrides)
+    expected = next((_value(v) for p, v in overrides if p == "camera"), None)
+    if expected is not None and scene.camera != expected:      # a marker switched it: the job's camera counts
+        print("FILM camera was %s, set to %s" % (scene.camera.name if scene.camera else None, expected.name),
+              flush=True)
+        scene.camera = expected
     _pin_camera(scene)
+    _state["camera"] = scene.camera.name if scene.camera else ""
     render = scene.render
+    for stamp in ("use_stamp_camera", "use_stamp_render_time", "use_stamp_frame"):
+        setattr(render, stamp, True)       # into each frame's file: which camera it really came from
     render.compositor_device = 'CPU'       # the GPU compositor gets a windowless Blender killed
     render.use_sequencer = False           # the film's strips are in this scene's Video Editor: render 3D
     images = render.image_settings

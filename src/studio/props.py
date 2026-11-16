@@ -527,8 +527,9 @@ class STUDIO_Settings(PropertyGroup):
                           "renders, a section's frames into the Video Editor", default=False, options=set())
     farm_mode: EnumProperty(
         name="Render Farm", options=set(),
-        items=[('OFF', "Off · this Mac", "Everything renders on this Mac", 'DESKTOP', 0),
-               ('ON', "On · Farm", "Every render goes to the ZHdK workers and comes back by itself", 'NETWORK_DRIVE', 1)],
+        items=[('OFF', "This Mac", "Renders run on this Mac", 'DESKTOP', 0),
+               ('ON', "Render Farm", "Renders go to the ZHdK workers and come back by themselves (images into "
+                                     "the renders, a film's frames into the Video Editor)", 'NETWORK_DRIVE', 1)],
         get=lambda self: 1 if self.farm_on else 0,
         set=lambda self, value: setattr(self, "farm_on", bool(value)))
     cut_export_music: BoolProperty(name="With Music", description="The music strip goes into the video",

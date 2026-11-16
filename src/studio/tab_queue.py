@@ -71,10 +71,13 @@ class STUDIO_OT_add(Operator):
     section: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})   # a film: only this section ("" = all)
     frames: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})    # a film: "a-b" only these frames again
     other: BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})       # shift-click: the other quality
+    force: BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})       # a film: render again though nothing changed
 
     @classmethod
     def description(cls, context, props):
         from . import autoquality
+        if props.mode == 'ANIM' and props.force:
+            return "Render this section again (nothing changed since its render; the frames there go to archiv)"
         if props.mode == 'ANIM':
             what = ("Render this section's frames" if props.section else
                     "Render every section that needs it (one after the other; sections in High Quality with "
@@ -92,6 +95,8 @@ class STUDIO_OT_add(Operator):
         return "Render the camera as it is now (⌘R an image, ⌘E the film, ⇧⌘R an image in Low Quality)"
 
     def invoke(self, context, event):
+        if self.force:                                # render again: the frames there go to archiv
+            return context.window_manager.invoke_confirm(self, event)
         self.other = event.shift and self.quality == 'DEFAULT'
         return self.execute(context)
 
@@ -191,7 +196,9 @@ class STUDIO_OT_add(Operator):
                 a, b, keep = max(start, a), min(end, b), True
             st = cut.frame_status(name, start, end, fresh=True)
             key = autoquality.section_key(name)
-            if keep and self.quality == 'DEFAULT':
+            if self.force:                      # again in the quality it has (its frames go to archiv)
+                quality = self.quality if self.quality != 'DEFAULT' else (st["quality"] or 'HIGH')
+            elif keep and self.quality == 'DEFAULT':
                 quality = st["quality"] or 'LOW'
             else:
                 quality = self._quality(scene, key, done=st["done"] == st["total"],
@@ -474,9 +481,9 @@ def photo_workspace():
 
 class STUDIO_OT_open_review(Operator):
     bl_idname = "studio.open_review"
-    bl_label = "Photo"
-    bl_description = ("The Photo workspace: the queue, all renders big in the Image Editor, compare A / B, stars, "
-                      "sort, batches; Refine in the Compositor next to it")
+    bl_label = "Compare"
+    bl_description = ("All renders big in the Photo workspace: compare A / B, stars, sort, batches (the queue is "
+                      "there too)")
     bl_options = {'INTERNAL'}
 
     def execute(self, context):
@@ -970,6 +977,8 @@ def _draw_renders(layout, context, review):
         _stars(row, path)
         refine = row.row(align=True)
         refine.alignment = 'RIGHT'
+        if not review:          # all renders big, compare and sort: the Photo workspace
+            refine.operator(STUDIO_OT_open_review.bl_idname, text="Compare", icon='IMAGE')
         refine.operator(STUDIO_OT_render_refine.bl_idname, text="Refine", icon='NODE_COMPOSITING').path = path
     if not review:              # the queue, comparing and sorting: in the Photo workspace (the tab's head)
         return
@@ -977,38 +986,64 @@ def _draw_renders(layout, context, review):
     _draw_overview(layout, context, images, path)
 
 
-def draw_queue(layout, context):
-    """What renders now and what waits (renders are started in the chat, the 3D view's Render tab or ⌘R)."""
+def draw_queue(layout, context, buttons=True):
+    """The one queue: what renders now and what waits, on this Mac (images, films) and on the render farm.
+    A bar per entry with its progress and time left; ▲ renders it earlier, ✕ takes it out. Returns
+    whether there was anything to show."""
     scene = context.scene
     rq = scene.studio
+    from . import film, renderfarm
     current = RUN.current["uid"] if RUN.current else None
     waiting = [(i, item) for i, item in enumerate(rq.items) if item.camera is not None]
-    from . import film
     films = [f for f in film.films_here() if f[2] != 'DONE']
-    if not (RUN.busy or waiting or films):
-        return
+    mine, other = renderfarm.rows()
+    if mine or other or rq.farm_on:
+        renderfarm.watch()
+    preview = RUN.busy and RUN.current and RUN.current.get("preview")
+    if not (RUN.busy or waiting or films or mine or other):
+        if RUN.message:
+            note = layout.row()
+            note.active = False
+            note.label(text=RUN.message, icon='INFO')
+        return False
     box = layout.box()
-    col_run = box.column(align=True)
-    col_run.label(text="Queue", icon='SORTTIME')
-    film.draw(col_run)
+    col = box.column(align=True)
+    head = col.row()
+    head.label(text="Queue", icon='SORTTIME')
+    secs = ((RUN.total_left() or 0.0) if RUN.busy else 0.0) + (renderfarm.total_left() or 0.0)
+    if secs > 0:
+        right = head.row()
+        right.alignment = 'RIGHT'
+        right.active = False
+        right.label(text="~%s left" % runner.format_time(secs), translate=False)
+    film.draw(col, buttons)
+    if preview:
+        col.progress(factor=RUN.render_progress, type='BAR', text=_queue_progress_text())
     for i, item in waiting:
-        row = col_run.row(align=True)
+        row = col.row(align=True)
         rendering = item.uid == current
         label = runner.item_label(scene, item)
         if item.batch:
             label = "%s · %s" % (item.batch, label)
-        row.label(text=label, icon='RENDER_STILL' if rendering else 'TIME', translate=False)
         if rendering:
-            row.progress(factor=RUN.render_progress, type='BAR', text=_item_progress_text())
-            row.operator(STUDIO_OT_cancel.bl_idname, text="", icon='X', emboss=False)
+            row.progress(factor=RUN.render_progress, type='BAR', text="%s · %s" % (label, _item_progress_text()))
+            if buttons:
+                row.label(text="", icon='BLANK1')
+                row.operator(STUDIO_OT_cancel.bl_idname, text="", icon='X', emboss=False)
         else:
-            up = row.operator(STUDIO_OT_move.bl_idname, text="", icon='TRIA_UP', emboss=False)
-            up.index, up.direction = i, -1
-            row.operator(STUDIO_OT_remove.bl_idname, text="", icon='X', emboss=False).index = i
-    if not RUN.busy and waiting:   # left over after a cancel
-        col_run.operator(STUDIO_OT_render_queue.bl_idname, text="Render the Rest (%d)" % len(waiting), icon='PLAY')
+            row.progress(factor=0.0, type='BAR', text="%s · waits" % label)
+            if buttons:
+                up = row.operator(STUDIO_OT_move.bl_idname, text="", icon='TRIA_UP', emboss=False)
+                up.index, up.direction = i, -1
+                row.operator(STUDIO_OT_remove.bl_idname, text="", icon='X', emboss=False).index = i
+    renderfarm.draw_rows(col, buttons)
+    if buttons and not RUN.busy and waiting:   # left over after a cancel
+        col.operator(STUDIO_OT_render_queue.bl_idname, text="Render the Rest (%d)" % len(waiting), icon='PLAY')
     if RUN.message and not RUN.busy:
-        col_run.label(text=RUN.message, icon='INFO')
+        note = col.row()
+        note.active = False
+        note.label(text=RUN.message, icon='INFO')
+    return True
 
 
 class STUDIO_PT_review(Panel):
@@ -1026,16 +1061,16 @@ class STUDIO_PT_review(Panel):
         head.scale_y = 1.2
         sort = next(label for key, label, _i in render_review.SORTS if key == render_review.state["sort"])
         head.menu(STUDIO_MT_render_arrange.bl_idname, text=sort, icon='FILTER')
-        head.operator("studio.cut", text="", icon='SEQUENCE').action = 'OPEN'
         head.popover(STUDIO_PT_output.__name__, text="", icon='PREFERENCES')
         draw_queue(layout, context)
         _draw_renders(layout, context, review=True)
 
 
 class STUDIO_PT_render_queue(_SidebarPanel, Panel):
-    """The Render tab: the newest render as a preview, what renders now, High and Low Quality, the render
-    farm; the queue, comparing and sorting are in the Photo workspace (one button). The panel keeps its
-    name of 0.14: Blender keeps a pin per panel name in the file."""
+    """The Render tab, top to bottom: where renders go (this Mac / the render farm) and the gear; the queue
+    (this Mac and the farm in one list); the newest render as a preview (Compare opens the Photo
+    workspace); High and Low Quality. The panel keeps its name of 0.14: Blender keeps a pin per panel
+    name in the file."""
     studio_tab = 'QUEUE'
     bl_label = "Render"
     bl_options = {'HIDE_HEADER'}
@@ -1046,41 +1081,14 @@ class STUDIO_PT_render_queue(_SidebarPanel, Panel):
         _schedule_prewarm()
         layout = self.layout
         scene = context.scene
-        rq = scene.studio
         if not RUN.busy:
             shots.draw_check(layout, scene)
-        images = runner.queue_images(scene)
-        waiting = [item for item in rq.items if item.camera is not None]
-        head = layout.row(align=True)              # the same head as every tab
-        head.scale_y = 1.2
-        text = "Photo · Queue & Compare (%d)" % len(images) if not waiting else \
-            "Photo · %d waiting · %d renders" % (len(waiting), len(images))
-        head.operator(STUDIO_OT_open_review.bl_idname, text=text, icon='IMAGE')
-        head.prop(rq, "farm_on", text="", icon='NETWORK_DRIVE')
-        head.operator("studio.cut", text="", icon='SEQUENCE').action = 'OPEN'
+        from . import renderfarm
+        head = layout.row(align=True)              # where renders go · settings
+        head.scale_y = 1.3
+        renderfarm.draw_switch(head, context)
         head.popover(STUDIO_PT_output.__name__, text="", icon='PREFERENCES')
-
-        from . import film, renderfarm
-        films = [f for f in film.films_here() if f[2] != 'DONE']
-        if RUN.busy or films or renderfarm.active() or any(j["phase"] == "error" for j in renderfarm._jobs):
-            box = layout.box()                     # what renders now (the list is in Photo)
-            col = box.column(align=True)
-            film.draw(col)
-            renderfarm.draw_progress(col)
-            if RUN.busy and RUN.current:
-                row = col.row(align=True)
-                row.progress(factor=RUN.render_progress, type='BAR', text="%s · %s" % (
-                    RUN.current.get("camera", ""), _item_progress_text()))
-                row.operator(STUDIO_OT_cancel.bl_idname, text="", icon='X', emboss=False)
-            if RUN.message and not RUN.busy:
-                col.label(text=RUN.message, icon='INFO')
-
+        renderfarm.draw_state(layout, context)
+        draw_queue(layout, context)
         _draw_renders(layout, context, review=False)
         draw_quality(layout, context)
-        from . import renderfarm
-        from .ui_common import section
-        box, head, is_open = section(layout, "render_farm", "Render Farm", 'NETWORK_DRIVE', default_open=False)
-        head.label(text=("on" if rq.farm_on else "off") if renderfarm.connected() else "share offline",
-                   translate=False)
-        if is_open:
-            renderfarm.draw(box, context)

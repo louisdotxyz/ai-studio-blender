@@ -62,6 +62,13 @@ def scene_lights(scene):
     return sorted((o for o in scene.objects if o.type == 'LIGHT'), key=lambda o: o.name.lower())
 
 
+def setup_lights(scene):
+    """The lights a saved setup describes: those that render, not the replaced ones in the archive."""
+    archive = cameras.archive_collection_name()
+    return [o for o in scene_lights(scene) if not o.hide_render
+            and not any(c.name == archive for c in o.users_collection)]
+
+
 def light_collection(scene):
     return cameras.named_collection(scene, cameras.light_collection_name())
 
@@ -144,8 +151,9 @@ def _color(spec, key="color"):
     return tuple(max(0.0, min(1.0, float(c))) for c in value)
 
 
-def parse_setup(spec):
-    """Checks a setup (dict or JSON text) and fills in defaults. Raises ValueError."""
+def parse_setup(spec, limit=16):
+    """Checks a setup (dict or JSON text) and fills in defaults. Raises ValueError. limit: lights at most
+    (16 for setups from Claude; the scene's own setup may have more)."""
     if isinstance(spec, str):
         try:
             spec = json.loads(spec)
@@ -153,8 +161,8 @@ def parse_setup(spec):
             raise ValueError("Not valid JSON: %s" % ex)
     if not isinstance(spec, dict) or not isinstance(spec.get("lights"), list) or not spec["lights"]:
         raise ValueError("A light setup needs a non-empty \"lights\" list")
-    if len(spec["lights"]) > 16:
-        raise ValueError("At most 16 lights per setup")
+    if len(spec["lights"]) > limit:
+        raise ValueError("At most %d lights per setup" % limit)
     lights = []
     for i, item in enumerate(spec["lights"]):
         if not isinstance(item, dict):
@@ -251,7 +259,7 @@ def setup_from_scene(scene, target, name):
     center, radius = subject(scene, target)
     front = front_angle(scene, center)
     lights = []
-    for obj in scene_lights(scene):
+    for obj in setup_lights(scene):
         data = obj.data
         h, v, d = _orbit_from(obj, center)
         distance = max(d / radius, 0.5)
@@ -282,7 +290,7 @@ def setup_from_scene(scene, target, name):
     if not lights:
         raise ValueError("There are no lights in the scene")
     spec = {"name": name, "lights": lights}
-    parse_setup(spec)   # same checks as for setups from Claude
+    parse_setup(spec, limit=64)   # same checks as for setups from Claude (but more lights)
     return spec
 
 

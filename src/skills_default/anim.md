@@ -22,21 +22,30 @@ before the next one. Its camera is marker.camera (own camera P_<name>_01 on a pi
 - api.motion_chain("02 Hero", [("PULL_OUT", 24, 140), ("HOLD", 12), ("TURNTABLE", 0, 90)]): steps one after
   the other (frames 0 = to the end). Motion, Orbit, Explosion and the scene's values are in the Animation tab.
 - api.key_pose(): the viewport's view as a key at this frame (with the lens).
-- Before rendering: api.film_check() lists problems (NO_CAMERA blocks that section; SHARED camera; OUTDATED
-  strip) and the time of the next render per section. api.section_proof(section=None) makes a quick
-  viewport image per section from its camera (look at the returned files: right camera, framing?).
-  api.section_draft(section=None) renders a Workbench draft in seconds straight into the Video Editor.
-  api.section_camera(section, own=False, lock=None): own camera for a section, lock it.
-- Render: api.section_render(section=None, quality=None, frames=None) (⌘E, or the render button of a
-  section in the Video Editor's Studio tab): each section renders its frames in its own process into
+- Before rendering: api.film_check() lists problems and the time of the next render per section. Codes:
+  NO_CAMERA (blocks that section), CAMERA (its frames came from another camera than the section's: render
+  it again with force=True), SHARED camera, OUTDATED strip, EXPOSURE (a fade keyed into the render),
+  SAMPLES (few samples for High Quality). api.section_proof(section=None) makes a quick viewport image per
+  section from its camera (look at the returned files: right camera, framing?). api.section_draft(section
+  =None) renders a Workbench draft in seconds straight into the Video Editor. api.section_camera(section,
+  own=False, lock=None): own camera for a section, lock it.
+- Render: api.section_render(section=None, quality=None, frames=None, force=False) (⌘E, or the render
+  button of a section in the Video Editor's Studio tab): each section renders its frames into
   animation/Frames/<section>/, strictly one after the other, always from its marker's camera (a section
-  without one is skipped). quality None = by itself: Low Quality first, High Quality once nothing changed;
+  without one is skipped; the camera is written into every frame and checked: a film from a wrong camera
+  stops by itself). quality None = by itself: Low Quality first, High Quality once nothing changed;
   sections already in High Quality with nothing changed are skipped. frames=(a, b) renders only those
-  frames again (the others stay). No video per section. High Quality renders at full size.
-  Render farm (Render tab · Render Farm): jobs go as files over the DDE share to the ZHdK Mac Studios
-  (renderfarm.py; no network connection to them). Never delete anything in its queue/ without asking.
+  frames again (the others stay). force=True renders again though nothing changed (the frames there go to
+  animation/archiv). High Quality renders at full size. No video per section.
   api.render_status() says what renders (frame, seconds left); studio_render_queue 'wait' answers only
-  when the films are done. Never start own background renders to check a film.
+  when the films are done, 'cancel' also stops the films that run. Never start own background renders to
+  check a film, and never patch the add-on's files: say what is wrong instead (an update replaces them).
+  Render farm: with scene.studio.farm_on the renders go as files over the DDE share to the ZHdK Mac
+  Studios and come back by themselves (frames into the Video Editor); the user switches it in the Render
+  tab and removes farm jobs himself in the queue (never delete anything in the share's queue/).
+- Fades: api.cut_fade (or api.motion_preset("FADE_IN" / "FADE_OUT", amount=frames)) puts the fade on the
+  section's strip in the cut, where it can still be changed. Only when the user asks for a fade inside the
+  render: motion_preset(..., in_render=True) keys the exposure.
 - The Video Editor of the same scene shows every section as an image strip (they come in and fill in by
   themselves; the scene renders 3D, render.use_sequencer stays off). api.cut_build({"01 Intro": ("CROSS",
   12, 0), "02 Hero": ("BLACK", 8, 24)}) sets the transition into the next section, its frames and hold

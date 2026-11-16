@@ -214,9 +214,9 @@ wm.studio_cut_tab_film = 'SECTIONS'
 run(bpy.types.STUDIO_PT_cut, ctx)
 wm.studio_tab = 'QUEUE'
 run(bpy.types.STUDIO_PT_render_queue, ctx)
-wm.studio_sections = "render_farm"            # the render farm open (only reads the share)
+bpy.context.scene.studio.farm_on = True      # the render farm on (only reads the share)
 run(bpy.types.STUDIO_PT_render_queue, ctx)
-wm.studio_sections = ""
+bpy.context.scene.studio.farm_on = False
 run(bpy.types.STUDIO_PT_tabs, ctx)
 run(bpy.types.STUDIO_PT_finish, ctx)       # Refine: in the Compositor's sidebar
 run(bpy.types.STUDIO_PT_review, ctx)       # Compare & Sort: in the Image Editor's sidebar

@@ -13,7 +13,9 @@ Folder protocol (fixed, the workers rely on it):
     <share>/queue/<job>.done         written by a worker when all frames are there
     <share>/_worker/status/<name>-render.txt   "Name | rendert JOB / wartet | time"
 
-Sending never changes the working file: it is saved as a copy into a local folder; a Blender process in
+The queue (Render tab, Photo, Video Editor, chat) shows the farm's jobs like the renders of this Mac: a
+bar with frames and time left, ▲ to render a job earlier, ✕ to take it out (asks first: files leave
+queue/). Sending never changes the working file: it is saved as a copy into a local folder; a Blender process in
 the background makes linked data local and packs all resources into that copy (drivers stay as they are);
 a thread copies it to the share with progress (files of 3 GB and more never freeze the interface). Half
 files stay as .part and are never a job. Nothing in queue/ is deleted here.
@@ -75,6 +77,7 @@ if spec and bpy.data.objects.get(spec.get("source", "")) is not None:      # a s
     overrides = [[p, {"object": cam.name}] if p == "camera" else [p, v] for p, v in overrides]
 def value(v):
     return bpy.data.objects.get(v["object"]) if isinstance(v, dict) and "object" in v else v
+overrides = [o for o in overrides if o[0] != "camera"] + [o for o in overrides if o[0] == "camera"]
 pending = list(overrides)
 for _attempt in range(3):                          # some values fit only after others
     failed = []
@@ -89,8 +92,11 @@ for _attempt in range(3):                          # some values fit only after 
         break
 for path, _v, ex in failed:
     print("RF could not set", path, ex)
-if any(p == "camera" for p, _v in overrides):      # one camera for the job: no marker switches it
+expected = next((value(v) for p, v in overrides if p == "camera"), None)
+if expected is not None:                           # one camera for the job: no marker switches it
     scene.timeline_markers.clear()
+    scene.camera = expected
+print("RF camera", scene.camera.name if scene.camera else None)
 images = scene.render.image_settings
 for attr, v in (("media_type", "IMAGE"), ("file_format", cfg["format"])):
     try:
@@ -98,6 +104,8 @@ for attr, v in (("media_type", "IMAGE"), ("file_format", cfg["format"])):
     except Exception as ex:
         print("RF format", ex)
 scene.render.use_sequencer = False
+for stamp in ("use_stamp_camera", "use_stamp_render_time", "use_stamp_hostname", "use_stamp_frame"):
+    setattr(scene.render, stamp, True)             # into each frame's file: camera, time and which Mac
 bpy.ops.wm.save_as_mainfile(filepath=cfg["out"], compress=True, relative_remap=False)
 print("RF packed, %d made local" % local)
 '''
@@ -117,10 +125,11 @@ def connected(root=None):
 
 
 def job_name(blend_path, scene_name, now=None):
-    """<file>_<scene>_<YYYYmmdd-HHMMSS>, only letters, digits, - and _."""
+    """<file>_<YYYYmmdd-HHMMSS>_<scene>, only letters, digits, - and _. The time comes before the scene:
+    the workers take the job that sorts first, so jobs render in the order they were sent."""
     stem = os.path.splitext(os.path.basename(blend_path or "untitled"))[0] or "untitled"
     stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now))
-    name = "%s_%s_%s" % (stem, scene_name, stamp)
+    name = "%s_%s_%s" % (stem, stamp, scene_name)
     return re.sub(r"[^A-Za-z0-9_\-]+", "_", name).strip("_")
 
 
@@ -160,20 +169,25 @@ def scan(root):
         names = []
         if os.path.exists(queue):
             out["error"] = "queue/ not readable: %s" % ex
-    workers, online = [], 0
+    workers, rows, online = [], [], 0
     for path in sorted(glob.glob(os.path.join(root, "_worker", "status", "*-render.txt"))):
         try:
             with open(path, encoding="utf-8-sig", errors="replace") as f:
                 line = f.readline().strip()
-            fresh = time.time() - os.path.getmtime(path) < ONLINE
+            age = time.time() - os.path.getmtime(path)
+            fresh = age < ONLINE
         except OSError:
             continue
         parts = [p.strip() for p in line.split("|")]
         if parts and parts[0]:
             what = parts[1] if len(parts) > 1 else ""
-            workers.append((parts[0], what, parts[2] if len(parts) > 2 else ""))
-            online += fresh or what.startswith("rendert")
+            when = parts[2] if len(parts) > 2 else ""
+            workers.append((parts[0], what, when))
+            there = fresh or (what.startswith("rendert") and age < 12 * 3600)   # no new line while it renders
+            rows.append((parts[0], what, when, there))
+            online += there
     out["workers"] = workers
+    out["worker_rows"] = rows
     out["online"] = online
     busy = {w[1].split(" ", 1)[1].strip() for w in workers if w[1].startswith("rendert ")}
     for name in names:
@@ -202,6 +216,7 @@ def scan(root):
         except OSError:
             when = 0.0
         out["jobs"].append({"job": job, "scene": cfg.get("scene", ""), "start": start, "end": end, "total": total,
+                            "format": cfg.get("format", "PNG"),
                             "done": done, "state": state, "note": cfg.get("note", ""),
                             "sent_by": cfg.get("sent_by", ""), "time": when,
                             "blend": os.path.exists(os.path.join(queue, job + ".blend"))})
@@ -247,7 +262,10 @@ LOCAL = os.path.expanduser("~/.cache/ai_studio_farm")
 REGISTRY = os.path.join(LOCAL, "jobs.json")
 EXT = {'PNG': "png", 'JPEG': "jpg", 'OPEN_EXR': "exr", 'TIFF': "tif"}
 SETTLE = 5.0              # seconds a frame on the share stays unchanged before it is taken
-_jobs = []                # the jobs of this Blender: queued → packing → copying → sent (collected) → done / error
+_jobs = []                # the farm's queue of this Mac, in order: queued → packing → copying → sent → done / error
+TRANSIENT = {"fetching", "new", "arrived", "looked", "t0", "h0", "per", "cancel"}
+_rate = [0.0]             # seconds per frame the farm made lately (for jobs that wait)
+_hosts = {}               # worker → [frames, render seconds] of the frames fetched since Blender started
 _raw = {}                 # (file, scene state) → the saved copy several jobs pack from
 
 
@@ -274,7 +292,7 @@ def renders_section(folder):
 
 
 def _save_registry():
-    keep = [j for j in _jobs if j["phase"] == "sent"]
+    keep = [{k: v for k, v in j.items() if k not in TRANSIENT} for j in _jobs if j["phase"] == "sent"]
     try:
         os.makedirs(LOCAL, exist_ok=True)
         with open(REGISTRY + ".tmp", "w", encoding="utf-8") as f:
@@ -357,7 +375,7 @@ def submit_item(scene, item, job, animation, path, camera, quality):
         a, b = (item.frame_start, item.frame_end) if own else (scene.frame_start, scene.frame_end)
         section = item.section or cut.WHOLE
         stem = cut.frame_stem(section)
-        overrides = [["camera", {"object": camera.name}]] + [o for o in overrides if o[0] != "camera"]
+        overrides = [o for o in overrides if o[0] != "camera"] + [["camera", {"object": camera.name}]]
         fmt = _format_of(overrides)
         if not item.keep_frames:                     # a new render: older frames go to archiv first
             film._clear_old_frames(path, stem, cut.archive_folder())
@@ -367,9 +385,10 @@ def submit_item(scene, item, job, animation, path, camera, quality):
                                                   "render.resolution_percentage", "render.image_settings.file_format"}]
         with open(os.path.join(meta, "job.json"), "w", encoding="utf-8") as f:
             json.dump({"scene": scene.name, "quality": quality, "section": section, "frames": [a, b],
-                       "overrides": keep, "farm": True}, f, indent=1)
+                       "overrides": keep, "farm": True, "camera_name": camera.name}, f, indent=1)
         return submit(scene, a, b, fmt, "%s · %s" % (section, "HQ" if quality == 'HIGH' else "LQ"), kind='ANIM',
-                      overrides=overrides, folder=path, stem=stem, section=section, quality=quality)
+                      overrides=overrides, folder=path, stem=stem, section=section, quality=quality,
+                      camera_name=camera.name)
     frame = scene.frame_current
     return submit(scene, frame, frame, None, "%s · %s" % (label, "HQ" if quality == 'HIGH' else "LQ"),
                   kind='STILL', overrides=overrides, camera_spec=job.get("camera"), target=path, quality=quality)
@@ -393,7 +412,7 @@ def _pump():
         print("AI Studio farm:", ex)
     if sending():
         return 1.0
-    return 10.0 if active() else None
+    return 3.0 if active() else None
 
 
 def _pack(job):
@@ -460,6 +479,8 @@ def _copy(job, packed):
                 block = src.read(CHUNK)
                 if not block:
                     break
+                if job.get("cancel"):
+                    raise InterruptedError
                 dst.write(block)
                 copied += len(block)
                 job["progress"] = copied / size if size else 1.0
@@ -474,242 +495,406 @@ def _copy(job, packed):
                        "sent_by": job["sent_by"], "note": job["note"]}, f, indent=1)
         os.replace(meta, os.path.join(queue, name + ".json"))      # now the job is ready
         job.update(phase="sent" if job["kind"] in {'STILL', 'ANIM'} else "done", progress=1.0)
+        _reconcile()
         shutil.rmtree(os.path.join(LOCAL, name), ignore_errors=True)
         _view["scan"] = None
         _save_registry()
+    except InterruptedError:                     # removed by the user (confirmed): its half file goes too
+        try:
+            os.remove(part)
+        except OSError:
+            pass
     except OSError as ex:
         reason = "the share is full" if getattr(ex, "errno", 0) == 28 else str(ex)
         job.update(phase="error", error="Copy to the share stopped: %s (%s stays, it is never a job)"
                    % (reason, os.path.basename(part)))
 
 
+def total_of(job):
+    return job["end"] - job["start"] + 1
+
+
+def _note_progress(job, have):
+    """Frames there now; from the second look on also how fast they come."""
+    now = time.time()
+    if have and "t0" not in job:
+        job["t0"], job["h0"] = now, have
+    if "t0" in job and have > job["h0"] and now > job["t0"]:
+        job["per"] = _rate[0] = (now - job["t0"]) / (have - job["h0"])
+    job["have"] = have
+
+
+def left(job):
+    """Seconds until the job is done, or None (not known yet)."""
+    per = job.get("per") or _rate[0]
+    if not per or job["kind"] != 'ANIM':
+        return None
+    return per * max(0, total_of(job) - job.get("have", 0))
+
+
+def _note_frame(job, path):
+    """(thread) What a fetched frame says: which Mac rendered it, how long, from which camera."""
+    if job["ext"] != "png":
+        return
+    from . import cut
+    meta = cut.png_text(path)
+    host = meta.get("Hostname", "").split(".")[0]
+    if host:
+        entry = _hosts.setdefault(host.lower(), [0, 0.0, host])
+        entry[0] += 1
+        entry[1] += cut.render_seconds(meta.get("RenderTime", ""))
+    wanted = job.get("camera_name", "")
+    if wanted and meta.get("Camera") and meta["Camera"] != wanted:
+        job["wrong_camera"] = meta["Camera"]
+
+
 def _collect_all():
+    """Every 5 s per job: a thread fetches its finished frames; here (Blender's thread) they are shown."""
+    from . import cut, runner
     now = time.time()
     for job in [j for j in _jobs if j["phase"] == "sent"]:
-        if now - job.get("looked", 0.0) < 10.0:
-            continue
-        job["looked"] = now
-        try:
-            _collect(job)
-        except OSError as ex:
-            job["error"] = "Frames not fetched: %s" % ex
-
-
-def _collect(job):
-    """The finished frames of a job into AI Studio's folders."""
-    from . import cut, runner
-    folder = os.path.join(job["root"], "renders", job["job"])
-    if not os.path.isdir(folder):
-        return
-    now, new = time.time(), 0
-    if job["kind"] == 'STILL':
-        source = os.path.join(folder, "%s_%04d.%s" % (job["job"], job["start"], job["ext"]))
-        try:
-            st = os.stat(source)
-        except OSError:
-            return
-        if st.st_size > 0 and now - st.st_mtime > SETTLE:
-            target = os.path.splitext(job["target"])[0] + "." + job["ext"]
-            os.makedirs(os.path.dirname(target), exist_ok=True)
-            shutil.copyfile(source, target + ".part")
-            os.replace(target + ".part", target)
+        if job.pop("new", 0):
+            cut.on_film_done(job["scene"])        # the strip comes with the first frames and fills in
+        if job["kind"] == 'STILL' and job.get("arrived"):
             job.update(phase="done", have=1)
-            runner.RUN.last_path = target
+            runner.RUN.last_path = job["arrived"]
             try:
-                runner.show_in_preview(target)
+                runner.show_in_preview(job["arrived"])
             except Exception:
                 pass
             runner.notify("%s ready (render farm)" % job["note"])
             _save_registry()
-        return
-    have = 0
-    for frame in range(job["start"], job["end"] + 1):
-        name = "%s_%04d.%s" % (job["stem"], frame, job["ext"])
-        local = os.path.join(job["folder"], name)
-        if os.path.exists(local) and os.path.getsize(local) > 0:
-            have += 1
-            continue
-        source = os.path.join(folder, "%s_%04d.%s" % (job["job"], frame, job["ext"]))
-        try:
+        elif job["kind"] == 'ANIM' and job.get("have", 0) >= total_of(job):
+            job["phase"] = "done"
+            cut.on_film_done(job["scene"])
+            runner.notify("%s ready (render farm)" % job["note"])
+            _save_registry()
+            _reconcile()
+        elif not job.get("fetching") and now - job.get("looked", 0.0) >= 5.0:
+            job["looked"], job["fetching"] = now, True
+            threading.Thread(target=_fetch, args=(job,), daemon=True).start()
+
+
+def _fetch(job):
+    """(thread, no bpy) The finished frames of a job from the share into AI Studio's folders."""
+    try:
+        folder = os.path.join(job["root"], "renders", job["job"])
+        if not os.path.isdir(folder):
+            return
+        now = time.time()
+        if job["kind"] == 'STILL':
+            source = os.path.join(folder, "%s_%04d.%s" % (job["job"], job["start"], job["ext"]))
             st = os.stat(source)
-        except OSError:
-            continue
-        if st.st_size > 0 and now - st.st_mtime > SETTLE:
-            shutil.copyfile(source, local + ".part")
-            os.replace(local + ".part", local)
-            have += 1
-            new += 1
-    job["have"] = have
-    if new:
-        cut.on_progress(job["scene"])
-    if have >= job["end"] - job["start"] + 1:
-        job["phase"] = "done"
-        cut.on_film_done(job["scene"])
-        runner.notify("%s ready (render farm)" % job["note"])
-        _save_registry()
+            if st.st_size > 0 and now - st.st_mtime > SETTLE:
+                target = os.path.splitext(job["target"])[0] + "." + job["ext"]
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                shutil.copyfile(source, target + ".part")
+                os.replace(target + ".part", target)
+                job["arrived"] = target
+            return
+        have = new = 0
+        for frame in range(job["start"], job["end"] + 1):
+            local = os.path.join(job["folder"], "%s_%04d.%s" % (job["stem"], frame, job["ext"]))
+            if os.path.exists(local) and os.path.getsize(local) > 0:
+                have += 1
+                continue
+            source = os.path.join(folder, "%s_%04d.%s" % (job["job"], frame, job["ext"]))
+            try:
+                st = os.stat(source)
+            except OSError:
+                continue
+            if st.st_size > 0 and now - st.st_mtime > SETTLE:
+                shutil.copyfile(source, local + ".part")
+                os.replace(local + ".part", local)
+                have += 1
+                new += 1
+                _note_frame(job, local)
+                if new % 8 == 0:                  # many at once: show them as they come
+                    job["new"] = job.get("new", 0) + 8
+                    _note_progress(job, have)
+        if new:
+            job["new"] = job.get("new", 0) + new
+        _note_progress(job, have)
+        job["error"] = ""
+    except OSError as ex:
+        if job["kind"] != 'STILL' or not isinstance(ex, FileNotFoundError):
+            job["error"] = "Frames not fetched: %s" % ex
+    finally:
+        job["fetching"] = False
 
 
-def draw_progress(layout, sent=True):
-    """The farm's jobs of this Blender as bars (Render tab, Video Editor); sent=False: only those not on
-    the share yet (and errors)."""
-    phases = {"queued", "packing", "copying", "sent", "error"} if sent else {"queued", "packing", "copying", "error"}
-    for job in [j for j in _jobs if j["phase"] in phases]:
+# ------------------------------------------------------------------ the order, removing
+
+def _reconcile():
+    """The queue's order on the share. The workers take the ready job that sorts first by name, so a job
+    that is to render after one that sorts later waits: its .json is <job>.json.hold until then (never
+    seen by a worker; made ready again here, also after a restart of Blender)."""
+    sent = [j for j in _jobs if j["phase"] == "sent"]
+    for n, job in enumerate(sent):
+        hold = any(other["job"] > job["job"] for other in sent[:n])
+        queue = os.path.join(job["root"], "queue")
+        ready, held = os.path.join(queue, job["job"] + ".json"), os.path.join(queue, job["job"] + ".json.hold")
+        try:
+            if hold and os.path.exists(ready):
+                os.replace(ready, held)
+            elif not hold and os.path.exists(held):
+                os.replace(held, ready)
+            job["held"] = hold
+        except OSError as ex:
+            job["error"] = "Order not set on the share: %s" % ex
+
+
+def move_up(name):
+    """One place up among the jobs that are not done."""
+    live = [j for j in _jobs if j["phase"] not in {"done"}]
+    job = next((j for j in live if j["job"] == name), None)
+    if job is None or live.index(job) == 0:
+        return False
+    other = live[live.index(job) - 1]
+    a, b = _jobs.index(other), _jobs.index(job)
+    _jobs[a], _jobs[b] = _jobs[b], _jobs[a]
+    _reconcile()
+    _save_registry()
+    return True
+
+
+def remove_from_share(root, name, start, end, ext):
+    """A job off the farm (the user confirmed it): its .json and .blend leave queue/, so no worker starts
+    it; workers that render it now skip the frames left (an empty file per frame, like their own
+    placeholders) and go on with the next job. Rendered frames stay in renders/<job>/."""
+    queue = os.path.join(root, "queue")
+    for ending in (".json", ".json.hold", ".blend", ".blend.part", ".json.part"):
+        try:
+            os.remove(os.path.join(queue, name + ending))
+        except FileNotFoundError:
+            pass
+    folder = os.path.join(root, "renders", name)
+    if os.path.isdir(folder):
+        for frame in range(start, end + 1):
+            path = os.path.join(folder, "%s_%04d.%s" % (name, frame, ext))
+            if not os.path.exists(path):
+                open(path, "wb").close()
+
+
+def remove(name):
+    """Take a job out of the queue, wherever it is (waiting here, being sent, on the farm)."""
+    job = next((j for j in _jobs if j["job"] == name), None)
+    if job is None:                                # a job of the share that is not from this Blender
+        seen = next((j for j in (_view["scan"] or {}).get("jobs", []) if j["job"] == name), None)
+        if seen is not None:
+            remove_from_share(share_root(), name, seen["start"], seen["end"], EXT.get(seen.get("format"), "png"))
+            _view["scan"] = None
+        return
+    phase = job["phase"]
+    if phase == "packing":
+        proc = _procs.pop(name, None)
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+    elif phase == "copying":
+        job["cancel"] = True
+    elif phase == "sent":
+        remove_from_share(job["root"], name, job["start"], job["end"], job["ext"])
+    _jobs.remove(job)
+    shutil.rmtree(os.path.join(LOCAL, name), ignore_errors=True)
+    _reconcile()
+    _save_registry()
+    _view["scan"] = None
+
+
+# ------------------------------------------------------------------ the queue's rows
+
+def _row_text(job):
+    from .runner import format_time
+    total = total_of(job)
+    phase = job["phase"]
+    if phase == "queued":
+        what = "waits to be sent"
+    elif phase == "packing":
+        what = "packing"
+    elif phase == "copying":
+        what = "upload %.1f/%.1f GB" % (job["progress"] * job["size"] / 1e9, job["size"] / 1e9)
+    else:
+        have = job.get("have", 0)
+        what = "Farm %d/%d" % (have, total) if job["kind"] == 'ANIM' else "Farm"
+        secs = left(job)
+        if have and secs:
+            what += " · ~%s" % format_time(secs)
+        elif not have:
+            what += " · held" if job.get("held") else " · waits" if not _renders(job["job"]) else " · starts"
+        if job.get("wrong_camera"):
+            what += " · wrong camera (%s)" % job["wrong_camera"]
+        if job.get("error"):
+            what += " · " + job["error"]
+    return "%s · %s" % (job["note"] or job["job"], what)
+
+
+def _renders(name):
+    return any(w[1] == "rendert " + name for w in (_view["scan"] or {}).get("workers", []))
+
+
+def rows():
+    """The jobs to show: ours that are not done (in order), then unfinished jobs of the share from elsewhere."""
+    mine = [j for j in _jobs if j["phase"] != "done"]
+    known = {j["job"] for j in _jobs}
+    other = [j for j in (_view["scan"] or {}).get("jobs", []) if j["state"] != 'done' and j["job"] not in known]
+    return mine, other
+
+
+def total_left():
+    """Seconds until everything of ours on the farm is done, or None."""
+    secs, known = 0.0, False
+    for job in [j for j in _jobs if j["phase"] in {"queued", "packing", "copying", "sent"} and j["kind"] == 'ANIM']:
+        one = left(job)
+        if one is not None:
+            secs += one
+            known = True
+    return secs if known else None
+
+
+def draw_rows(layout, buttons=True):
+    """The farm's part of the queue: a bar per job (frames, time left), ▲ up, ✕ remove."""
+    mine, other = rows()
+    for n, job in enumerate(mine):
         row = layout.row(align=True)
-        total = job["end"] - job["start"] + 1
         if job["phase"] == "error":
             row.alert = True
             row.label(text="%s: %s" % (job["note"] or job["job"], job["error"]), icon='ERROR', translate=False)
-            row.operator(STUDIO_OT_farm_dismiss.bl_idname, text="", icon='X', emboss=False).job = job["job"]
+            row.operator(STUDIO_OT_farm_remove.bl_idname, text="", icon='X', emboss=False).job = job["job"]
             continue
-        text = {"queued": "waiting to be sent", "packing": "packing (background)",
-                "copying": "to the share %.1f/%.1f GB" % (job["progress"] * job["size"] / 1e9, job["size"] / 1e9),
-                "sent": "farm %d/%d" % (job["have"], total)}[job["phase"]]
-        factor = job["progress"] if job["phase"] == "copying" else (job["have"] / total if job["phase"] == "sent" else 0.0)
-        row.progress(factor=factor, type='BAR', text="%s · %s" % (job["note"] or job["job"], text))
+        total = total_of(job)
+        factor = job["progress"] if job["phase"] == "copying" else \
+            (job.get("have", 0) / total if job["phase"] == "sent" and total else 0.0)
+        row.progress(factor=min(1.0, factor), type='BAR', text=_row_text(job))
+        if buttons:
+            up = row.row(align=True)
+            up.enabled = n > 0
+            up.operator(STUDIO_OT_farm_move.bl_idname, text="", icon='TRIA_UP', emboss=False).job = job["job"]
+            row.operator(STUDIO_OT_farm_remove.bl_idname, text="", icon='X', emboss=False).job = job["job"]
+    for job in other[:6]:
+        row = layout.row(align=True)
+        total = max(1, job["total"])
+        row.progress(factor=min(1.0, job["done"] / total), type='BAR', text="%s · Farm %d/%d" % (
+            job["note"] or job["job"], job["done"], job["total"]))
+        if buttons:
+            row.label(text="", icon='BLANK1')
+            row.operator(STUDIO_OT_farm_remove.bl_idname, text="", icon='X', emboss=False).job = job["job"]
+    return bool(mine or other)
 
 
-# ------------------------------------------------------------------ into the Video Editor
-
-def job_files(root, job):
-    folder = os.path.join(root, "renders", job)
-    try:
-        names = sorted(n for n in os.listdir(folder) if n.startswith(job + "_") and not n.endswith(".part")
-                       and os.path.getsize(os.path.join(folder, n)) > 0)
-    except OSError:
-        return []
-    return [os.path.join(folder, n) for n in names]
-
-
-def load_into_editor(context, job):
-    """The finished frames of a job as one image strip in the Video Editor (at the current frame)."""
-    from . import cut, film_edit
-    files = job_files(share_root(), job)
-    if not files:
-        raise ValueError("No finished frames of %s yet" % job)
-    scene = cut._scene(context)
-    sed = scene.sequence_editor or scene.sequence_editor_create()
-    start = scene.frame_current
-    channel = film_edit._free_channel(scene, start, start + len(files), lowest=2)
-    strip = cut._image(cut._strips(sed), job, files, channel, start, fit='FIT')
-    return strip, len(files)
+def draw_progress(layout, sent=True):
+    """Kept for older calls: the farm's rows without buttons."""
+    draw_rows(layout, buttons=False)
 
 
 # ------------------------------------------------------------------ panel
 
-STATE_TEXT = {'waiting': "waiting", 'rendering': "rendering", 'done': "done"}
-
-
-def draw(layout, context):
-    """Render tab · Render Farm: on / off, how many workers are there, the queue with its bars."""
+def watch():
+    """Called while the queue is drawn: the share is read every 15 s (workers, jobs from elsewhere)."""
     _view["drawn"] = time.monotonic()
     if not bpy.app.timers.is_registered(_tick):
         bpy.app.timers.register(_tick, first_interval=0.1)
+
+
+def draw_switch(row, context):
+    """Render tab, at the top: where renders go, two buttons (the one that is on is highlighted)."""
     rq = context.scene.studio
-    online = connected()
-    row = layout.row(align=True)                 # on / off
-    row.scale_y = 1.4
     row.prop_enum(rq, "farm_mode", 'OFF')
     row.prop_enum(rq, "farm_mode", 'ON')
-    if not online:
+
+
+def draw_state(layout, context):
+    """Under the switch while the farm is on (or still works for us): the workers, or what is missing."""
+    rq = context.scene.studio
+    if not rq.farm_on and not active():
+        return
+    watch()
+    if not connected():
         warn = layout.column(align=True)
         warn.alert = True
         warn.label(text="Share not connected" + (": renders stay on this Mac" if rq.farm_on else ""), icon='ERROR')
         warn.label(text=CONNECT_HINT, translate=False)
-        draw_progress(layout.column(align=True), sent=False)
         return
-    _refresh()
-    view = _view["scan"] or {}
+    view = _view["scan"]
+    if view is None:
+        return
+    from .runner import format_time
     workers = view.get("online", 0)
-    rendering = sum(1 for w in view.get("workers", []) if w[1].startswith("rendert"))
-    row = layout.row()
-    row.label(text="%d worker%s online%s" % (workers, "" if workers == 1 else "s",
-                                             " · %d rendering" % rendering if rendering else ""),
-              icon='DESKTOP' if workers else 'ERROR', translate=False)
-    col = layout.column(align=True)              # the queue
-    draw_progress(col, sent=False)
-    jobs = view.get("jobs", [])
-    shown = [j for j in jobs if j["state"] != 'done'] + [j for j in jobs if j["state"] == 'done'][:3]
-    for job in shown[:10]:
-        total = max(1, job["total"])
-        col.progress(factor=min(1.0, job["done"] / total), type='BAR', text="%s · %d/%d · %s" % (
-            job["note"] or job["job"], job["done"], job["total"], STATE_TEXT[job["state"]]))
-    if not shown and not active():
-        hint = layout.row()
-        hint.active = False
-        hint.label(text="Queue empty")
+    secs = total_left()
+    box = layout.box()
+    col = box.column(align=True)
+    head = col.row()
+    head.label(text="%d worker%s online" % (workers, "" if workers == 1 else "s"),
+               icon='DESKTOP' if workers else 'ERROR', translate=False)
+    if secs:
+        right = head.row()
+        right.alignment = 'RIGHT'
+        right.label(text="~%s left" % format_time(secs), translate=False)
+    for name, what, _when, fresh in view.get("worker_rows", []):
+        if not fresh:
+            continue
+        row = col.row()
+        busy = what.startswith("rendert")
+        row.label(text=name, icon='RENDER_ANIMATION' if busy else 'TIME', translate=False)
+        stats = _hosts.get(name.lower())
+        right = row.row()
+        right.alignment = 'RIGHT'
+        right.active = False
+        if stats and stats[0]:                      # its speed: seconds per frame, and its share
+            right.label(text="%.1f s/frame · %d frames" % (stats[1] / stats[0], stats[0]), translate=False)
+        else:
+            right.label(text="renders" if busy else "waits", translate=False)
 
 
 # ------------------------------------------------------------------ operators
 
-class STUDIO_OT_farm_dismiss(Operator):
-    bl_idname = "studio.farm_dismiss"
-    bl_label = "Dismiss"
-    bl_description = "Hide this message (half files on the share stay as .part and are never a job)"
+class STUDIO_OT_farm_move(Operator):
+    bl_idname = "studio.farm_move"
+    bl_label = "Move Up"
+    bl_description = "Render this job earlier (jobs that are to come after it wait on the share until then)"
     bl_options = {'INTERNAL'}
 
     job: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
 
     def execute(self, _context):
-        _jobs[:] = [j for j in _jobs if j["job"] != self.job]
+        move_up(self.job)
         return {'FINISHED'}
 
 
-class STUDIO_OT_farm_refresh(Operator):
-    bl_idname = "studio.farm_refresh"
-    bl_label = "Look Again"
-    bl_description = "Read the share's jobs and workers now"
-    bl_options = {'INTERNAL'}
-
-    def execute(self, _context):
-        _refresh(force=True)
-        return {'FINISHED'}
-
-
-class STUDIO_OT_farm_folder(Operator):
-    bl_idname = "studio.farm_folder"
-    bl_label = "Open Render Folder"
-    bl_description = "The job's render folder on the share in the Finder (no job: renders/)"
+class STUDIO_OT_farm_remove(Operator):
+    bl_idname = "studio.farm_remove"
+    bl_label = "Remove from the Render Farm"
+    bl_description = ("Take this job out of the queue. On the farm its files leave queue/ and the workers go on "
+                      "with the next job; frames already rendered stay")
     bl_options = {'INTERNAL'}
 
     job: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
 
+    def invoke(self, context, event):
+        job = next((j for j in _jobs if j["job"] == self.job), None)
+        if job is not None and job["phase"] in {"queued", "error"}:
+            return self.execute(context)           # nothing on the share yet
+        return context.window_manager.invoke_confirm(self, event)
+
     def execute(self, _context):
-        folder = os.path.join(share_root(), "renders", self.job) if self.job else os.path.join(share_root(), "renders")
-        if not os.path.isdir(folder):
-            folder = os.path.dirname(folder) if os.path.isdir(os.path.dirname(folder)) else ""
-        if not folder:
-            self.report({'WARNING'}, "Share not connected: %s" % CONNECT_HINT)
-            return {'CANCELLED'}
-        bpy.ops.wm.path_open(filepath=folder)
-        return {'FINISHED'}
-
-
-class STUDIO_OT_farm_load(Operator):
-    bl_idname = "studio.farm_load"
-    bl_label = "Load into the Video Editor"
-    bl_description = "The job's finished frames as one image sequence in the Video Editor, at the current frame"
-    bl_options = {'UNDO', 'INTERNAL'}
-
-    job: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
-
-    def execute(self, context):
         try:
-            strip, count = load_into_editor(context, self.job)
-        except (ValueError, OSError, RuntimeError) as ex:
-            self.report({'WARNING'}, str(ex))
+            remove(self.job)
+        except OSError as ex:
+            self.report({'WARNING'}, "Not removed: %s" % ex)
             return {'CANCELLED'}
-        self.report({'INFO'}, "%s: %d frames in channel %d" % (self.job, count, strip.channel))
         return {'FINISHED'}
 
 
-classes = (STUDIO_OT_farm_dismiss, STUDIO_OT_farm_refresh, STUDIO_OT_farm_folder,
-           STUDIO_OT_farm_load)
+classes = (STUDIO_OT_farm_move, STUDIO_OT_farm_remove)
 
 
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     _load_registry()                             # jobs sent before a restart: their frames still come
+    try:
+        _reconcile()
+    except OSError:
+        pass
     if active() and not bpy.app.timers.is_registered(_pump):
         bpy.app.timers.register(_pump, first_interval=5.0, persistent=True)
 

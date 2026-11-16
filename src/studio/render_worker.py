@@ -262,7 +262,13 @@ def run(job):
             # A new scene says CPU even when Blender is set to the GPU: the worker always uses it.
             overrides = list(overrides) + [["cycles.device", 'GPU']]
         _variant(job.get("variant") or [], saved)
+        overrides = [o for o in overrides if o[0] != "camera"] + [o for o in overrides if o[0] == "camera"]
         _apply(scene, overrides, saved)
+        expected = next((_value(v) for p, v in overrides if p == "camera"), None)
+        if expected is not None and scene.camera != expected:  # a marker switched it: the job's camera counts
+            print("W camera was %s, set to %s" % (scene.camera.name if scene.camera else None, expected.name),
+                  flush=True)
+            scene.camera = expected
         _wanted[0] = scene.camera          # no timeline marker may switch to its camera while it renders
         animation = bool(job.get("animation"))
         if job.get("draft") and not animation and scene.render.engine == 'CYCLES':

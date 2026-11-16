@@ -263,6 +263,8 @@ def _problems(layout, scene):
         row = box.row(align=True)
         row.alert = code in film_tools.BLOCKING
         row.label(text=text, icon='ERROR' if code in film_tools.BLOCKING else 'INFO', translate=False)
+        if code not in film_tools.FIXES:
+            continue
         op = row.operator(film_tools.STUDIO_OT_film_fix.bl_idname, text=film_tools.FIXES[code])
         op.section, op.code = section, code
         if code == 'SHARED':
@@ -287,8 +289,8 @@ def _section_card(layout, scene, name, start, end, marker, here):
     state.ui_units_x = 4.2
     state.label(text=film_tools.label_of(st) or "open", icon=_state_icon(st), translate=False)
     clean = st["done"] == st["total"] and film_tools.next_quality(scene, name, st) is None
-    op = row.operator("studio.add", text="", icon='CHECKMARK' if clean else 'RENDER_ANIMATION')
-    op.mode, op.section = 'ANIM', name
+    op = row.operator("studio.add", text="", icon='FILE_REFRESH' if clean else 'RENDER_ANIMATION')
+    op.mode, op.section, op.force = 'ANIM', name, clean
     col = box.column(align=True)
     row = col.row(align=True)                         # 🔒 camera
     locked = bool(item and item.camera_lock)
@@ -446,8 +448,10 @@ class STUDIO_PT_cut(Panel):
         scene = cut._scene(context)
         wm = context.window_manager
         from . import film, renderfarm
-        film.draw(layout)
-        renderfarm.draw_progress(layout.column(align=True))
+        queue = layout.column(align=True)         # what renders: films of this Mac and the farm's jobs
+        film.draw(queue)
+        if renderfarm.draw_rows(queue):
+            renderfarm.watch()
         _tabs(layout, wm, "studio_cut_tab_film", FILM_TABS)
         tab = wm.studio_cut_tab_film
         {'SECTIONS': _sections_tab, 'CUT': _cut_tab, 'MUSIC': _music_tab, 'EXPORT': _export_tab}[tab](

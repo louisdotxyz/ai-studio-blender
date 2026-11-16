@@ -738,7 +738,7 @@ class Runner:
         stem = cut.frame_stem(section)
         job = dict(job, camera=None)    # the real camera with its keys (no still copy at one place)
         overrides = [o for o in job["overrides"] if o[0] != "camera"]
-        job["overrides"] = [["camera", {"object": camera.name}]] + overrides
+        job["overrides"] = overrides + [["camera", {"object": camera.name}]]    # last: see core.camera_last
         job["runs"] = [[frames[0], frames[1], stem]]
         job["titles"] = {stem: section}
         job["quality"], job["section"] = self.quality, section
@@ -971,6 +971,25 @@ class Runner:
 
 _IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".exr", ".webp")
 _images_cache = {"key": None, "time": 0.0, "paths": []}
+
+
+def cancel_all(scene):
+    """Cancel the queue of this Mac and stop the films of this file (their frames stay; the film entries
+    waiting in the queue go). Jobs on the render farm stay: they are removed one by one, with a question.
+    Returns the labels of the films stopped."""
+    from . import film
+    RUN.cancel()
+    stopped = []
+    for entry, _st, kind in film.films(fresh=True):
+        if film.mine(entry) and kind in {'RENDERING', 'ENCODING'}:
+            film.stop(entry["dir"])
+            film.forget(entry["dir"])
+            stopped.append(entry.get("label", ""))
+    items = scene.studio.items
+    for index in reversed(range(len(items))):
+        if items[index].mode == 'ANIM':
+            items.remove(index)
+    return stopped
 
 
 def queue_images(scene, limit=60):

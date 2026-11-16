@@ -131,8 +131,12 @@ def _queue(args):
         runner.RUN.start(scene)
         return "Rendering started. Call action 'wait' to get an answer when it is done."
     if action == "cancel":
-        runner.RUN.cancel()
-        return "Queue cancelled."
+        stopped = runner.cancel_all(scene)
+        from . import renderfarm
+        farm = [j["note"] or j["job"] for j in renderfarm.active()]
+        return "Queue cancelled%s%s." % (
+            "; films stopped: " + ", ".join(stopped) if stopped else "",
+            "; still on the render farm (the user removes them in the queue): " + ", ".join(farm) if farm else "")
     if action == "wait":
         # Answer only when everything is rendered, films included (they run in their own process):
         # no polling, Blender stays usable meanwhile.

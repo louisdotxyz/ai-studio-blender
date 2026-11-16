@@ -413,6 +413,7 @@ def _poll():
             try:
                 from . import film_tools
                 film_tools.record_time(film, st)
+                film_tools.check_camera(film, st)
             except Exception as ex:                  # never stop the bars
                 print("AI Studio: render times:", ex)
             if done != last[0] and time.monotonic() - last[1] > 3.0:
@@ -460,7 +461,9 @@ def draw(layout, buttons=True):
         if kind in {'RENDERING', 'ENCODING'}:
             row.progress(factor=progress(st), type='BAR', text=text(film, st, kind))
             if buttons:
-                row.operator("studio.film", text="", icon='PAUSE').film = film["dir"]
+                row.operator("studio.film", text="", icon='PAUSE', emboss=False).film = film["dir"]
+                op = row.operator("studio.film", text="", icon='X', emboss=False)
+                op.film, op.action = film["dir"], "REMOVE"
         else:
             row.label(text=text(film, st, kind), icon='ERROR' if kind == 'FAILED' else 'PAUSE',
                       translate=False)
@@ -477,17 +480,23 @@ class STUDIO_OT_film(Operator):
     bl_options = {'INTERNAL'}
 
     film: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
-    action: StringProperty(default="STOP", options={'HIDDEN', 'SKIP_SAVE'})   # STOP / RESUME / FORGET
+    action: StringProperty(default="STOP", options={'HIDDEN', 'SKIP_SAVE'})   # STOP / RESUME / FORGET / REMOVE
 
     @classmethod
     def description(cls, _context, props):
         return {"STOP": "Stop the film (the frames stay; Resume goes on where it stopped)",
                 "RESUME": "Go on where the film stopped (frames that are there are skipped)",
-                "FORGET": "Take the film off the list (its files stay)"}.get(props.action, "")
+                "FORGET": "Take the film off the list (its files stay)",
+                "REMOVE": "Stop the film and take it out of the queue (the frames rendered so far stay)"}.get(
+                    props.action, "")
 
     def execute(self, context):
         try:
-            {"STOP": stop, "RESUME": resume, "FORGET": forget}[self.action](self.film)
+            if self.action == "REMOVE":
+                stop(self.film)
+                forget(self.film)
+            else:
+                {"STOP": stop, "RESUME": resume, "FORGET": forget}[self.action](self.film)
         except (ValueError, KeyError) as ex:
             self.report({'ERROR'}, str(ex))
             return {'CANCELLED'}

@@ -31,7 +31,8 @@ PROOF_INFO = ".proof.json"
 TIMES = ".times.json"
 DRAFT_DIR = ".draft"
 RATIO = 4.0                 # High Quality takes about this many times as long as Low Quality (no data yet)
-BLOCKING = {'NO_CAMERA'}
+BLOCKING = {'NO_CAMERA', 'CAMERA'}
+MIN_SAMPLES = 64            # Cycles: fewer samples than this is no High Quality
 
 
 def _sections(scene):
@@ -136,10 +137,83 @@ def proof_icon(section):
 
 # ------------------------------------------------------------------ check
 
+def rendered_camera(section):
+    """The camera the section's frames were rendered from ("" = not known): Blender writes it into every
+    frame, so this is what really rendered, whatever the job asked for."""
+    hit = _cameras.get(section)
+    if hit and time.monotonic() - hit[0] < 2.0:      # panels draw often
+        return hit[1]
+    name = _rendered_camera(section)
+    _cameras[section] = (time.monotonic(), name)
+    return name
+
+
+_cameras = {}
+
+
+def _rendered_camera(section):
+    folder = cut.frames_folder(section)
+    stem = cut.frame_stem(section) + "_"
+    first = min((n for n in cut.finished_files(folder) if n.startswith(stem) and n.lower().endswith(".png")
+                 and not n.startswith(stem + cut.DRAFT)), default=None)
+    if first:
+        name = cut.png_text(os.path.join(folder, first)).get("Camera", "")
+        if name:
+            return name
+    job = cut._job_of(folder)
+    value = cut._overrides(job).get("camera")
+    return job.get("camera_name", "") or (value.get("object", "") if isinstance(value, dict) else "")
+
+
+_stopped = set()
+
+
+def check_camera(film_entry, st):
+    """A film that runs: once its first frame is there, the camera in it must be the section's. If not,
+    the film is stopped (hours of frames from a wrong camera help nobody) and the Sections tab says so."""
+    section = film_entry.get("section", "")
+    key = film_entry.get("dir", "")
+    if not section or key in _stopped or film_entry.get("draft") or not st.get("done"):
+        return
+    scene = bpy.data.scenes.get(film_entry.get("scene", ""))
+    found = motion.find(scene, section) if scene is not None else None
+    if found is None or found[0].camera is None:
+        return
+    used = rendered_camera(section)
+    if used and used != found[0].camera.name:
+        from . import film, runner
+        _stopped.add(key)
+        film.stop(key)
+        runner.log("film %s stopped: rendered from %s, its camera is %s" % (section, used, found[0].camera.name))
+        runner.RUN.message = "%s stopped: rendered from %s instead of %s" % (section, used, found[0].camera.name)
+
+
+def _exposure_keys(scene):
+    bag = cut._channelbag(scene)
+    curve = next((fc for fc in (bag.fcurves if bag is not None else [])
+                  if fc.data_path == "view_settings.exposure"), None)
+    return [(k.co[0], k.co[1]) for k in curve.keyframe_points] if curve is not None else []
+
+
 def problems(scene):
-    """[(section, code, text)] code NO_CAMERA (blocks its render), SHARED, OUTDATED."""
+    """[(section, code, text)] code NO_CAMERA (blocks its render), CAMERA (its frames are from another
+    camera: render again), SHARED, OUTDATED, EXPOSURE (a fade keyed into the render), SAMPLES (few
+    samples for High Quality; section "")."""
     out, users = [], {}
+    keys = _exposure_keys(scene)
+    if scene.render.engine == 'CYCLES' and scene.cycles.samples < MIN_SAMPLES:
+        out.append(("", 'SAMPLES', "High Quality renders with %d samples only (Render tab)" % scene.cycles.samples))
     for name, start, end, marker in _sections(scene):
+        inside = {round(v, 4) for f, v in keys if start <= f <= end}
+        if len(inside) > 1:
+            out.append((name, 'EXPOSURE', "%s: a fade is keyed into the render (exposure); a fade in the cut "
+                                          "can still be changed later" % name))
+        if marker is not None and marker.camera is not None:
+            used = rendered_camera(name)
+            st = cut.frame_status(name, start, end)
+            if used and st["done"] and used != marker.camera.name and not cut._rendering(name):
+                out.append((name, 'CAMERA', "%s was rendered from %s, its camera is %s" % (
+                    name, used, marker.camera.name)))
         if marker is None:
             if _camera_of(scene, None) is None:
                 out.append((name, 'NO_CAMERA', "No active camera"))
@@ -564,7 +638,8 @@ class STUDIO_OT_film_draft(Operator):
         return {'FINISHED'}
 
 
-FIXES = {'NO_CAMERA': "Own Camera", 'SHARED': "Own Camera", 'OUTDATED': "Update Strip", 'IGNORE': "Fine"}
+FIXES = {'NO_CAMERA': "Own Camera", 'SHARED': "Own Camera", 'OUTDATED': "Update Strip", 'IGNORE': "Fine",
+         'CAMERA': "Render Again"}
 
 
 class STUDIO_OT_film_fix(Operator):
@@ -581,6 +656,7 @@ class STUDIO_OT_film_fix(Operator):
                 'SHARED': "A camera of its own, where the shared camera is at the section's start (its moves "
                           "stay on the other camera)",
                 'OUTDATED': "The strip made again from the section's frames (same place and look)",
+                'CAMERA': "Render the section again from its own camera (the frames there go to archiv)",
                 'IGNORE': "The shared camera is meant like this: no warning for this section"}.get(props.code, "")
 
     def execute(self, context):
@@ -591,6 +667,8 @@ class STUDIO_OT_film_fix(Operator):
                 self.report({'INFO'}, "%s: own camera %s" % (self.section, cam.name))
             elif self.code == 'OUTDATED':
                 cut.replace_section(scene, self.section)
+            elif self.code == 'CAMERA':
+                bpy.ops.studio.add(mode='ANIM', section=self.section, force=True)
             elif self.code == 'IGNORE':
                 cut.settings(scene, self.section).shared_ok = True
         except (ValueError, RuntimeError, AttributeError) as ex:

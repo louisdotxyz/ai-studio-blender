@@ -431,6 +431,8 @@ class _ChatPanel:
         from .studio import film, runner
         from .studio.ui_common import _queue_progress_text
         film.draw(layout)             # films in their own process: part, frame, time left
+        from .studio import renderfarm
+        renderfarm.draw_rows(layout.column(align=True), buttons=False)   # and what the render farm does
         if not runner.RUN.busy:
             return
         row = layout.row(align=True)

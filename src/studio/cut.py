@@ -166,6 +166,53 @@ def png_width(path):
     return _widths[key]
 
 
+_texts = {}
+
+
+def png_text(path):
+    """What Blender wrote into a rendered PNG (its tEXt chunks): "Camera", "RenderTime", "Hostname",
+    "Frame" … Cached per file and change; {} if it is no PNG. Only reads the file (safe in a thread)."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return {}
+    key = (path, st.st_mtime_ns, st.st_size)
+    if key not in _texts:
+        out = {}
+        try:
+            with open(path, "rb") as f:
+                if f.read(8) == b"\x89PNG\r\n\x1a\n":
+                    while True:
+                        head = f.read(8)
+                        if len(head) < 8:
+                            break
+                        size, kind = int.from_bytes(head[:4], "big"), head[4:]
+                        if kind in (b"IDAT", b"IEND") or size > 1 << 20:
+                            break
+                        data = f.read(size)
+                        f.read(4)
+                        if kind == b"tEXt":
+                            name, _, value = data.partition(b"\0")
+                            out[name.decode("latin-1")] = value.decode("latin-1")
+        except OSError:
+            pass
+        if len(_texts) > 20000:
+            _texts.clear()
+        _texts[key] = out
+    return _texts[key]
+
+
+def render_seconds(text):
+    """"01:02.35" (Blender's RenderTime) in seconds; 0.0 if it is none."""
+    try:
+        secs = 0.0
+        for part in text.split(":"):
+            secs = secs * 60 + float(part)
+        return secs
+    except (ValueError, AttributeError):
+        return 0.0
+
+
 def fill_gaps(base):
     """Every None takes the nearest file before it (after it at the start); None when all are None."""
     known = [b for b in base if b is not None]
@@ -578,10 +625,34 @@ def outdated(scene, section, start, end):
     return elements is not None and len(parts) == 1 and len(elements) != end - start + 1
 
 
+def _place_for(scene, name, length, start):
+    """Where a section's new strip goes: right after the strips of the section before it (the sections
+    after it make room), else right before the section after it, else at its own frames."""
+    from . import film_edit
+    names = [n for n, _s, _e, _m in sections_of(scene)]
+    index = names.index(name) if name in names else 0
+
+    def strips_of(section):
+        return [s for s in ours(scene) if _get(s, SECTION_KEY) == section
+                and _get(s, KIND_KEY) in {"SECTION", "HOLD", "FREEZE"}]
+    later = [s for n in names[index + 1:] for s in strips_of(n)]
+    for before in reversed(names[:index]):
+        found = strips_of(before)
+        if found:
+            at = max(int(s.frame_final_end) for s in found)
+            first = min((int(s.frame_final_start) for s in later), default=None)
+            if first is not None and first < at + length:
+                film_edit.ripple(scene, first, at + length - first)
+            return at
+    if later:
+        return min(int(s.frame_final_start) for s in later) - length
+    return start
+
+
 def sync(scene):
-    """After a render: only adds, never rearranges. The first time all strips are made; later the strips
-    read their files again and fit their size, and a section without a strip yet comes in at the end.
-    Your moves, trims and cuts stay. Returns "built" or "synced"."""
+    """After a render: only adds. The first time all strips are made; later the strips read their files
+    again and fit their size, and a section without a strip yet comes in at its place in the film (after
+    the section before it). Your moves, trims and cuts stay. Returns "built" or "synced"."""
     if not ours(scene):
         build(scene)
         return "built"
@@ -590,8 +661,19 @@ def sync(scene):
         if section_strip(scene, name) is None:
             if kind is None:
                 continue
-            span = film_edit.content_range(scene)
-            _make_section_strip(scene, name, kind, data, 1, span[1] if span else start)
+            if kind == "FRAMES" and not data["shown"]:
+                continue                            # nothing rendered yet: it comes with its first frames
+            _make_section_strip(scene, name, kind, data, 1, _place_for(scene, name, _end - start + 1, start))
+            names = [n for n, _s, _e, _m in sections_of(scene)]
+            before = names[names.index(name) - 1] if names.index(name) > 0 else None
+            for owner in (before, name):            # the transition into it, and its own
+                if owner and section_strip(scene, owner) is not None:
+                    try:
+                        film_edit.clear_transition(scene, owner)
+                        item = settings(scene, owner)
+                        film_edit.apply_transition(scene, owner, item.transition, item.frames)
+                    except (RuntimeError, ValueError, AttributeError) as ex:
+                        print("AI Studio: cut: transition of %s: %s" % (owner, ex))
             film_edit.fit_overlays(scene)
         elif kind == "FRAMES":
             for strip in ours(scene):

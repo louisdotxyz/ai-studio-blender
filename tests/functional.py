@@ -2554,6 +2554,18 @@ def motion_sections():
             no_cam = {m.name for m in scene.timeline_markers if m.camera is None}
             check("check: sections without a camera are found",
                   {p[0] for p in tools.problems(scene) if p[1] == 'NO_CAMERA'} == no_cam, tools.problems(scene))
+            again = next((m for m in scene.timeline_markers if m.camera is not None), None)
+            if again is not None:                     # render again though nothing changed
+                span = next((s, e) for n, s, e, _m in cut.sections_of(scene) if n == again.name)
+                was = cut.frame_status(again.name, span[0], span[1], fresh=True)["quality"] or 'HIGH'
+                bpy.ops.studio.add(mode='ANIM', section=again.name, force=True)
+                queued = [i for i in scene.studio.items if i.mode == 'ANIM' and i.section == again.name]
+                check("force: the section is queued again in the quality it has",
+                      len(queued) == 1 and queued[0].quality == was and queued[0].percentage == 100,
+                      [(i.section, i.quality) for i in scene.studio.items])
+                for index in reversed(range(len(scene.studio.items))):
+                    if scene.studio.items[index].mode == 'ANIM':
+                        scene.studio.items.remove(index)
             fe = mod("studio.film_edit")
             before = cut.strip_range(scene)[1]
             fe.set_hold(scene, "01 Intro", 10)        # in place: what follows moves along, the cross stays
@@ -2702,6 +2714,71 @@ def unfinished_frames_and_folders():
 
 
 @section
+def section_cameras():
+    """Every section renders from its own camera: the camera is the job's last override, set after the
+    timeline markers are unbound (Blender 5.3 jumps to another marker's camera when one is unbound)."""
+    core = mod("studio.core")
+    scene = bpy.context.scene
+    made = []
+    for n in range(4):
+        cam = bpy.data.objects.new("T_section_cam_%d" % n, bpy.data.cameras.new("T_section_cam_%d" % n))
+        scene.collection.objects.link(cam)
+        marker = scene.timeline_markers.new("9%d T" % n, frame=5000 + n * 10)
+        marker.camera = cam
+        made.append((cam, marker))
+    keep = [(m, m.camera) for m in scene.timeline_markers]
+    before = scene.camera
+    wrong = []
+    try:
+        for cam, _marker in made:
+            plan = core.PlanOverrides(scene)
+            core.prepare_job(scene, cam, 'HIGH', os.path.join(TMP, "x"), 'NORMAL', 50, 50, animation=True, ov=plan)
+            pairs = plan.as_list()
+            if pairs[-1] != ["camera", {"object": cam.name}]:
+                wrong.append("camera not last for %s" % cam.name)
+            for path, value in pairs:                 # like the film's process: markers unbound, then the camera
+                if path.startswith("timeline_markers") or path == "camera":
+                    head, _, attr = path.rpartition(".")
+                    setattr(scene.path_resolve(head) if head else scene, attr,
+                            bpy.data.objects.get(value["object"]) if isinstance(value, dict) else value)
+            if scene.camera != cam:
+                wrong.append("%s rendered from %s" % (cam.name, scene.camera.name if scene.camera else None))
+            for marker, camera in keep:
+                marker.camera = camera
+        check("4 sections, 4 cameras: each renders from its own", not wrong, wrong)
+    finally:
+        scene.camera = before
+        for cam, marker in made:
+            scene.timeline_markers.remove(marker)
+            bpy.data.objects.remove(cam)
+
+
+@section
+def cancel_stops_films():
+    """Cancel: the queue of this Mac, the films that run and the film entries that wait."""
+    import subprocess
+    film, runner = mod("studio.film"), mod("studio.runner")
+    scene = bpy.context.scene
+    work = os.path.join(tempfile.mkdtemp(prefix="film_"), ".film")
+    os.makedirs(work)
+    proc = subprocess.Popen(["sleep", "30"], start_new_session=True)
+    with open(os.path.join(work, "status.json"), "w") as f:
+        json.dump({"state": "rendering", "total": 10, "done": 1, "updated": time.time(), "pid": proc.pid}, f)
+    film.register_process(work, os.path.dirname(work), "T film", proc.pid)
+    item = scene.studio.items.add()
+    item.mode = 'ANIM'
+    stopped = runner.cancel_all(scene)
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    check("cancel stops the running film and drops the film entries that wait",
+          "T film" in stopped and proc.returncode is not None and proc.returncode != 0
+          and not any(f["dir"] == work for f, _s, _k in film.films(fresh=True))
+          and not any(i.mode == 'ANIM' for i in scene.studio.items), (stopped, proc.returncode))
+
+
+@section
 def render_farm_folder():
     """The render farm's folder protocol: jobs, frames (> 0 bytes), states, workers; .part is never a job."""
     farm = mod("studio.renderfarm")
@@ -2726,7 +2803,26 @@ def render_farm_folder():
     open(os.path.join(root, "queue", "a_job.done"), "w").close()
     check("farm off: the queue renders on this Mac", not farm.takes(bpy.context.scene, None))
     check("farm: .done → done; job names are safe", farm.scan(root)["jobs"][0]["state"] == 'done'
-          and farm.job_name("/x/VELO now.blend", "Szene 1", 0).startswith("VELO_now_Szene_1_"))
+          and farm.job_name("/x/VELO now.blend", "Szene 1", 0).startswith("VELO_now_19")
+          and farm.job_name("/x/VELO now.blend", "Szene 1", 0).endswith("_Szene_1"))
+    jobs = [{"job": "a_2_x", "phase": "sent", "root": root, "kind": 'ANIM', "start": 1, "end": 3, "ext": "png"},
+            {"job": "a_1_y", "phase": "sent", "root": root, "kind": 'ANIM', "start": 1, "end": 3, "ext": "png"}]
+    for job in jobs:
+        open(os.path.join(root, "queue", job["job"] + ".json"), "w").close()
+    keep, farm._jobs[:] = list(farm._jobs), jobs
+    try:
+        farm._reconcile()                      # a_1_y is to render after a_2_x but sorts before it: it waits
+        held = os.path.exists(os.path.join(root, "queue", "a_1_y.json.hold"))
+        os.makedirs(os.path.join(root, "renders", "a_2_x"))
+        farm.remove_from_share(root, "a_2_x", 1, 3, "png")
+        farm._jobs[:] = jobs[1:]
+        farm._reconcile()
+        check("farm: order kept by holding a job; removing one frees the next and lets workers skip its frames",
+              held and os.path.exists(os.path.join(root, "queue", "a_1_y.json"))
+              and not os.path.exists(os.path.join(root, "queue", "a_2_x.json"))
+              and len(os.listdir(os.path.join(root, "renders", "a_2_x"))) == 3)
+    finally:
+        farm._jobs[:] = keep
 
 
 @section
