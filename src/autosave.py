@@ -364,6 +364,40 @@ def project_folder_target(filepath=None):
     return os.path.join(projects_root(main_folder(filepath)), project_name(filepath))
 
 
+def _dismissed_path():
+    return os.path.join(_workdir(), "project_folder_dismissed.json")
+
+
+def _dismissed():
+    try:
+        import json
+        with open(_dismissed_path(), encoding="utf-8") as f:
+            return set(json.load(f))
+    except (OSError, ValueError):
+        return set()
+
+
+def project_folder_offer(filepath=None):
+    """The "Make project folder" button: the target folder, unless it was clicked away for this folder."""
+    filepath = filepath if filepath is not None else bpy.data.filepath
+    target = project_folder_target(filepath)
+    if target is None or os.path.normcase(main_folder(filepath)) in _dismissed():
+        return None
+    return target
+
+
+def dismiss_project_folder(filepath=None):
+    """No "Make project folder" button any more for files in this folder."""
+    import json
+    filepath = filepath if filepath is not None else bpy.data.filepath
+    if not filepath:
+        return
+    done = _dismissed() | {os.path.normcase(main_folder(filepath))}
+    os.makedirs(os.path.dirname(_dismissed_path()), exist_ok=True)
+    with open(_dismissed_path(), "w", encoding="utf-8") as f:
+        json.dump(sorted(done), f)
+
+
 def move_to_project_folder(fresh=False):
     """Make <folder>/<name>/ with autosave/, assets/ and archiv/ and save the open file there as
     <name>_now.blend (relative paths are adjusted by Blender). Everything of this project that

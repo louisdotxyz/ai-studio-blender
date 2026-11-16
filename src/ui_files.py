@@ -218,6 +218,22 @@ class CLAUDE_OT_save_as_original(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class CLAUDE_OT_dismiss_project_folder(bpy.types.Operator):
+    bl_idname = "claude.dismiss_project_folder"
+    bl_label = "Not Here"
+    bl_description = "No project folder for files in this folder: the button goes away (for good)"
+    bl_options = {'INTERNAL'}
+
+    def execute(self, context):
+        try:
+            autosave.dismiss_project_folder()
+        except OSError as ex:
+            self.report({'ERROR'}, str(ex))
+            return {'CANCELLED'}
+        core.mark_dirty()
+        return {'FINISHED'}
+
+
 class CLAUDE_OT_make_project_folder(bpy.types.Operator):
     bl_idname = "claude.make_project_folder"
     bl_label = "Make Project Folder"

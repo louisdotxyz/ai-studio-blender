@@ -37,7 +37,8 @@ from .ui_setup import (
 )  # noqa: F401
 from .ui_files import (
     CLAUDE_OT_autosave_now, CLAUDE_OT_crash_dismiss, CLAUDE_OT_crash_open_backup, CLAUDE_OT_edit_message,
-    CLAUDE_OT_local_load, CLAUDE_OT_local_unload, CLAUDE_OT_make_project_folder, CLAUDE_OT_open_backups,
+    CLAUDE_OT_local_load, CLAUDE_OT_local_unload, CLAUDE_OT_make_project_folder, CLAUDE_OT_dismiss_project_folder,
+    CLAUDE_OT_open_backups,
     CLAUDE_OT_open_crash_log, CLAUDE_OT_open_file, CLAUDE_OT_open_lessons, CLAUDE_OT_open_models_folder,
     CLAUDE_OT_open_path, CLAUDE_OT_refresh_local_models, CLAUDE_OT_save_as_original,
     CLAUDE_OT_set_local_model, CLAUDE_OT_version_goto
@@ -107,6 +108,7 @@ classes = (
     CLAUDE_OT_save_as_original,
     CLAUDE_OT_open_crash_log,
     CLAUDE_OT_make_project_folder,
+    CLAUDE_OT_dismiss_project_folder,
     CLAUDE_OT_autosave_now,
     CLAUDE_OT_open_backups,
     CLAUDE_MT_skills,

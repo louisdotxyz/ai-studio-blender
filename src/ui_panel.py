@@ -150,7 +150,7 @@ class _ChatPanel:
         h = 0
         if autosave.last_crash:
             h += 4
-        if autosave.project_folder_target():
+        if autosave.project_folder_offer():
             h += 2.5 if autosave.in_copy() else 1.8
         elif autosave.original_path():
             h += 2.5 if autosave.in_copy() else 1.2
@@ -183,16 +183,18 @@ class _ChatPanel:
 
     def _draw_crash(self, layout, context):
         original = autosave.original_path()
-        target = autosave.project_folder_target()
+        target = autosave.project_folder_offer()
         if target:
-            # Older files without their own folder: one click moves them into <name>/.
+            # Older files without their own folder: one click moves them into <name>/ (or × : not here).
             box = layout.box()
             if autosave.in_copy():
                 row = box.row()
                 row.alert = True
                 row.label(text=tr("You are working in a backup copy"), icon='FILE_BACKUP')
-            box.operator("claude.make_project_folder", icon='NEWFOLDER',
+            row = box.row(align=True)
+            row.operator("claude.make_project_folder", icon='NEWFOLDER',
                          text=tr("Make project folder {}/").format(os.path.basename(target)))
+            row.operator("claude.dismiss_project_folder", text="", icon='X')
         elif original and autosave.in_copy():
             box = layout.box()
             row = box.row()
