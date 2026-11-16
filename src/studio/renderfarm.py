@@ -706,10 +706,28 @@ def seconds_per_frame(host):
     return stats[1] / stats[0] if stats and stats[0] and stats[1] else None
 
 
+def busy_share(host):
+    """How much of its time a Mac renders: its render time per frame / the time between two of its frames
+    (1.0 = it never waits; loading and saving are the rest). None if unknown."""
+    per = seconds_per_frame(host)
+    stats = _hosts.get(host)
+    if not per or not stats or not stats[0] or not stats[1]:
+        return None
+    return min(1.0, (stats[1] / stats[0]) / per)
+
+
 def farm_rate(now=None):
-    """Frames per minute of the whole farm lately (last 15 minutes, or the last hour when few), None if
-    nothing came."""
+    """Frames per minute of the whole farm: the sum of the Macs that render now (each one's time between
+    two frames); else counted from the frames of the last 15 minutes / hour. None if nothing came."""
     now = now or time.time()
+    speeds = []
+    for host, stamps in _stamps.items():
+        last = max((t + _clock_offset(host) for t, _s in stamps), default=0.0)
+        per = seconds_per_frame(host)
+        if per and now - last < max(600.0, 4 * per):
+            speeds.append(60.0 / per)
+    if speeds and len(_stamps) == len(speeds) or len(speeds) >= 2:
+        return sum(speeds)
     for window, least in ((900.0, 4), (3600.0, 2)):
         times = [finished for finished, _w, _s in _events if now - window <= finished <= now + 60]
         if len(times) >= least:
@@ -1171,6 +1189,7 @@ def draw_state(layout, context):
         right.alignment = 'RIGHT'
         right.label(text="%d/%d frames%s" % (have, total, " · ~%s left" % format_time(secs)
                                              if secs and workers else ""), translate=False)
+    head.operator(STUDIO_OT_farm_refresh.bl_idname, text="", icon='FILE_REFRESH', emboss=False)
     row = col.row()                                  # the farm's speed in plain words
     row.label(text="Speed", icon='SORTTIME')
     right = row.row()
@@ -1205,7 +1224,10 @@ def draw_state(layout, context):
         right.alignment = 'RIGHT'
         per = seconds_per_frame(key)
         stats = _hosts.get(key)
-        right.label(text="%.0f s/frame · %d" % (per, stats[0]) if per and stats else "—", translate=False)
+        busy = busy_share(key)
+        right.label(text=("%.0f s/frame · %d%s" % (per, stats[0], " · busy %d %%" % round(busy * 100)
+                                                   if busy and state == 'rendering' else ""))
+                    if per and stats else "—", translate=False)
     if gone:
         hint = col.row()
         hint.active = False
@@ -1251,7 +1273,25 @@ class STUDIO_OT_farm_remove(Operator):
         return {'FINISHED'}
 
 
-classes = (STUDIO_OT_farm_move, STUDIO_OT_farm_remove)
+class STUDIO_OT_farm_refresh(Operator):
+    bl_idname = "studio.farm_refresh"
+    bl_label = "Refresh"
+    bl_description = "Look at the render farm now: the share, the Macs and the frames that are done"
+    bl_options = {'INTERNAL'}
+
+    def execute(self, _context):
+        _conn["time"] = -1e9                        # the share is looked at again
+        for job in _jobs:
+            job["looked"] = 0.0                     # frames fetched right away
+        _refresh(force=True)
+        _alarm["looked"] = time.time()
+        if active() and not bpy.app.timers.is_registered(_pump):
+            bpy.app.timers.register(_pump, first_interval=0.1, persistent=True)
+        watch()
+        return {'FINISHED'}
+
+
+classes = (STUDIO_OT_farm_move, STUDIO_OT_farm_remove, STUDIO_OT_farm_refresh)
 
 
 def register():
