@@ -450,19 +450,19 @@ def editor(scene):
     return next((s for s in bpy.data.scenes if s.get(FILM_KEY) == film.name), None)
 
 
-CUT_WORLD = "Cut World"   # an empty world for the Video Editor's scene
+CUT_WORLD = ".Cut World"  # an empty world for the Video Editor's scene (hidden: starts with a dot)
 
 
 def editor_create(scene):
     """editor(scene), made if missing (not in a draw): same size, frame rate, colours as the film."""
     film = film_scene(scene)
     found = editor(film)
-    wanted = "%s_cut" % film.name
+    wanted = ".%s cut" % film.name                 # a dot: Blender hides it in the scene lists
     if found is None:
         found = bpy.data.scenes.new(wanted)
         found[FILM_KEY] = film.name
     elif found.name != wanted and bpy.data.scenes.get(wanted) is None:
-        found.name = wanted                       # NAME_cut (earlier: "NAME · Schnitt")
+        found.name = wanted                       # hidden (earlier: "NAME_cut", "NAME · Schnitt")
     if film.get(CUT_KEY) != found.name:
         film[CUT_KEY] = found.name
     _match(found, film)

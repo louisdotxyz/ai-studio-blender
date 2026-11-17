@@ -4,7 +4,7 @@ description: Editing the film in the Video Editor: transitions, holds, look, fad
 icon: SEQUENCE
 chat: no
 ---
-The user edits the film in the Video Editor, which has its own scene "<film>_cut" with its own playhead
+The user edits the film in the Video Editor, which has its own hidden scene ".<film> cut" with its own playhead
 (scrubbing never moves the 3D scene; this chat is the cut chat; the api takes the film's scene). Each message ends
 with a line on what the Video Editor shows: playhead, active strip, the 3D frame it shows. Frames the user
 names ("at 450", "the 2nd clip") are Video Editor frames unless he says 3D. Answer briefly, change in place,

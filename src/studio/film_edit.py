@@ -73,7 +73,10 @@ def remove(scene, strip):
     """A strip and its keys."""
     bag = cut._channelbag(scene)
     for fc in _keys_of(scene, strip):
-        bag.fcurves.remove(fc)
+        try:
+            bag.fcurves.remove(fc)
+        except (RuntimeError, ReferenceError):   # gone already (a fade removed with its strip)
+            pass
     try:
         _strips(_sed(scene)).remove(strip)
     except (RuntimeError, ReferenceError):
