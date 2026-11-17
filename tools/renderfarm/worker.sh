@@ -8,7 +8,7 @@
 #        bash "Renderfarm Start (Mac).command" --alle-abmelden); control.json "abmelden_nach" (Minuten ohne
 #        Job, Standard 0 = nie). Nach dem naechsten Anmelden startet der Autostart die Renderfarm wieder.
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="${RF_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"   # vom Start gesetzt (lokale Kopie)
 VERSION=$(cat "$ROOT/_worker/VERSION" 2>/dev/null || echo "?")
 NAME=$(scutil --get ComputerName 2>/dev/null || hostname)
 Q="$ROOT/queue"; OUT="$ROOT/renders"; ST="$ROOT/_worker/status"

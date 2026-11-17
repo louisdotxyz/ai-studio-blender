@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CommandString</key>
-	<string>bash -c 'for i in 1 2 3; do for v in /Volumes/DDE*; do f="$v/BDE_VID/BA/02_Studierende/Louis Widmer/Flamenco/Renderfarm Start (Mac).command"; [ -f "$f" ] &amp;&amp; exec bash "$f"; done; echo "Server wird verbunden ..."; osascript -e "mount volume \"smb://fileredu.ad.zhdk.ch/DDE\"" >/dev/null 2>&amp;1; sleep 10; done; echo "Server nicht gefunden: WLAN/VPN pruefen und nochmals oeffnen."'</string>
+	<string>bash -c 'for i in 1 2 3; do for f in /Volumes/DDE*/BDE_VID/BA/02_Studierende/Louis\ Widmer/Flamenco/_worker/start_mac.sh; do [ -f "$f" ] &amp;&amp; { mkdir -p ~/.renderfarm; cp -f "$f" ~/.renderfarm/start.sh; exec bash ~/.renderfarm/start.sh; }; done; echo "Server wird verbunden ..."; osascript -e "mount volume \"smb://fileredu.ad.zhdk.ch/DDE\"" &gt;/dev/null 2&gt;&amp;1; sleep 10; done; echo "Server nicht gefunden: WLAN/VPN pruefen und nochmals oeffnen."; sleep 30'</string>
 	<key>RunCommandAsShell</key>
 	<true/>
 	<key>name</key>
