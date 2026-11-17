@@ -135,10 +135,57 @@ print("RF packed, %d made local" % local)
 # ------------------------------------------------------------------ the share
 
 def share_root():
+    """The farm's folder on the server, where the server is mounted now: macOS mounts it as /Volumes/DDE-1
+    (-2 …) when an old /Volumes/DDE is left over, so the folder of the setting is moved to that mount."""
     from . import runner
     p = runner.prefs()
-    root = getattr(p, "farm_share", "") if p is not None else ""
-    return bpy.path.abspath(root or DEFAULT_SHARE).rstrip("/\\")
+    setting = (getattr(p, "farm_share", "") if p is not None else "") or DEFAULT_SHARE
+    root = bpy.path.abspath(setting).rstrip("/\\") or DEFAULT_SHARE
+    point = _mount["point"]
+    parts = root.split("/")
+    if point and len(parts) > 2 and parts[1] == "Volumes" and "/Volumes/" + parts[2] != point:
+        return point + "/" + "/".join(parts[3:])
+    return root
+
+
+SERVER = "fileredu.ad.zhdk.ch"
+_mount = {"point": None, "url": None, "time": 0.0}
+
+
+def _read_mounts():
+    """(Thread, no network) Where the server's DDE share is mounted, from macOS's list of mounts; the
+    address with the user name is kept for mounting it again (the password comes from the keychain)."""
+    try:
+        out = subprocess.run(["/sbin/mount"], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return
+    point = None
+    for line in out.splitlines():
+        hit = re.match(r"//(?:([^@]+)@)?([^/]+)/(\S+) on (/Volumes/[^(]+?) \(smbfs", line)
+        if hit and hit.group(2).lower().startswith(SERVER.split(".")[0]) and hit.group(3).upper() == "DDE":
+            point = hit.group(4)
+            url = "smb://%s%s/%s" % (hit.group(1) + "@" if hit.group(1) else "", hit.group(2), hit.group(3))
+            if url != _mount["url"]:
+                _mount["url"] = url
+                try:
+                    os.makedirs(LOCAL, exist_ok=True)
+                    with open(os.path.join(LOCAL, "server.json"), "w", encoding="utf-8") as f:
+                        json.dump({"url": url}, f)
+                except OSError:
+                    pass
+            break
+    _mount.update(point=point, time=time.monotonic())
+
+
+def _server_url():
+    if _mount["url"]:
+        return _mount["url"]
+    try:
+        with open(os.path.join(LOCAL, "server.json"), encoding="utf-8") as f:
+            _mount["url"] = json.load(f).get("url")
+    except (OSError, ValueError):
+        pass
+    return _mount["url"] or "smb://%s/DDE" % SERVER
 
 
 _conn = {"root": None, "ok": False, "time": -1e9, "busy": False}
@@ -146,6 +193,9 @@ CONN_AGE = 10.0           # seconds a look at the share counts (a network folder
 
 
 def _look(root):
+    if root.startswith("/Volumes/"):
+        _read_mounts()                       # the share may be mounted somewhere else now (DDE-1)
+        root = share_root()
     ok = os.path.isdir(root)
     _conn.update(root=root, ok=ok, time=time.monotonic(), busy=False)
     return ok
@@ -292,6 +342,7 @@ def _last_frames(root, jobs):
 _job_files = {}           # (share, job) → its .json (and the frame count once it is done): read once
 _view = {"scan": None, "busy": False, "drawn": 0.0, "gen": 0, "since": 0.0}
 STUCK = 30.0              # a look at the share that takes longer: the share hangs (VPN gone, Mac slept)
+STUCK_SENDING = 180.0     # while a file uploads the share answers slowly (the line is full): longer
 
 
 def _scan_now(root, gen):
@@ -309,9 +360,11 @@ def _scan_now(root, gen):
 
 
 def stuck():
-    """The look at the share has hung for a while (a stale network folder)."""
+    """The look at the share has hung for a while (a stale network folder). While an upload runs the
+    share is slow, not gone: it then takes much longer to count as hung."""
     now = time.monotonic()
-    return (_view["busy"] and now - _view["since"] > STUCK) or (_conn["busy"] and now - _conn.get("since", now) > STUCK)
+    limit = STUCK_SENDING if any(j["phase"] == "copying" for j in _jobs) else STUCK
+    return (_view["busy"] and now - _view["since"] > limit) or (_conn["busy"] and now - _conn.get("since", now) > limit)
 
 
 def _retire_strays(root, view):
@@ -371,13 +424,8 @@ def reconnect(mount=True):
         job["quiet"] = 0
         if job.get("fetching") and now - job.get("fetch_since", now) > STUCK:
             job["fetching"] = False                  # that thread hangs on the old mount: a new one goes
-    try:
-        mounted = "DDE" in os.listdir("/Volumes")      # the list only: a stale mount is not touched
-    except OSError:
-        mounted = False
-    if mount and not mounted:
-        _alarm["mounted"] = 0.0
-        _reconnect()
+    if mount:
+        _reconnect(force=True)                       # mounted again if it is not (in a thread)
     _look_later()
     _refresh(force=True)
 
@@ -603,6 +651,9 @@ def _on_load(_dummy=None):
     _jobs[:] = [j for j in _jobs if j.get("blend") == blend or j["phase"] in {"packing", "copying"}]
     _loaded["blend"] = blend
     _restart.update(state="", report=[], halves=[], adopt=None, sent=[], shown=False)
+    if not bpy.app.background:                    # on every start: the server mounted if it is not
+        _reconnect(force=True)
+        _look_later()
     if not blend:
         return
     _load_registry(blend)
@@ -924,11 +975,24 @@ def submit_item(scene, item, job, animation, path, camera, quality):
                   kind='STILL', overrides=overrides, camera_spec=job.get("camera"), target=path, quality=quality)
 
 
+def _remap_roots():
+    """Jobs sent while the server was mounted elsewhere (/Volumes/DDE ↔ DDE-1) use where it is now."""
+    root = share_root()
+    if not root.startswith("/Volumes/"):
+        return
+    tail = "/".join(root.split("/")[3:])
+    for job in _jobs:
+        old = job.get("root", "")
+        if old != root and old.startswith("/Volumes/") and "/".join(old.split("/")[3:]) == tail:
+            job["root"] = root
+
+
 def _pump():
     """Sending, with the next job prepared ahead: while one job uploads, the next one is packed already
     (own Blender process), so the farm gets it right after; collects the frames of sent jobs every 5 s."""
     from . import runner
     try:
+        _remap_roots()
         packing = next((j for j in _jobs if j["phase"] == "packing"), None)
         if packing is not None:
             _packed(packing)
@@ -1023,30 +1087,27 @@ def _keep_awake(on):
         _awake["proc"] = None
 
 
-SERVER = "fileredu.ad.zhdk.ch"
-
-
-def _reconnect():
-    """The share went away (sleep, VPN dropped): mounted again by itself, at most every minute, and only
-    when the server answers (VPN on) and the share is not mounted: no login window or error while away."""
-    if time.time() - _alarm.get("mounted", 0.0) < 60 or _conn.get("busy_mount"):
+def _reconnect(force=False):
+    """The share is not there (sleep, VPN dropped, Blender just started): mounted again by itself, at most
+    every minute, only when the server answers (VPN on) and the share is not mounted. The login comes from
+    the keychain (macOS asks once if it is not there): no window or error while away from the VPN."""
+    if (not force and time.time() - _alarm.get("mounted", 0.0) < 60) or _conn.get("busy_mount"):
         return
     _alarm["mounted"] = time.time()
 
     def mount():
         _conn["busy_mount"] = True
         try:
-            try:
-                if "DDE" in os.listdir("/Volumes"):
-                    return                         # mounted (maybe stale): the look decides
-            except OSError:
-                pass
+            _read_mounts()
+            if _mount["point"]:
+                return                             # mounted: the look decides
             try:
                 socket.create_connection((SERVER, 445), timeout=3).close()
             except OSError:
                 return                             # no VPN / network: nothing to mount
-            subprocess.run(["osascript", "-e", 'mount volume "smb://%s/DDE"' % SERVER], stdin=subprocess.DEVNULL,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+            subprocess.run(["osascript", "-e", 'mount volume "%s"' % _server_url()], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=90)
+            _read_mounts()
             _conn["time"] = -1e9                   # looked at again right away
         except (OSError, subprocess.SubprocessError):
             pass
