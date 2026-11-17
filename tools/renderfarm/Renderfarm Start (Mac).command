@@ -8,9 +8,15 @@
 #   - hält den Mac wach, solange es läuft, und startet den Worker nach Absturz oder Server-Ausfall neu
 #   - meldet alle Macs auf einmal ab, wenn du es sagst: AI Studio "Log Out All Macs" oder
 #     bash "<diese Datei>" --alle-abmelden   (wieder rendern: --farm-an; beim nächsten Job geht es von selbst)
-#   - startet nie einen zweiten Worker auf demselben Mac
+#   - nur ein Renderfarm-Fenster pro Mac: ein neues Fenster ersetzt das alte ohne Rückfrage
 # Autostart wieder entfernen:  bash "<diese Datei>" --entfernen
-printf '\033]0;Renderfarm\007'
+printf '\033]0;Blender Render Farm\007'
+# schwarzes Fenster, weisse Schrift
+printf '\033]11;#000000\007\033]10;#e6e6e6\007'
+osascript -e 'tell application "Terminal" to tell selected tab of front window
+  set background color to {0, 0, 0}
+  set normal text color to {60000, 60000, 60000}
+end tell' >/dev/null 2>&1 &
 SUB="BDE_VID/BA/02_Studierende/Louis Widmer/Flamenco"
 SERVER="smb://fileredu.ad.zhdk.ch/DDE"
 HELP="$HOME/.renderfarm"
@@ -69,18 +75,14 @@ if [ -f "$HELP/Renderfarm.terminal" ] && ! grep -q "Renderfarm.terminal" "$AGENT
   <key>RunAtLoad</key><true/>
 </dict></plist>
 PLIST
-  launchctl bootstrap "gui/$(id -u)" "$AGENT" 2>/dev/null &
   echo "Autostart eingerichtet: nach dem Anmelden startet die Renderfarm von selbst."
 fi
 
-# nie zwei Worker auf einem Mac
-OTHER=$(pgrep -f "_worker/(worker_mac|mac_worker).sh" | grep -v "^$$\$" | head -1)
-if [ -n "$OTHER" ]; then
-  echo "Auf diesem Mac läuft schon ein Worker (PID $OTHER)."
-  read -t 15 -n1 -p "Den alten beenden und hier neu starten? [j/N] " a; echo
-  [ "$a" = "j" ] || [ "$a" = "J" ] || exit 0
-  pkill -f "_worker/(worker_mac|mac_worker).sh"; sleep 2
-fi
+# nur ein Renderfarm-Fenster: ältere Start-Schleifen und Worker auf diesem Mac gehen, dieses übernimmt
+for pid in $(pgrep -f "Renderfarm Start|_worker/(worker_mac|mac_worker)\.sh|\.renderfarm/start\.sh"); do
+  [ "$pid" = "$$" ] || [ "$pid" = "$PPID" ] || kill "$pid" 2>/dev/null
+done
+sleep 1
 
 caffeinate -ims -w $$ &              # wach bleiben, solange dieses Fenster laeuft (auch am Strom ohne Bildschirm)
 cd "$HOME" || exit 1

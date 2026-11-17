@@ -35,10 +35,21 @@ bar() {       # [########............] fuer done/total
   local n=0 i s=""; [ "$2" -gt 0 ] && n=$((20 * $1 / $2)); [ $n -gt 20 ] && n=20
   for ((i = 0; i < 20; i++)); do [ $i -lt $n ] && s="$s#" || s="$s."; done; printf '[%s]' "$s"
 }
+banner() {
+  echo "=============================================================="
+  echo "  BLENDER RENDER FARM"
+  echo
+  echo "  Kann jederzeit abgebrochen und abgemeldet werden –"
+  echo "  einfach kurz auf WhatsApp Bescheid sagen: +41 78 720 14 11"
+  echo
+  echo "  Can be stopped and logged out at any time –"
+  echo "  just send a quick WhatsApp: +41 78 720 14 11"
+  echo "=============================================================="
+}
 board() {     # die Uebersicht: offene Jobs mit Frames, die Macs mit ihrem Zustand
   clear
-  echo "=== Renderfarm v$VERSION | $NAME | Blender $BV ==="
-  echo "Server: $ROOT"
+  banner
+  echo "v$VERSION | $NAME | Blender $BV"
   echo
   echo "JOBS"
   local any=0 J JOB S E TOTAL DONE
@@ -76,8 +87,8 @@ for app in "/Applications/Blender.app" $(ls -d /Applications/Blender*.app "$HOME
   [ -x "$app/Contents/MacOS/Blender" ] && { BLENDER="$app/Contents/MacOS/Blender"; break; }
 done
 clear
-echo "=== Ordner-Renderfarm v$VERSION | Worker $NAME ==="
-echo "Ordner:  $ROOT"
+banner
+echo "Worker $NAME | v$VERSION"
 [ -n "$BLENDER" ] || { echo "FEHLER: Kein Blender in /Applications gefunden."; read -n1 -p "Taste..."; exit 1; }
 BV=$("$BLENDER" --version 2>/dev/null | head -1 | awk '{print $2}')
 echo "Blender: $BV"

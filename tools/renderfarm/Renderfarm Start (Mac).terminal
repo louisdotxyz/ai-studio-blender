@@ -5,9 +5,9 @@
 	<key>CommandString</key>
 	<string>bash -c 'for i in 1 2 3; do for v in /Volumes/DDE*; do f="$v/BDE_VID/BA/02_Studierende/Louis Widmer/Flamenco/Renderfarm Start (Mac).command"; [ -f "$f" ] &amp;&amp; exec bash "$f"; done; echo "Server wird verbunden ..."; osascript -e "mount volume \"smb://fileredu.ad.zhdk.ch/DDE\"" >/dev/null 2>&amp;1; sleep 10; done; echo "Server nicht gefunden: WLAN/VPN pruefen und nochmals oeffnen."'</string>
 	<key>RunCommandAsShell</key>
-	<false/>
+	<true/>
 	<key>name</key>
-	<string>Renderfarm</string>
+	<string>Blender Render Farm</string>
 	<key>type</key>
 	<string>Window Settings</string>
 	<key>ProfileCurrentVersion</key>
@@ -17,6 +17,6 @@
 	<key>rowCount</key>
 	<integer>34</integer>
 	<key>shellExitAction</key>
-	<integer>1</integer>
+	<integer>0</integer>
 </dict>
 </plist>
