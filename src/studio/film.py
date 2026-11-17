@@ -342,17 +342,29 @@ def progress(st):
     return min(1.0, st.get("done", 0) / total) if total else 0.0
 
 
+def _ours(pid):
+    """The process is still the one the entry started (a Blender or encoder of ours): a pid of a film that
+    ended long ago may belong to anything now (once it was the shell running the tests, killed with it)."""
+    try:
+        command = subprocess.run(["ps", "-o", "command=", "-p", str(int(pid))], capture_output=True,
+                                 text=True, timeout=2).stdout
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+    return any(word in command for word in ("Blender", "blender", "ffmpeg", "film_job", "sleep"))
+
+
 def stop(film_dir):
     """Stop the film's process (its frames stay, Resume goes on)."""
     for film in _load():
-        if film["dir"] == film_dir and _alive(film.get("pid")):
+        if film["dir"] == film_dir and _alive(film.get("pid")) and _ours(film["pid"]):
+            pid = int(film["pid"])
             try:
-                os.killpg(int(film["pid"]), signal.SIGTERM)
+                if os.getpgid(pid) == pid and pid != os.getpgid(0):   # its own group (start_new_session)
+                    os.killpg(pid, signal.SIGTERM)
+                else:
+                    os.kill(pid, signal.SIGTERM)
             except (OSError, ValueError):
-                try:
-                    os.kill(int(film["pid"]), signal.SIGTERM)
-                except (OSError, ValueError):
-                    pass
+                pass
 
 
 def resume(film_dir):
