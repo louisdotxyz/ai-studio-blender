@@ -36,15 +36,8 @@ bar() {       # [########............] fuer done/total
   for ((i = 0; i < 20; i++)); do [ $i -lt $n ] && s="$s#" || s="$s."; done; printf '[%s]' "$s"
 }
 banner() {
-  echo "=============================================================="
-  echo "  BLENDER RENDER FARM"
-  echo
-  echo "  Kann jederzeit abgebrochen und abgemeldet werden –"
-  echo "  einfach kurz auf WhatsApp Bescheid sagen: +41 78 720 14 11"
-  echo
-  echo "  Can be stopped and logged out at any time –"
-  echo "  just send a quick WhatsApp: +41 78 720 14 11"
-  echo "=============================================================="
+  echo "BLENDER RENDER FARM  |  WhatsApp +41 78 720 14 11"
+  echo "--------------------------------------------------------------"
 }
 board() {     # die Uebersicht: offene Jobs mit Frames, die Macs mit ihrem Zustand
   clear

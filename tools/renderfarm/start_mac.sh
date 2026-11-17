@@ -83,6 +83,9 @@ for pid in $(pgrep -f "Renderfarm Start|_worker/(worker_mac|mac_worker|worker|st
 done
 sleep 1
 
+# der Hinweis gross in einem eigenen Fenster (TextEdit), damit er nicht im Terminal wegrutscht
+cp -f "$FARM/_worker/Hinweis.rtf" "$HELP/Blender Render Farm.rtf" 2>/dev/null && \
+  open -a TextEdit "$HELP/Blender Render Farm.rtf" 2>/dev/null
 caffeinate -ims -w $$ &              # wach bleiben, solange dieses Fenster laeuft (auch am Strom ohne Bildschirm)
 cd "$HOME" || exit 1
 while true; do
