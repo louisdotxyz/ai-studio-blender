@@ -366,6 +366,11 @@ def _cut_changed(item):
     cut.apply_soon(item.id_data, getattr(item, "section", None) or None)
 
 
+def _tracks():
+    from . import anim_tracks
+    return anim_tracks
+
+
 def _motion_items():
     from . import motion
     return motion.PRESET_ITEMS
@@ -501,6 +506,18 @@ class STUDIO_Settings(PropertyGroup):
         name="Ease", items=(('SMOOTH', "Smooth", "Slow at the start and the end"),
                             ('LINEAR', "Linear", "The same speed all the way (a turntable that loops)")),
         default='SMOOTH', options=set())
+    anim_track: StringProperty(name="Track", description="The track that is edited (Animation tab)",
+                               default="", options={'SKIP_SAVE'})
+    anim_start: IntProperty(name="Start", description="Where the keys start: moves the whole animation",
+                            get=lambda s: _tracks().get_start(s), set=lambda s, v: _tracks().set_start(s, v),
+                            options=set())
+    anim_length: IntProperty(name="Length", description="How many frames it takes: shorter is faster",
+                             min=1, get=lambda s: _tracks().get_length(s),
+                             set=lambda s, v: _tracks().set_length(s, v), options=set())
+    anim_curve: EnumProperty(name="Curve", description="How it moves between the keys",
+                             items=lambda _s, _c: _tracks().CURVE_ITEMS,
+                             get=lambda s: _tracks().get_curve(s), set=lambda s, v: _tracks().set_curve_index(s, v),
+                             options=set())
     motion_preset: EnumProperty(name="Preset", items=lambda _s, _c: _motion_items(), options=set(),
                                 update=lambda s, _c: _motion_preset_changed(s))
     motion_amount: FloatProperty(name="Amount", description="How strong: degrees, % of the distance or frames "

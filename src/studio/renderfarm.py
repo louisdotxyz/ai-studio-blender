@@ -156,10 +156,11 @@ def connected(root=None):
     freeze Blender's window); only the very first look waits for the answer."""
     root = root or share_root()
     if _conn["root"] != root:
-        return _look(root)
-    if time.monotonic() - _conn["time"] > CONN_AGE and not _conn["busy"]:
-        _conn["busy"] = True
-        threading.Thread(target=_look, args=(root,), daemon=True).start()
+        if not root.startswith("/Volumes/"):            # a local folder answers at once
+            return _look(root)
+        _conn.update(root=root, ok=False, time=-1e9, busy=False)   # a network one: in a thread, from the start
+    if time.monotonic() - _conn["time"] > CONN_AGE:
+        _look_later(root)
     return _conn["ok"]
 
 
@@ -230,6 +231,7 @@ def scan(root):
     out["online"] = online
     busy = {w[1].split(" ", 1)[1].strip() for w in workers if w[1].startswith("rendert ")}
     out["last_frame"] = _last_frames(root, busy)
+    present = set(names)
     for name in names:
         if name.endswith(".part"):
             out["halves"].append(name)
@@ -237,29 +239,31 @@ def scan(root):
         if not name.endswith(".json"):
             continue
         job = name[:-5]
-        try:
-            with open(os.path.join(queue, name), encoding="utf-8") as f:
-                cfg = json.load(f)
-            start, end = int(cfg.get("start", 0)), int(cfg.get("end", 0))
-        except (OSError, ValueError, TypeError):
-            continue
-        done, empty = _done_files(os.path.join(root, "renders", job), job)
+        known = _job_files.get((root, job))
+        if known is None:                          # a job's .json never changes: read once (over VPN every
+            try:                                   # file costs a round trip)
+                with open(os.path.join(queue, name), encoding="utf-8") as f:
+                    cfg = json.load(f)
+                start, end = int(cfg.get("start", 0)), int(cfg.get("end", 0))
+                when = os.path.getmtime(os.path.join(queue, name))
+            except (OSError, ValueError, TypeError):
+                continue
+            known = _job_files[(root, job)] = {"cfg": cfg, "start": start, "end": end, "when": when}
+        cfg, start, end, when = known["cfg"], known["start"], known["end"], known["when"]
         total = max(0, end - start + 1)
-        if os.path.exists(os.path.join(queue, job + ".done")):
+        if job + ".done" in present:
             state = 'done'
-        elif empty or done or job in busy:
-            state = 'rendering'
+            if "done" not in known:                # a finished job does not change any more either
+                known["done"] = _done_files(os.path.join(root, "renders", job), job)[0]
+            done = known["done"]
         else:
-            state = 'waiting'
-        try:
-            when = os.path.getmtime(os.path.join(queue, name))
-        except OSError:
-            when = 0.0
+            done, empty = _done_files(os.path.join(root, "renders", job), job)
+            state = 'rendering' if empty or done or job in busy else 'waiting'
         out["jobs"].append({"job": job, "scene": cfg.get("scene", ""), "start": start, "end": end, "total": total,
                             "format": cfg.get("format", "PNG"),
                             "done": done, "state": state, "note": cfg.get("note", ""),
                             "sent_by": cfg.get("sent_by", ""), "time": when,
-                            "blend": os.path.exists(os.path.join(queue, job + ".blend"))})
+                            "blend": job + ".blend" in present})
     out["jobs"].sort(key=lambda j: j["time"], reverse=True)
     out["ok"] = True
     return out
@@ -285,19 +289,29 @@ def _last_frames(root, jobs):
     return out
 
 
-_view = {"scan": None, "busy": False, "drawn": 0.0}
+_job_files = {}           # (share, job) → its .json (and the frame count once it is done): read once
+_view = {"scan": None, "busy": False, "drawn": 0.0, "gen": 0, "since": 0.0}
+STUCK = 30.0              # a look at the share that takes longer: the share hangs (VPN gone, Mac slept)
 
 
-def _scan_now(root):
+def _scan_now(root, gen):
     try:
         view = scan(root)
         _retire_strays(root, view)
-        _view["scan"] = view
+        if gen == _view["gen"]:
+            _view["scan"] = view
     except Exception as ex:                       # the share away in the middle of it
-        if _view["scan"] is None:
+        if _view["scan"] is None and gen == _view["gen"]:
             _view["scan"] = {"ok": False, "error": str(ex), "jobs": [], "halves": [], "workers": [],
                              "time": time.time()}
-    _view["busy"] = False
+    if gen == _view["gen"]:
+        _view["busy"] = False
+
+
+def stuck():
+    """The look at the share has hung for a while (a stale network folder)."""
+    now = time.monotonic()
+    return (_view["busy"] and now - _view["since"] > STUCK) or (_conn["busy"] and now - _conn.get("since", now) > STUCK)
 
 
 def _retire_strays(root, view):
@@ -334,8 +348,38 @@ def _refresh(force=False):
         return
     last = (_view["scan"] or {}).get("time", 0.0)
     if force or time.time() - last > REFRESH:
-        _view["busy"] = True
-        threading.Thread(target=_scan_now, args=(share_root(),), daemon=True).start()
+        _view.update(busy=True, since=time.monotonic())
+        threading.Thread(target=_scan_now, args=(share_root(), _view["gen"]), daemon=True).start()
+
+
+def _look_later(root=None):
+    """The share looked at in a thread (a stale network folder can block for minutes)."""
+    if not _conn["busy"]:
+        _conn.update(busy=True, since=time.monotonic())
+        threading.Thread(target=_look, args=(root or share_root(),), daemon=True).start()
+
+
+def reconnect(mount=True):
+    """Everything about the farm starts fresh: a hung look is given up, the share is mounted again
+    (the login from the keychain, else the Mac asks), the jobs' frames are fetched again."""
+    _view["gen"] += 1
+    _view["busy"] = False
+    _conn.update(busy=False, time=-1e9)
+    now = time.time()
+    for job in _jobs:
+        job["looked"] = 0.0
+        job["quiet"] = 0
+        if job.get("fetching") and now - job.get("fetch_since", now) > STUCK:
+            job["fetching"] = False                  # that thread hangs on the old mount: a new one goes
+    try:
+        mounted = "DDE" in os.listdir("/Volumes")      # the list only: a stale mount is not touched
+    except OSError:
+        mounted = False
+    if mount and not mounted:
+        _alarm["mounted"] = 0.0
+        _reconnect()
+    _look_later()
+    _refresh(force=True)
 
 
 def _tick():
@@ -344,12 +388,12 @@ def _tick():
         return None
     from . import runner
     if not _conn["ok"]:                     # not connected: look every 2 s, so it shows as soon as it is
-        was = _conn["ok"]
-        _look(share_root())
-        if _conn["ok"] and not was:
-            _refresh(force=True)
+        _view["waiting"] = True
+        _look_later()
         runner.tag_redraw()
         return 2.0
+    if _view.pop("waiting", False):
+        _view["force"] = True
     _refresh(force=_view.pop("force", False))
     runner.tag_redraw()
     return REFRESH
@@ -894,9 +938,9 @@ def _collect_all():
             cut.on_film_done(job["scene"])
             runner.notify("%s ready (render farm)" % job["note"])
             _save_registry()
-            _reconcile()
+            threading.Thread(target=_reconcile, daemon=True).start()
         elif not job.get("fetching") and now - job.get("looked", 0.0) >= min(60.0, 5.0 * (1 + job.get("quiet", 0))):
-            job["looked"], job["fetching"] = now, True
+            job["looked"], job["fetching"], job["fetch_since"] = now, True, now
             threading.Thread(target=_fetch, args=(job,), daemon=True).start()
 
 
@@ -1350,6 +1394,14 @@ def last_frame_time():
     return max((finished for finished, _w, _s in _events), default=0.0)
 
 
+def _draw_reconnect(col):
+    row = col.row(align=True)
+    row.scale_y = 1.2
+    row.operator(STUDIO_OT_farm_refresh.bl_idname, icon='FILE_REFRESH')
+    row.operator(STUDIO_OT_farm_vpn.bl_idname, icon='WORLD')
+    row.operator(STUDIO_OT_farm_connect.bl_idname, text="", icon='FILEBROWSER')
+
+
 def draw_state(layout, context):
     """The farm in short: Macs and speed, the frames of the last hour, each Mac in one line; when something
     is wrong (share, VPN, no Mac, no frame for a while) the way back in one click."""
@@ -1359,26 +1411,35 @@ def draw_state(layout, context):
     watch()
     box = layout.box()
     col = box.column(align=True)
-    if not connected():
+    if not connected() and _conn["time"] < 0 and not stuck():    # the first look is on its way
+        row = col.row(align=True)
+        row.active = False
+        row.label(text="Looking at the render farm …", icon='TIME')
+        row.operator(STUDIO_OT_farm_refresh.bl_idname, icon='FILE_REFRESH')
+        return
+    if not connected() and not stuck():
         row = col.row(align=True)
         row.alert = True
         row.label(text="Share not connected" + (": renders stay on this Mac" if rq.farm_on and not active() else
                                                 ": frames wait on the farm"), icon='ERROR')
-        row = col.row(align=True)
-        row.scale_y = 1.2
-        row.operator(STUDIO_OT_farm_connect.bl_idname, icon='LINKED')
-        row.operator(STUDIO_OT_farm_vpn.bl_idname, icon='WORLD')
-        row.operator(STUDIO_OT_farm_refresh.bl_idname, text="", icon='FILE_REFRESH')
+        _draw_reconnect(col)
         hint = col.row()
         hint.active = False
-        hint.label(text="From home: VPN first, then Connect (it reconnects by itself as soon as it can)",
-                   translate=False)
+        hint.label(text="From home: VPN first, then Reconnect (it also tries by itself)", translate=False)
         return
     view = _view["scan"]
-    if view is None:                                 # the first look at the share is on its way
+    if stuck():                                      # the share hangs: VPN gone, Mac slept
         row = col.row()
+        row.alert = True
+        row.label(text="The farm does not answer (VPN off? Mac slept?)", icon='ERROR', translate=False)
+        _draw_reconnect(col)
+        if view is None:
+            return
+    elif view is None:                               # the first look at the share is on its way
+        row = col.row(align=True)
         row.active = False
         row.label(text="Looking at the render farm …", icon='TIME')
+        row.operator(STUDIO_OT_farm_refresh.bl_idname, icon='FILE_REFRESH')
         return
     from .runner import format_time
     states = worker_states(view)
@@ -1402,7 +1463,7 @@ def draw_state(layout, context):
         right.alignment = 'RIGHT'
         right.label(text="%d/%d%s" % (have, total, " · ~%s" % format_time(secs) if secs and workers else ""),
                     translate=False)
-    head.operator(STUDIO_OT_farm_refresh.bl_idname, text="", icon='FILE_REFRESH', emboss=False)
+    head.operator(STUDIO_OT_farm_refresh.bl_idname, text="", icon='FILE_REFRESH')
     if workers and waiting and last and now - last > STALL and not any(st == 'loading' for _n, st, _j, _s in states):
         row = col.row()
         row.alert = True
@@ -1489,15 +1550,13 @@ class STUDIO_OT_farm_remove(Operator):
 
 class STUDIO_OT_farm_refresh(Operator):
     bl_idname = "studio.farm_refresh"
-    bl_label = "Refresh"
-    bl_description = "Look at the render farm now: the share, the Macs and the frames that are done"
+    bl_label = "Reconnect"
+    bl_description = ("Connect to the render farm again: mounts the share if it is gone, gives up a hung "
+                      "look, then reads the Macs and fetches the finished frames")
     bl_options = {'INTERNAL'}
 
     def execute(self, _context):
-        _look(share_root())                         # the share is looked at again, right now
-        for job in _jobs:
-            job["looked"] = 0.0                     # frames fetched right away
-        _refresh(force=True)
+        reconnect()
         _alarm["looked"] = time.time()
         if active() and not bpy.app.timers.is_registered(_pump):
             bpy.app.timers.register(_pump, first_interval=0.1, persistent=True)
@@ -1528,7 +1587,7 @@ class STUDIO_OT_farm_connect(Operator):
     def execute(self, _context):
         subprocess.Popen(["open", "smb://fileredu.ad.zhdk.ch/DDE"], stdin=subprocess.DEVNULL,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        _conn["time"] = -1e9
+        reconnect(mount=False)
         watch()
         return {'FINISHED'}
 
@@ -1541,10 +1600,8 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     _load_registry()                             # jobs sent before a restart: their frames still come
-    try:
-        _reconcile()
-    except OSError:
-        pass
+    if _jobs:                                    # on the share: in a thread (it may hang)
+        threading.Thread(target=_reconcile, daemon=True).start()
     if active() and not bpy.app.timers.is_registered(_pump):
         bpy.app.timers.register(_pump, first_interval=5.0, persistent=True)
 

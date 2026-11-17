@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The Animation tab of the Studio sidebar (between Material and Render): the film's sections, camera moves
-(Motion), Orbit, the explosion view and the scene's own values (LED brightness, roughness … the custom
-properties of the scene) with a key at the current frame each. The sections render and are edited in the
+"""The Animation tab of the Studio sidebar (between Material and Render): the film's sections, what moves in
+the section at the playhead (each animated thing with its frames: move it, faster or slower, a curve preset,
+the Graph Editor), new camera moves, the explosion view and the scene's own values (LED brightness,
+roughness … the custom properties of the scene) with a key at the current frame each. The sections render and are edited in the
 Video Editor (its Studio tab)."""
 
 import bpy
@@ -11,13 +12,14 @@ from bpy.types import Operator, Panel
 from .ui_common import ANIM_TAB_ORDER, _SidebarPanel, _unpin, section
 
 HIDDEN_VALUES = {"uuid", "assets reported", "render_preset", "Explosion"}   # internal, or shown elsewhere
+HIDDEN_PREFIXES = ("_", "studio", "cycles", "as_", "lightwrangler", "flamenco", "meshfix", "lm_", "uuid", "assets ")
 
 
 def scene_values(scene):
     """The scene's own values: its custom properties that are numbers or switches (in name order)."""
     out = []
     for key in sorted(scene.keys(), key=str.lower):
-        if key.startswith(("_", "studio", "cycles", "as_")) or key in HIDDEN_VALUES:
+        if key.lower().startswith(HIDDEN_PREFIXES) or key in HIDDEN_VALUES:
             continue
         value = scene.get(key)
         if isinstance(value, (bool, int, float)):
@@ -92,16 +94,55 @@ def _draw_sections(layout, scene):
     return current
 
 
-def _draw_moves(layout, scene, current):
-    """The section at the playhead: its length and its moves (pull out, hold, orbit …) in order."""
-    from . import motion
-    rq = scene.studio
-    if current is None:
-        start, end, name = motion.motion_range(scene)
-        title = "Whole film"
-    else:
-        marker, start, end = current
-        name, title = marker.name, marker.name
+class STUDIO_OT_anim_track(Operator):
+    bl_idname = "studio.anim_track"
+    bl_label = "Track"
+    bl_description = "Choose this animation to move it, make it faster or slower or give it a curve"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    action: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})      # PICK / GRAPH / BACK / CLEAR / FASTER / SLOWER
+    track: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, _context, props):
+        return {"GRAPH": "Show only this animation in the Graph Editor (the timeline turns into it) to shape "
+                         "its curves by hand",
+                "BACK": "The Graph Editor back to the timeline",
+                "CLEAR": "Remove this animation's keys in this section (Ctrl+Z brings them back)",
+                "FASTER": "A quarter faster (shorter)",
+                "SLOWER": "A quarter slower (longer)"}.get(props.action, cls.bl_description)
+
+    def execute(self, context):
+        from . import anim_tracks
+        scene = context.scene
+        if self.action == 'BACK':
+            anim_tracks.back_from_graph(context)
+            return {'FINISHED'}
+        if self.track:
+            scene.studio.anim_track = self.track
+        track, start, end = anim_tracks.active(scene)
+        if track is None:
+            return {'CANCELLED'}
+        if self.action == 'GRAPH':
+            if not anim_tracks.show_in_graph(context, track):
+                self.report({'WARNING'}, "No timeline or Graph Editor in this workspace")
+                return {'CANCELLED'}
+        elif self.action == 'CLEAR':
+            count = anim_tracks.clear(track, start, end)
+            self.report({'INFO'}, "%d keys of %s removed" % (count, track["label"]))
+        elif self.action in {'FASTER', 'SLOWER'}:
+            length = track["last"] - track["first"]
+            anim_tracks.retime(track, start, end, track["first"],
+                               round(length * (0.75 if self.action == 'FASTER' else 1.25)))
+        return {'FINISHED'}
+
+
+def _draw_now(layout, scene, current):
+    """What moves in the section at the playhead: one line per animated thing (camera, object, value …)
+    with its frames; the chosen one below: start, length, faster/slower, curve preset, Graph Editor."""
+    from . import anim_tracks, motion
+    start, end, _name = anim_tracks.section_range(scene)
+    title = current[0].name if current else "Whole film"
     box = layout.box()
     head = box.row(align=True)
     head.label(text=title, icon='ANIM')
@@ -109,12 +150,73 @@ def _draw_moves(layout, scene, current):
     info.alignment = 'RIGHT'
     info.active = False
     info.label(text="%d–%d · %.1f s" % (start, end, motion.seconds(scene, end - start + 1)), translate=False)
-    steps = [(i, s) for i, s in enumerate(rq.motion_steps) if s.section == (name if current else name)]
+    found = anim_tracks.tracks(scene, start, end)
+    if not found:
+        hint = box.column(align=True)
+        hint.active = False
+        hint.label(text="Nothing moves here yet.", icon='INFO')
+        hint.label(text="Add a camera move below, key a value or an object (I)")
+        return
+    track, _s, _e = anim_tracks.active(scene)
+    col = box.column(align=True)
+    for t in found:
+        row = col.row(align=True)
+        chosen = track is not None and t["id"] == track["id"]
+        op = row.operator(STUDIO_OT_anim_track.bl_idname, text=t["label"], icon=t["icon"], depress=chosen)
+        op.action, op.track = 'PICK', t["id"]
+        span = row.row(align=True)
+        span.ui_units_x = 4.5
+        span.alignment = 'RIGHT'
+        span.active = chosen
+        span.label(text="%d–%d" % (t["first"], t["last"]) if t["last"] > t["first"] else "%d" % t["first"],
+                   translate=False)
+    if track is None:
+        return
+    rq = scene.studio
+    edit = box.box()
+    top = edit.row(align=True)
+    top.label(text=track["label"], icon=track["icon"])
+    graph = anim_tracks.graph_open(bpy.context)
+    op = top.operator(STUDIO_OT_anim_track.bl_idname, text="Timeline" if graph else "Graph",
+                      icon='TIME' if graph else 'GRAPH', depress=graph)
+    op.action, op.track = ('BACK' if graph else 'GRAPH'), track["id"]
+    op = top.operator(STUDIO_OT_anim_track.bl_idname, text="", icon='TRASH')
+    op.action, op.track = 'CLEAR', track["id"]
+    if track["last"] > track["first"]:
+        row = edit.row(align=True)
+        row.prop(rq, "anim_start", text="Start")
+        row.prop(rq, "anim_length", text="Frames")
+        row = edit.row(align=True)
+        for action, text, icon in (('FASTER', "Faster", 'FF'), ('SLOWER', "Slower", 'REW')):
+            op = row.operator(STUDIO_OT_anim_track.bl_idname, text=text, icon=icon)
+            op.action, op.track = action, track["id"]
+        secs = row.row()
+        secs.alignment = 'RIGHT'
+        secs.active = False
+        secs.label(text="%.1f s" % motion.seconds(scene, track["last"] - track["first"]), translate=False)
+        edit.prop(rq, "anim_curve", text="Curve")
+    else:
+        edit.prop(rq, "anim_start", text="Frame")
+
+
+def _draw_moves(layout, scene, current):
+    """New camera moves for the section at the playhead (pull out, hold, orbit …) in order, then Apply."""
+    from . import motion
+    rq = scene.studio
+    box, head, is_open = section(layout, "anim_moves", "Camera Moves", 'CON_CAMERASOLVER')
+    if not is_open:
+        return
+    if current is None:
+        start, end, name = motion.motion_range(scene)
+    else:
+        marker, start, end = current
+        name = marker.name
+    steps = [(i, s) for i, s in enumerate(rq.motion_steps) if s.section == name]
     col = box.column(align=True)
     if not steps:
         hint = col.row()
         hint.active = False
-        hint.label(text="No moves yet: choose one below and add it")
+        hint.label(text="Choose a move, Add, then Apply (it replaces the camera's keys here)")
     for i, step in steps:
         row = col.row(align=True)
         row.prop(step, "preset", text="")
@@ -142,14 +244,16 @@ def _draw_moves(layout, scene, current):
 
 
 def _draw_values(layout, scene):
-    box, _head, is_open = section(layout, "anim_values", "Values", 'DRIVER')
+    box, head, is_open = section(layout, "anim_values", "Values", 'DRIVER', default_open=False)
+    op = head.operator("wm.properties_add", text="", icon='ADD', emboss=False)
+    op.data_path = "scene"
     if not is_open:
         return
     found = scene_values(scene)
     if not found:
         hint = box.row()
         hint.active = False
-        hint.label(text="No values of the scene yet (custom properties)", icon='INFO')
+        hint.label(text="+ makes one: a value drivers and materials can read", icon='INFO')
         return
     col = box.column(align=True)
     for key in found:
@@ -177,6 +281,7 @@ class STUDIO_PT_animation(_SidebarPanel, Panel):
         row.operator("studio.cut", text="Film in the Video Editor", icon='SEQUENCE').action = 'OPEN'
         row.operator("studio.section", text="", icon='ADD').action = 'ADD'
         current = _draw_sections(layout, scene)
+        _draw_now(layout, scene, current)
         _draw_moves(layout, scene, current)
         box, _head, is_open = section(layout, "anim_explode", "Explosion", 'MOD_EXPLODE', default_open=False)
         if is_open:
@@ -184,4 +289,4 @@ class STUDIO_PT_animation(_SidebarPanel, Panel):
         _draw_values(layout, scene)
 
 
-classes = (STUDIO_OT_value_key, STUDIO_PT_animation)
+classes = (STUDIO_OT_value_key, STUDIO_OT_anim_track, STUDIO_PT_animation)

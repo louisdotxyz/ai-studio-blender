@@ -1160,48 +1160,6 @@ class STUDIO_OT_material_clean_unused(Operator):
         return {'FINISHED'}
 
 
-_HIDDEN_VALUES = ("_", "studio", "cycles", "as_", "lightwrangler", "flamenco", "meshfix", "lm_", "uuid", "assets ")
-
-
-def scene_values(scene):
-    """The scene's own custom properties a person made (numbers, switches, text), not add-on data."""
-    out = []
-    try:
-        items = list(scene.items())
-    except (TypeError, AttributeError):
-        return out
-    for key, value in items:
-        if key.lower().startswith(_HIDDEN_VALUES):
-            continue
-        if isinstance(value, (int, float, str)) or (hasattr(value, "__len__") and not hasattr(value, "keys")
-                                                     and len(value) <= 4):
-            out.append(key)
-    return sorted(out, key=str.lower)
-
-
-def draw_scene_values(layout, scene):
-    """The scene's own values as sliders: change and key them (I) right here; + makes a new one."""
-    from .ui_common import section
-    names = scene_values(scene)
-    box, head, is_open = section(layout, "scene_values", "Scene Values (%d)" % len(names), 'PROPERTIES',
-                                 default_open=bool(names))
-    op = head.operator("wm.properties_add", text="", icon='ADD', emboss=False)
-    op.data_path = "scene"
-    if not is_open:
-        return
-    if not names:
-        hint = box.row()
-        hint.active = False
-        hint.label(text="+ makes one: a value drivers and materials can read")
-        return
-    col = box.column(align=True)
-    for key in names:
-        row = col.row(align=True)
-        row.prop(scene, '["%s"]' % key.replace('"', '\\"'), text=key)
-        edit = row.operator("wm.properties_edit", text="", icon='PREFERENCES', emboss=False)
-        edit.data_path, edit.property_name = "scene", key
-
-
 def draw_tile_menu(self, context):
     """Right-click on a library tile: the material's own entries in Blender's button menu."""
     op = getattr(context, "button_operator", None)
@@ -1458,10 +1416,7 @@ class STUDIO_PT_material(_SidebarPanel, Panel):
             if _principled(material) is not None:
                 draw_wear(layout, material)
 
-        # 3. The scene's own values (Glow, LED Lumen … that drivers and materials read)
-        draw_scene_values(layout, context.scene)
-
-        # 4. Library
+        # 3. Library (the scene's own values are in the Animation tab)
         self._draw_library(layout, context, material, None)
 
     @staticmethod

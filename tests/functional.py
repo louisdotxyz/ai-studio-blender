@@ -2831,6 +2831,13 @@ def render_farm_folder():
     check("farm: .done → done; job names are safe", farm.scan(root)["jobs"][0]["state"] == 'done'
           and farm.job_name("/x/VELO now.blend", "Szene 1", 0).startswith("VELO_now_19")
           and farm.job_name("/x/VELO now.blend", "Szene 1", 0).endswith("_Szene_1"))
+    keep_view = dict(farm._view)
+    farm._view.update(busy=True, since=time.monotonic() - 60)
+    hung = farm.stuck()
+    farm.reconnect(mount=False)
+    check("farm: a hung look shows, Reconnect gives it up and looks again", hung and farm._view["gen"] > keep_view["gen"],
+          farm._view)
+    farm._view.update(keep_view)
     jobs = [{"job": "a_2_x", "phase": "sent", "root": root, "kind": 'ANIM', "start": 1, "end": 3, "ext": "png"},
             {"job": "a_1_y", "phase": "sent", "root": root, "kind": 'ANIM', "start": 1, "end": 3, "ext": "png"}]
     for job in jobs:
@@ -2901,6 +2908,38 @@ def render_farm_folder():
         farm._events[:] = keep_events
         farm._stamps.clear()
         farm._stamps.update(keep_stamps)
+
+
+@section
+def animation_tracks():
+    """Animation tab: what moves in the section, moved, faster, a curve preset, removed."""
+    tr = mod("studio.anim_tracks")
+    scene = bpy.context.scene
+    obj = bpy.data.objects.new("T Magnet", None)
+    scene.collection.objects.link(obj)
+    keep = scene.frame_current, scene.frame_start, scene.frame_end
+    try:
+        scene.frame_start, scene.frame_end = 1, 100
+        for frame, x in ((10, 0.0), (30, 1.0)):
+            obj.location.x = x
+            obj.keyframe_insert("location", index=0, frame=frame)
+        tr.forget()
+        found = {t["id"]: t for t in tr.tracks(scene, 1, 100)}
+        t = found.get("OB:T Magnet")
+        check("a keyed object is a track with its frames", t is not None and (t["first"], t["last"]) == (10, 30),
+              list(found))
+        tr.retime(t, 1, 100, 20, 10)
+        tr.set_curve(t, 1, 100, 'SNAP')
+        fc = obj.animation_data.action and tr.fcurves_of(obj)[0]
+        xs = [round(p.co.x) for p in fc.keyframe_points]
+        check("moved to 20, faster (10 frames), magnet snap curve", xs == [20, 30]
+              and fc.keyframe_points[0].interpolation == 'EXPO' and tr.curve_of(t, 1, 100) == 'SNAP', xs)
+        check("removed again", tr.clear(t, 1, 100) == 2
+              and "OB:T Magnet" not in {x["id"] for x in tr.tracks(scene, 1, 100)})
+    finally:
+        bpy.data.objects.remove(obj)
+        scene.frame_current, scene.frame_start, scene.frame_end = keep
+        tr.forget()
 
 
 @section
