@@ -2616,6 +2616,17 @@ def motion_sections():
                   and not any(m.mute for m in hero.modifiers) and px_intro_strip.studio_warmth == 0.0
                   and px_intro_strip.studio_saturation == 1.0, (px_warm, px_muted))
             fe.apply_preset(hero, 'NEUTRAL')
+            ca = mod("studio.cut_auto")
+            px_any = ca.ready(scene, "01 Intro", 'ANY')
+            px_high = ca.ready(scene, "01 Intro", 'HIGH')
+            px_src = os.path.join(TMP, "auto_src.mp4")
+            with open(px_src, "w") as f:
+                f.write("video")
+            px_out = ca._deliver({"outs": [px_src], "folder": os.path.join(TMP, "FINAL"), "name": "01 Final 4K"})
+            check("export when ready: frames counted per quality, the result copied under its name",
+                  px_any[0] and px_any[1] == px_any[2] > 0 and not px_high[0]
+                  and px_out == [os.path.join(TMP, "FINAL", "01 Final 4K.mp4")] and os.path.exists(px_out[0]),
+                  (px_any, px_high, px_out))
             aq = mod("studio.autoquality")
             key = aq.section_key("02 Hero")
             before = aq.next_quality(scene, key)

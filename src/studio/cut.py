@@ -723,6 +723,8 @@ def _keep_window_scene():
             _proxied[0] = time.monotonic()
             from . import cut_proxy
             cut_proxy.tick()
+        from . import cut_auto
+        cut_auto.tick()                               # exports waiting for their frames (every 10 s)
         for space in bpy.data.workspaces:          # the Video Editor shows the cut, never the 3D scene
             shown = getattr(space, "sequencer_scene", None)
             if shown is None or shown.get(FILM_KEY) or not _is_cut_space(space):

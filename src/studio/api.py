@@ -1127,6 +1127,37 @@ def cut_export(edl=False, format=None, quality=None, size=None, range=None, musi
     return out
 
 
+def cut_export_when_ready(sections=None, split=None, format=None, quality=None, size=None, folder=None,
+                          name=None, frames='HIGH'):
+    """Export by itself once every frame of these sections (names; None = as chosen in Export) is rendered
+    and up to date in the quality `frames` ('HIGH' / 'ANY'): the farm or this Mac may still be rendering.
+    split / format / quality / size like cut_export (None: the Export settings); folder + name: the result
+    is copied there under that name (e.g. a FINAL folder). Survives a restart; one export at a time; tried
+    again twice if it fails; done and failed are told in the chat. Use this, never an own timer.
+    Returns the wish (its id cancels it: cut_export_cancel)."""
+    from . import cut_auto
+    return cut_auto.add(_cut_scene(), sections, split, format, quality, size, folder, name, frames)
+
+
+def cut_export_waiting():
+    """The exports waiting for their frames (and the ones of the last day): id, sections, state
+    WAITING / EXPORTING / DONE / FAILED, frames there / all, outputs, error."""
+    from . import cut_auto
+    scene = _cut_scene()
+    out = []
+    for item in cut_auto.load():
+        have, total = cut_auto.progress(scene, item)
+        out.append(dict(item, frames_there=have, frames_all=total))
+    return out
+
+
+def cut_export_cancel(item_id):
+    """Cancel a waiting export (cut_export_waiting gives the ids)."""
+    from . import cut_auto
+    cut_auto.cancel(item_id)
+    return cut_export_waiting()
+
+
 def section_proof(section=None):
     """A quick viewport image from the section's camera (None: every section) at its middle frame, into
     animation/Frames/<section>/.proof.png (shown in the Video Editor's Sections tab). Returns the paths:

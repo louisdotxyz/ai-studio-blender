@@ -610,6 +610,58 @@ def _draw_export(layout, scene):
         folder = ""
     if folder:
         row.operator("wm.path_open", text="", icon='FILE_FOLDER').filepath = folder
+    _draw_when_ready(layout, scene)
+
+
+AUTO_ICONS = {'WAITING': 'TIME', 'EXPORTING': 'RENDER_ANIMATION', 'DONE': 'CHECKMARK', 'FAILED': 'ERROR'}
+
+
+def _draw_when_ready(layout, scene):
+    """Export when ready: the button, and each wish with how far its frames are."""
+    from . import cut_auto
+    row = layout.row(align=True)
+    row.enabled = bool(bpy.data.filepath)
+    row.operator(STUDIO_OT_cut_auto.bl_idname, text="Export When All Frames Are There",
+                 icon='TIME').action = 'ADD'
+    for item in cut_auto.load()[-3:]:
+        row = layout.row(align=True)
+        text = " + ".join(_short(s) for s in item["sections"])
+        if item["state"] == 'WAITING':
+            have, total = cut_auto.progress(scene, item)
+            text += " · %d / %d frames" % (have, total)
+        elif item["state"] == 'EXPORTING':
+            text += " · exports"
+        elif item["state"] == 'DONE':
+            text += " · " + os.path.basename((item.get("delivered") or item["outs"] or [""])[0])
+        else:
+            text += " · " + (item.get("error") or "failed")[:60]
+        row.label(text=text, icon=AUTO_ICONS.get(item["state"], 'DOT'), translate=False)
+        op = row.operator(STUDIO_OT_cut_auto.bl_idname, text="", icon='X', emboss=False)
+        op.action, op.item = 'CANCEL', item["id"]
+
+
+class STUDIO_OT_cut_auto(Operator):
+    bl_idname = "studio.cut_auto"
+    bl_label = "Export When Ready"
+    bl_description = ("The export with these settings starts by itself once every frame of the chosen sections "
+                      "is rendered and up to date (also after a restart)")
+    bl_options = {'INTERNAL'}
+
+    action: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})      # ADD CANCEL
+    item: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    def execute(self, context):
+        from . import cut_auto
+        if self.action == 'CANCEL':
+            cut_auto.cancel(self.item)
+            return {'FINISHED'}
+        try:
+            item = cut_auto.add(cut._scene(context))
+        except ValueError as ex:
+            self.report({'WARNING'}, str(ex))
+            return {'CANCELLED'}
+        self.report({'INFO'}, "Exports when ready: %s" % " + ".join(item["sections"]))
+        return {'FINISHED'}
 
 
 class STUDIO_PT_cut(Panel):
@@ -648,7 +700,7 @@ class STUDIO_PT_cut(Panel):
 
 
 classes = (STUDIO_OT_cut_export_pick, STUDIO_OT_cut_import, STUDIO_OT_cut_clip, STUDIO_OT_cut_look,
-           STUDIO_OT_cut_transition, STUDIO_PT_cut_queue, STUDIO_PT_cut)
+           STUDIO_OT_cut_transition, STUDIO_OT_cut_auto, STUDIO_PT_cut_queue, STUDIO_PT_cut)
 
 
 def _compare_changed(wm, context):

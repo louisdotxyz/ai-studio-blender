@@ -379,6 +379,11 @@ def _keep(namespace, base, store=None):
     for name, value in namespace.items():
         if name.startswith("__") or name in base:
             continue
+        try:
+            value.__class__                   # a Blender object removed meanwhile (an add-on's operator …)
+        except ReferenceError:
+            dropped.append(name)
+            continue
         if isinstance(value, (types.FunctionType, type, types.ModuleType)):
             kept[name] = value
             continue
