@@ -1,26 +1,28 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The Video Editor's Studio sidebar: one panel (in the preview's sidebar), in the order you work:
+"""The Video Editor's Studio sidebar: one panel (in the preview's sidebar) without scrolling, like the
+Studio tab of the 3D view: one bar for every render on top, then four buttons switch what is below:
 
-1. Clips      the sections as clips (what is rendered of each), the selected clip (render again, freeze,
-              still, length; your own clips: opacity, trim, mute), import of videos, images and sound
-2. Transitions  between the sections (cut, cross, through black or white, hold), fade in / out of the film
-                and of the selected clip
-3. Colour & Light  the selected clip: exposure, contrast, shadows, highlights, saturation, warmth, tint;
-                   to all clips, a look over the whole film, letterbox
-4. Export     which sections, one file or one per section, format, quality, size
-
-Above them: one bar for every render (the queue in a popover, red when something needs a look).
-Each function is in one place only.
-"""
+  Clips        the sections with what is rendered (a band under each clip shows it frame by frame), the
+               selected clip (render again, freeze, still, length; your own: opacity, trim, mute), import
+  Transitions  between the sections (cut, cross, black, white, hold), fade in / out of film and clip
+  Look         the selected clip's light and colour, to all clips, a look over the film, letterbox
+  Export       which sections, one file or one per section, format, quality, size
+Each function is in one place only."""
 
 import os
 
 import bpy
-from bpy.props import CollectionProperty, StringProperty
+from bpy.props import CollectionProperty, EnumProperty, StringProperty
 from bpy.types import Operator, OperatorFileListElement, Panel
 
 from . import cut, film_tools
-from .ui_common import section as fold
+TABS = (('CLIPS', "Clips", "The sections and the selected clip", 'SEQUENCE', 0),
+        ('MOVES', "Transitions", "Between the sections, fades of film and clip", 'IPO_EASE_IN_OUT', 1),
+        ('LOOK', "Look", "Light and colour of the selected clip", 'COLOR', 2),
+        ('EXPORT', "Export", "The film as video or frames", 'EXPORT', 3))
+LEGEND = (('HIGH', "HQ", 'STRIP_COLOR_04'), ('LOW', "LQ", 'STRIP_COLOR_02'), ('OLD', "old", 'STRIP_COLOR_09'),
+          ('RENDERING', "renders", 'STRIP_COLOR_05'), ('MISSING', "missing", 'STRIP_COLOR_01'),
+          ('DRAFT', "draft", 'STRIP_COLOR_06'))
 
 STATE_ICONS = {'HIGH': 'STRIP_COLOR_04', 'LOW': 'STRIP_COLOR_02', 'DRAFT': 'STRIP_COLOR_09', '': 'STRIP_COLOR_01'}
 MOVIES = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi"}
@@ -229,89 +231,102 @@ def _draw_head(layout, scene):
             op.section, op.code = section, code
 
 
+def _legend(layout):
+    grid = layout.grid_flow(row_major=True, columns=3, even_columns=True, align=True)
+    grid.scale_y = 0.75
+    for _state, text, icon in LEGEND:
+        cell = grid.row()
+        cell.active = False
+        cell.label(text=text, icon=_icon(icon, 'DOT'), translate=False)
+
+
+def _section_text(name, start, end):
+    """'255 HQ · 40 renders · 10 old' from the frame band."""
+    from . import cut_overlay
+    counts = cut_overlay.summary(name, start, end)
+    parts = ["%d %s" % (counts[s], t) for s, t, _i in LEGEND if counts.get(s)]
+    return " · ".join(parts[:3]) or "—"
+
+
+def _draw_selected(layout, scene, found, strip):
+    """What is selected, big: the clip (its section and 3D frame) or nothing."""
+    box = layout.box()
+    row = box.row(align=True)
+    row.scale_y = 1.15
+    if strip is None:
+        row.active = False
+        row.label(text="No clip selected: click one in the timeline", icon='RESTRICT_SELECT_ON')
+        return None
+    section = cut._get(strip, cut.SECTION_KEY)
+    row.label(text=section or strip.name, icon='IMAGE_DATA' if strip.type == 'IMAGE' else 'FILE_MOVIE',
+              translate=False)
+    span = next(((s, e) for n, s, e, _m in found if n == section), None)
+    if section and span is not None:
+        shown = cut.scene_frame(scene, strip)[1]
+        info = row.row()
+        info.alignment = 'RIGHT'
+        info.active = False
+        info.label(text=("3D frame %d" % shown) if shown is not None else "", translate=False)
+    return box
+
+
 def _draw_clips(layout, scene, context, strip):
-    """1. The sections as clips with their state; the selected clip's tools; import."""
-    box, head, is_open = fold(layout, "cut_clips", "Clips", 'SEQUENCE')
-    head.operator(STUDIO_OT_cut_import.bl_idname, text="", icon='IMPORT')
-    head.operator(cut.STUDIO_OT_cut.bl_idname, text="", icon='FILE_REFRESH').action = 'BUILD'
-    if not is_open:
-        return
+    """Clips: every section with what is rendered of it; the selected clip's tools; import."""
     found = cut.sections_of(scene)
-    frame = cut.playhead(scene)
     chosen = cut._get(strip, cut.SECTION_KEY) if strip is not None else ""
-    col = box.column(align=True)
+    col = layout.column(align=True)
     for name, start, end, _marker in found:
-        here = name == chosen or (not chosen and start <= frame <= end and cut.section_strip(scene, name) is None)
+        here = name == chosen
         st = cut.frame_status(name, start, end)
         row = col.row(align=True)
-        row.operator(cut.STUDIO_OT_cut_go.bl_idname, text=name, icon='PLAY' if here else 'TRIA_RIGHT',
-                     depress=here, translate=False).section = name
+        go = row.row(align=True)
+        go.ui_units_x = 6
+        go.operator(cut.STUDIO_OT_cut_go.bl_idname, text=name, icon='PLAY' if here else 'TRIA_RIGHT',
+                    depress=here, translate=False).section = name
         state = row.row(align=True)
-        state.ui_units_x = 5
-        state.label(text=film_tools.label_of(st, cut._rendering(name)) or "not rendered", icon=_state_icon(st),
-                    translate=False)
+        state.active = here
+        state.label(text=_section_text(name, start, end), icon=_state_icon(st), translate=False)
         if cut.outdated(scene, name, start, end):
             _strip_op(row, 'UPDATE', name, 'ERROR', text="")
         clean = st["done"] == st["total"] and film_tools.next_quality(scene, name, st) is None
         op = row.operator("studio.add", text="", icon='FILE_REFRESH' if clean else 'RENDER_ANIMATION')
         op.mode, op.section, op.force = 'ANIM', name, clean
     if not found:
-        _hint(box, "No sections yet: add them in the 3D view's Animation tab")
-    if strip is None:
-        _hint(box, "Click a clip in the timeline to work on it")
-        return
-    clip = box.box()
-    section = cut._get(strip, cut.SECTION_KEY)
-    top = clip.row(align=True)
-    top.label(text=strip.name if not section else section, icon='IMAGE_DATA' if strip.type == 'IMAGE'
-              else 'FILE_MOVIE', translate=False)
-    if section:                                      # a section's clip: the 3D frame under the playhead
-        span = next(((s, e) for n, s, e, _m in found if n == section), None)
-        shown = cut.scene_frame(scene, strip)[1]
-        if span is not None and shown is not None:
-            st = cut.frame_status(section, span[0], span[1])
-            codes = st.get("codes") or []
-            index = shown - span[0]
-            code = codes[index] if 0 <= index < len(codes) else None
-            words = {'HIGH': "HQ", 'LOW': "LQ", 'DRAFT': "draft", '': "not rendered"}
-            info = top.row()
-            info.alignment = 'RIGHT'
-            info.active = False
-            info.label(text="3D frame %d · %s" % (shown, words.get(code, "")), translate=False)
-        row = clip.row(align=True)
-        row.label(text="Render again", icon='RENDER_ANIMATION')
-        _strip_op(row, 'FRAME', section, 'RENDER_STILL', text="This Frame")
-        _strip_op(row, 'REST', section, 'FF', text="From Here")
-        row = clip.row(align=True)
-        row.label(text="Freeze", icon='PAUSE')
-        _tool(row, 'FREEZE', "Here", 'PAUSE')
-        frames = row.row(align=True)
-        frames.ui_units_x = 4
-        frames.prop(context.window_manager, "studio_cut_hold", text="")
-        row = clip.row(align=True)
-        _strip_op(row, 'STILL', section, 'IMAGE_RGB_ALPHA', text="Still")
-        _strip_op(row, 'LENGTH', section, 'ARROW_LEFTRIGHT', text="Take Length")
-        _strip_op(row, 'GO', section, 'VIEW3D', text="3D View")
-        return
-    row = clip.row(align=True)                       # your own clip
-    row.prop(strip, "blend_alpha", text="Opacity", slider=True)
-    row.prop(strip, "mute", text="", icon='HIDE_ON' if strip.mute else 'HIDE_OFF', emboss=True)
-    row = clip.row(align=True)
-    row.prop(strip, "frame_offset_start", text="Trim In")
-    row.prop(strip, "frame_offset_end", text="Trim Out")
-    row = clip.row(align=True)
-    row.prop(strip, "frame_start", text="Starts at")
-    row.operator(STUDIO_OT_cut_clip.bl_idname, text="", icon='TRASH').action = 'REMOVE'
+        _hint(layout, "No sections yet: add them in the 3D view's Animation tab")
+    _legend(layout)
+    box = _draw_selected(layout, scene, found, strip)
+    if box is not None:
+        section = cut._get(strip, cut.SECTION_KEY)
+        if section:
+            row = box.row(align=True)
+            _strip_op(row, 'FRAME', section, 'RENDER_STILL', text="This Frame")
+            _strip_op(row, 'REST', section, 'FF', text="From Here")
+            _strip_op(row, 'GO', section, 'VIEW3D', text="3D")
+            row = box.row(align=True)
+            _tool(row, 'FREEZE', "Freeze", 'PAUSE')
+            frames = row.row(align=True)
+            frames.ui_units_x = 3.5
+            frames.prop(context.window_manager, "studio_cut_hold", text="")
+            _strip_op(row, 'STILL', section, 'IMAGE_RGB_ALPHA', text="Still")
+            _strip_op(row, 'LENGTH', section, 'ARROW_LEFTRIGHT', text="Length")
+        else:                                        # your own clip
+            row = box.row(align=True)
+            row.prop(strip, "blend_alpha", text="Opacity", slider=True)
+            row.prop(strip, "mute", text="", icon='HIDE_ON' if strip.mute else 'HIDE_OFF')
+            row = box.row(align=True)
+            row.prop(strip, "frame_offset_start", text="Trim In")
+            row.prop(strip, "frame_offset_end", text="Trim Out")
+            row.operator(STUDIO_OT_cut_clip.bl_idname, text="", icon='TRASH').action = 'REMOVE'
+    row = layout.row(align=True)
+    row.operator(STUDIO_OT_cut_import.bl_idname, text="Import", icon='IMPORT')
+    row.operator(cut.STUDIO_OT_cut.bl_idname, text="Build Again", icon='FILE_REFRESH').action = 'BUILD'
 
 
 def _draw_transitions(layout, scene, context, strip):
-    """2. Between the sections; fade in / out of the film and of the selected clip."""
-    box, _head, is_open = fold(layout, "cut_transitions", "Transitions", 'IPO_EASE_IN_OUT')
-    if not is_open:
-        return
+    """Transitions: between the sections; fade in / out of the film and of the selected clip."""
     wm = context.window_manager
     found = cut.sections_of(scene)
-    col = box.column(align=True)
+    col = layout.column(align=True)
     for n, (name, _s, _e, marker) in enumerate(found[:-1]):
         if marker is None:
             continue
@@ -319,7 +334,7 @@ def _draw_transitions(layout, scene, context, strip):
         item = next((c for c in scene.studio.cut_items if c.section == name), None)
         row = col.row(align=True)
         label = row.row(align=True)
-        label.ui_units_x = 6
+        label.ui_units_x = 5
         label.label(text="%s → %s" % (name.split(" ", 1)[0], after.split(" ", 1)[0]), icon='ARROW_LEFTRIGHT',
                     translate=False)
         if item is None:
@@ -334,89 +349,69 @@ def _draw_transitions(layout, scene, context, strip):
         hold.ui_units_x = 3.5
         hold.prop(item, "hold", text="Hold")
     if len(found) < 2:
-        _hint(box, "Transitions come with a second section")
-    fades = box.column(align=True)
-    row = fades.row(align=True)
+        _hint(layout, "Transitions come with a second section")
+    box = layout.box()
+    row = box.row(align=True)
     row.label(text="Film", icon='SEQUENCE')
     _tool(row, 'FILM_FADE_IN', "Fade In", 'TRIA_RIGHT_BAR')
     _tool(row, 'FILM_FADE_OUT', "Fade Out", 'TRIA_LEFT_BAR')
-    row = fades.row(align=True)
+    row = box.row(align=True)
     row.label(text="Clip", icon='IMAGE_DATA')
     sub = row.row(align=True)
     sub.enabled = strip is not None
     _tool(sub, 'FADE_IN', "Fade In", 'TRIA_RIGHT_BAR')
     _tool(sub, 'FADE_OUT', "Fade Out", 'TRIA_LEFT_BAR')
-    row = fades.row(align=True)
-    row.prop(wm, "studio_cut_fade", text="Fade Frames")
-    hint = fades.row()
+    box.prop(wm, "studio_cut_fade", text="Fade Frames")
+    hint = box.row()
     hint.active = False
     hint.scale_y = 0.8
     hint.label(text="Shift+click: to white · 0 frames: the fade goes", translate=False)
 
 
 def _draw_color(layout, scene, context, strip):
-    """3. The selected clip's light and colour, to every clip, a look over the film, letterbox."""
+    """Look: the selected clip's light and colour (or the look over the film), to all, letterbox."""
     from . import film_edit
-    box, head, is_open = fold(layout, "cut_color", "Colour & Light", 'COLOR')
     film_look = film_edit.film_look(scene, create=False)
-    head.operator(cut.STUDIO_OT_cut_tool.bl_idname, text="", icon='MOD_MASK' if film_look else 'ADD',
-                  depress=film_look is not None).action = 'FILM_LOOK'
-    if not is_open:
-        return
+    found = cut.sections_of(scene)
     target = strip
-    if film_look is not None and (strip is None or cut._get(strip, cut.KIND_KEY) == "LOOK"):
+    if strip is None and film_look is not None:
         target = film_look
-    if target is None:
-        _hint(box, "Click a clip (or + : a look over the whole film)")
+    if target is film_look and film_look is not None:
+        box = layout.box()
+        box.label(text="Look over the whole film", icon='MOD_MASK')
     else:
-        if target is film_look:
-            _hint(box, "Look over the whole film", icon='MOD_MASK')
-        light = box.column(align=True)
-        light.label(text="Light", icon='LIGHT_SUN')
-        light.prop(target, "studio_exposure", text="Exposure", slider=True)
-        row = light.row(align=True)
-        row.prop(target, "studio_shadows", text="Shadows", slider=True)
-        row.prop(target, "studio_highlights", text="Highlights", slider=True)
-        light.prop(target, "studio_contrast", text="Contrast", slider=True)
-        color = box.column(align=True)
-        color.label(text="Colour", icon='COLOR')
-        color.prop(target, "studio_saturation", text="Saturation", slider=True)
-        row = color.row(align=True)
-        row.prop(target, "studio_warmth", text="Warmth", slider=True)
-        row.prop(target, "studio_tint", text="Tint", slider=True)
-        row = box.row(align=True)
+        _draw_selected(layout, scene, found, strip)
+    if target is not None:
+        grid = layout.grid_flow(row_major=True, columns=2, even_columns=True, align=True)
+        for prop, text in (("studio_exposure", "Exposure"), ("studio_contrast", "Contrast"),
+                           ("studio_shadows", "Shadows"), ("studio_highlights", "Highlights"),
+                           ("studio_saturation", "Saturation"), ("studio_warmth", "Warmth"),
+                           ("studio_tint", "Tint"), ("studio_brightness", "Brightness")):
+            grid.prop(target, prop, text=text, slider=True)
+        row = layout.row(align=True)
         sub = row.row(align=True)
         sub.enabled = target is not film_look
         _tool(sub, 'LOOK_ALL', "To All Clips", 'DUPLICATE')
         _tool(row, 'LOOK_RESET', "Reset", 'LOOP_BACK')
-    row = box.row(align=True)
-    row.label(text="Letterbox", icon='SEQ_PREVIEW')
+    row = layout.row(align=True)
+    row.operator(cut.STUDIO_OT_cut_tool.bl_idname, text="Look over the Film", icon='MOD_MASK',
+                 depress=film_look is not None).action = 'FILM_LOOK'
     row.prop(context.window_manager, "studio_cut_ratio", text="")
 
 
 def _draw_export(layout, scene):
-    """4. Which sections, one file or one per section, format · quality · size, Export."""
+    """Export: which sections, one file or one per section, format · quality · size, Export."""
     rq = scene.studio
-    box, head, is_open = fold(layout, "cut_export", "Export", 'EXPORT')
-    try:
-        folder = cut.cut_folder()
-    except Exception:
-        folder = ""
-    if folder:
-        head.operator("wm.path_open", text="", icon='FILE_FOLDER').filepath = folder
-    if not is_open:
-        return
     found = cut.sections_of(scene)
     skip = cut.export_left_out(scene)
     if found:
-        picks = box.grid_flow(row_major=True, columns=min(6, len(found)), even_columns=True, align=True)
+        picks = layout.grid_flow(row_major=True, columns=min(6, len(found)), even_columns=True, align=True)
         for name, _s, _e, _m in found:
             number = name.split(" ", 1)[0] if name[:2].isdigit() else name[:6]
             picks.operator(STUDIO_OT_cut_export_pick.bl_idname, text=number, depress=name not in skip,
                            translate=False).section = name
-    row = box.row(align=True)
-    row.prop(rq, "cut_export_split", expand=True)
-    row = box.row(align=True)
+    layout.row(align=True).prop(rq, "cut_export_split", expand=True)
+    row = layout.row(align=True)
     row.prop(rq, "cut_export_format", text="")
     sub = row.row(align=True)
     sub.enabled = rq.cut_export_format not in {'PRORES', 'PNG'}
@@ -424,20 +419,27 @@ def _draw_export(layout, scene):
     size = row.row(align=True)
     size.ui_units_x = 3
     size.prop(rq, "cut_export_size", text="")
-    box.prop(rq, "cut_export_name", text="Name")
+    layout.prop(rq, "cut_export_name", text="Name")
     plan, join = cut.export_plan(scene)
     one = bool(join) or rq.cut_export_split == 'ONE' or len(plan) == 1
     frames = sum(b - a + 1 for _l, a, b, _p in plan)
-    row = box.row(align=True)
+    row = layout.row(align=True)
     row.scale_y = 1.3
-    row.enabled = bool(plan)
-    row.operator(cut.STUDIO_OT_cut.bl_idname, icon='EXPORT', text="Export %s · %.1f s" % (
+    go = row.row(align=True)
+    go.enabled = bool(plan)
+    go.operator(cut.STUDIO_OT_cut.bl_idname, icon='EXPORT', text="Export %s · %.1f s" % (
         "1 file" if one else "%d files" % len(plan), frames / max(1.0, scene.render.fps / scene.render.fps_base))
         if plan else "Export: nothing rendered").action = 'EXPORT'
+    try:
+        folder = cut.cut_folder()
+    except Exception:
+        folder = ""
+    if folder:
+        row.operator("wm.path_open", text="", icon='FILE_FOLDER').filepath = folder
 
 
 class STUDIO_PT_cut(Panel):
-    """The film in the Video Editor: clips, transitions, colour and light, export."""
+    """The film in the Video Editor: the render bar, four buttons, what they show."""
     bl_space_type = 'SEQUENCE_EDITOR'
     bl_region_type = 'UI'
     bl_category = "Studio"
@@ -455,11 +457,20 @@ class STUDIO_PT_cut(Panel):
             return
         scene = cut._scene(context)
         strip = _active(scene)
+        wm = context.window_manager
         _draw_head(layout, scene)
-        _draw_clips(layout, scene, context, strip)
-        _draw_transitions(layout, scene, context, strip)
-        _draw_color(layout, scene, context, strip)
-        _draw_export(layout, scene)
+        tabs = layout.row(align=True)
+        tabs.scale_y = 1.3
+        tabs.prop(wm, "studio_cut_tab", expand=True, icon_only=True)
+        tab = wm.studio_cut_tab
+        if tab == 'MOVES':
+            _draw_transitions(layout, scene, context, strip)
+        elif tab == 'LOOK':
+            _draw_color(layout, scene, context, strip)
+        elif tab == 'EXPORT':
+            _draw_export(layout, scene)
+        else:
+            _draw_clips(layout, scene, context, strip)
 
 
 classes = (STUDIO_OT_cut_export_pick, STUDIO_OT_cut_import, STUDIO_OT_cut_clip, STUDIO_PT_cut_queue, STUDIO_PT_cut)
@@ -468,8 +479,12 @@ classes = (STUDIO_OT_cut_export_pick, STUDIO_OT_cut_import, STUDIO_OT_cut_clip, 
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
+    bpy.types.WindowManager.studio_cut_tab = EnumProperty(name="Film Tab", items=TABS, default='CLIPS',
+                                                          options={'SKIP_SAVE'})
 
 
 def unregister():
+    if hasattr(bpy.types.WindowManager, "studio_cut_tab"):
+        del bpy.types.WindowManager.studio_cut_tab
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

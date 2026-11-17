@@ -203,7 +203,10 @@ run(bpy.types.STUDIO_PT_animation, ctx)
 del bpy.context.scene["UI LED"]
 wm.studio_sections = ""
 _marker = bpy.context.scene.timeline_markers.new("01 Check", frame=1)   # the Video Editor's sidebar
-run(bpy.types.STUDIO_PT_cut, ctx)
+for _tab in ('CLIPS', 'MOVES', 'LOOK', 'EXPORT'):
+    wm.studio_cut_tab = _tab
+    run(bpy.types.STUDIO_PT_cut, ctx)
+wm.studio_cut_tab = 'CLIPS'
 run(bpy.types.STUDIO_PT_cut_queue, ctx)
 bpy.context.scene.studio.cut_export_split = 'EACH'
 run(bpy.types.STUDIO_PT_cut, ctx)

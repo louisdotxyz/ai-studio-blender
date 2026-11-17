@@ -617,18 +617,46 @@ def _sources(scene):
     return out
 
 
+def _is_cut_space(space):
+    """A workspace for the cut: named Video…, Film, Schnitt or Cut, shows a cut scene, or is made of a
+    Video Editor (a workspace of yours, renamed)."""
+    name = space.name.lower()
+    if any(w in name for w in ("video", "film", "schnitt", "cut")):
+        return True
+    shown = getattr(space, "sequencer_scene", None)
+    if shown is not None and shown.get(FILM_KEY):
+        return True
+    return any(a.type == 'SEQUENCE_EDITOR' for screen in space.screens for a in screen.areas) and \
+        not any(a.type == 'VIEW_3D' for screen in space.screens for a in screen.areas)
+
+
+def _keep_window_scene():
+    """The window always shows the 3D scene: the cut's scene is only ever in the Video Editor (Blender
+    changed the window's scene to it at the top when the Video Editing workspace was opened)."""
+    try:
+        for window in bpy.context.window_manager.windows:
+            name = window.scene.get(FILM_KEY) if window.scene is not None else None
+            film = bpy.data.scenes.get(name) if name else None
+            if film is not None:
+                window.scene = film
+    except (AttributeError, RuntimeError, ReferenceError):
+        pass
+    return 1.0
+
+
 def show_in_video_editor(scene):
     """The Video Editing workspace shows this scene (Blender 5: each workspace has its sequencer scene);
     the strips show their names, not their file paths."""
     ed = editor_create(scene)
     for space in bpy.data.workspaces:
-        if "video" in space.name.lower() and hasattr(space, "sequencer_scene") and \
-                getattr(space, "use_scene_time_sync", False):
+        if not _is_cut_space(space):
+            continue
+        if hasattr(space, "sequencer_scene") and getattr(space, "use_scene_time_sync", False):
             try:
                 space.use_scene_time_sync = False   # scrubbing the cut never moves the 3D scene
             except (AttributeError, TypeError, RuntimeError):
                 pass
-        if "video" in space.name.lower() and hasattr(space, "sequencer_scene") and space.sequencer_scene is not ed:
+        if hasattr(space, "sequencer_scene") and space.sequencer_scene is not ed:
             try:
                 space.sequencer_scene = ed
             except (AttributeError, TypeError, RuntimeError):
@@ -769,7 +797,9 @@ def _reload(scene, force=False):
                 strip.directory = strip.directory
             elif hasattr(strip, "filepath"):
                 strip.filepath = strip.filepath
-        except (AttributeError, RuntimeError):
+            if hasattr(strip, "invalidate_cache"):   # a frame rendered again keeps its name: not the old image
+                strip.invalidate_cache('RAW')
+        except (AttributeError, RuntimeError, TypeError):
             pass
     if len(_seen) > 2000:
         _seen.clear()
@@ -1717,22 +1747,26 @@ def register():
                                      max=1200, options={'SKIP_SAVE'})
     wm.studio_cut_ratio = EnumProperty(name="Letterbox", items=film_edit.RATIOS, default='0', update=_ratio_changed,
                                        options={'SKIP_SAVE'})
-    from . import cut_panel, film_tools
+    from . import cut_overlay, cut_panel, film_tools
     cut_panel.register()
+    cut_overlay.register()
     film_tools.register()
     if _loaded not in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.append(_loaded)
     _loaded()
+    if not bpy.app.background and not bpy.app.timers.is_registered(_keep_window_scene):
+        bpy.app.timers.register(_keep_window_scene, first_interval=2.0, persistent=True)
 
 
 def unregister():
     if _loaded in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_loaded)
-    for timer in (_apply_now, _migrate):
+    for timer in (_apply_now, _migrate, _keep_window_scene):
         if bpy.app.timers.is_registered(timer):
             bpy.app.timers.unregister(timer)
-    from . import cut_panel, film_tools
+    from . import cut_overlay, cut_panel, film_tools
     film_tools.unregister()
+    cut_overlay.unregister()
     cut_panel.unregister()
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

@@ -382,16 +382,81 @@ def reconnect(mount=True):
     _refresh(force=True)
 
 
+CLEAN_EVERY = 1800        # the share is tidied every half hour
+CLEAN_AFTER = 86400       # a finished job of this Mac goes from the share a day after it was done
+
+
+def clean_share(root, host, keep=(), now=None):
+    """(Thread) Jobs of this Mac on the share, done for more than a day: their .blend (≈0.5 GB), job
+    files and frames go; half uploads older than a day too. Other people's jobs and jobs this Blender
+    still waits for are never touched. Returns the jobs removed."""
+    now = now or time.time()
+    queue = os.path.join(root, "queue")
+    try:
+        names = os.listdir(queue)
+    except OSError:
+        return []
+    present = set(names)
+    gone = []
+    for name in names:
+        if name.endswith(".blend.part"):
+            job = name[:-len(".blend.part")]
+            path = os.path.join(queue, name)
+            try:
+                if job not in keep and now - os.path.getmtime(path) > CLEAN_AFTER:
+                    os.remove(path)
+                    gone.append(job)
+            except OSError:
+                pass
+            continue
+        if not name.endswith(".done"):
+            continue
+        job = name[:-5]
+        if job in keep:
+            continue
+        try:
+            if now - os.path.getmtime(os.path.join(queue, name)) <= CLEAN_AFTER:
+                continue
+            with open(os.path.join(queue, job + ".json"), encoding="utf-8") as f:
+                if host.lower() not in str(json.load(f).get("sent_by", "")).lower():
+                    continue                       # someone else's job
+        except (OSError, ValueError):
+            continue
+        for ext in (".blend", ".json.hold", ".json", ".done"):        # the job file (.json) before .done
+            if job + ext in present:
+                try:
+                    os.remove(os.path.join(queue, job + ext))
+                except OSError:
+                    pass
+        shutil.rmtree(os.path.join(root, "renders", job), ignore_errors=True)
+        gone.append(job)
+    if gone:
+        print("AI Studio farm: %d old jobs removed from the share" % len(gone))
+    return gone
+
+
 def _tick():
     """Looks at the share every 15 s while the panel is drawn; stops when it has not been for a while."""
     if time.monotonic() - _view["drawn"] > 2 * REFRESH:
         return None
     from . import runner
+    now = time.monotonic()
     if not _conn["ok"]:                     # not connected: look every 2 s, so it shows as soon as it is
         _view["waiting"] = True
+        if _conn["busy"] and now - _conn.get("since", now) > 20:
+            _conn["busy"] = False           # that look hangs (VPN came back, old mount): a new one goes
         _look_later()
+        _reconnect()                        # mounted again by itself (VPN on, login in the keychain)
         runner.tag_redraw()
         return 2.0
+    if stuck() and now - _alarm.get("healed", 0.0) > 60:
+        _alarm["healed"] = now              # a look hangs on a stale mount: given up by itself
+        reconnect(mount=False)
+    if time.time() - _alarm.get("cleaned", 0.0) > CLEAN_EVERY:
+        _alarm["cleaned"] = time.time()
+        threading.Thread(target=clean_share, args=(_conn["root"], socket.gethostname().split(".")[0],
+                                                   {j["job"] for j in _jobs if j["phase"] != "done"}),
+                         daemon=True).start()
     if _view.pop("waiting", False):
         _view["force"] = True
         if _restart["state"] == "offline" and not bpy.app.timers.is_registered(_after_load):
@@ -958,18 +1023,36 @@ def _keep_awake(on):
         _awake["proc"] = None
 
 
+SERVER = "fileredu.ad.zhdk.ch"
+
+
 def _reconnect():
-    """The share went away (sleep, VPN dropped): mounted again without asking when the login is in the
-    keychain; at most every 5 minutes."""
-    if time.time() - _alarm.get("mounted", 0.0) < 300 or _conn.get("busy_mount"):
+    """The share went away (sleep, VPN dropped): mounted again by itself, at most every minute, and only
+    when the server answers (VPN on) and the share is not mounted: no login window or error while away."""
+    if time.time() - _alarm.get("mounted", 0.0) < 60 or _conn.get("busy_mount"):
         return
     _alarm["mounted"] = time.time()
-    try:
-        subprocess.Popen(["osascript", "-e", 'mount volume "smb://fileredu.ad.zhdk.ch/DDE"'],
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         start_new_session=True)
-    except OSError:
-        pass
+
+    def mount():
+        _conn["busy_mount"] = True
+        try:
+            try:
+                if "DDE" in os.listdir("/Volumes"):
+                    return                         # mounted (maybe stale): the look decides
+            except OSError:
+                pass
+            try:
+                socket.create_connection((SERVER, 445), timeout=3).close()
+            except OSError:
+                return                             # no VPN / network: nothing to mount
+            subprocess.run(["osascript", "-e", 'mount volume "smb://%s/DDE"' % SERVER], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+            _conn["time"] = -1e9                   # looked at again right away
+        except (OSError, subprocess.SubprocessError):
+            pass
+        finally:
+            _conn["busy_mount"] = False
+    threading.Thread(target=mount, daemon=True).start()
 
 
 def _watch_workers():

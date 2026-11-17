@@ -2894,6 +2894,17 @@ def render_farm_folder():
         os.remove(farm._registry_path(blend))
     except OSError:
         pass
+    old = farm.job_name("/x/Clean.blend", "Old")                # a day after it was done: off the share
+    for ext, body in ((".json", json.dumps({"sent_by": "me@" + socket.gethostname().split(".")[0]})),
+                      (".done", "done"), (".blend", "x")):
+        with open(os.path.join(root, "queue", old + ext), "w") as f:
+            f.write(body)
+    os.makedirs(os.path.join(root, "renders", old), exist_ok=True)
+    gone_now = farm.clean_share(root, socket.gethostname().split(".")[0])
+    gone_later = farm.clean_share(root, socket.gethostname().split(".")[0], now=time.time() + 2 * 86400)
+    check("share: a finished job of this Mac goes a day after it was done",
+          old not in gone_now and old in gone_later and not os.path.exists(os.path.join(root, "queue", old + ".blend"))
+          and not os.path.isdir(os.path.join(root, "renders", old)), (gone_now, gone_later))
     keep_view = dict(farm._view)
     farm._view.update(busy=True, since=time.monotonic() - 60)
     hung = farm.stuck()
