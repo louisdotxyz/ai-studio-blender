@@ -22,8 +22,8 @@ if [ "$1" = "--entfernen" ]; then
 fi
 
 find_farm() {
-  [ -f "$DIR/_worker/mac_worker.sh" ] && { echo "$DIR"; return; }
-  for v in /Volumes/DDE*; do [ -f "$v/$SUB/_worker/mac_worker.sh" ] && { echo "$v/$SUB"; return; }; done
+  [ -f "$DIR/_worker/worker_mac.sh" ] && { echo "$DIR"; return; }
+  for v in /Volumes/DDE*; do [ -f "$v/$SUB/_worker/worker_mac.sh" ] && { echo "$v/$SUB"; return; }; done
 }
 connect() {   # den Server verbinden (gespeicherte Adresse mit Benutzername: Passwort aus dem Schlüsselbund)
   local url="$SERVER"; [ -s "$HOME/.renderfarm_server" ] && url="$(cat "$HOME/.renderfarm_server")"
@@ -60,20 +60,20 @@ PLIST
 fi
 
 # nie zwei Worker auf einem Mac
-OTHER=$(pgrep -f "_worker/mac_worker.sh" | grep -v "^$$\$" | head -1)
+OTHER=$(pgrep -f "_worker/(worker_mac|mac_worker).sh" | grep -v "^$$\$" | head -1)
 if [ -n "$OTHER" ]; then
   echo "Auf diesem Mac läuft schon ein Worker (PID $OTHER)."
   read -t 15 -n1 -p "Den alten beenden und hier neu starten? [j/N] " a; echo
   [ "$a" = "j" ] || [ "$a" = "J" ] || exit 0
-  pkill -f "_worker/mac_worker.sh"; sleep 2
+  pkill -f "_worker/(worker_mac|mac_worker).sh"; sleep 2
 fi
 
 caffeinate -ims -w $$ &              # wach bleiben, solange dieses Fenster laeuft (auch am Strom ohne Bildschirm)
 cd "$HOME" || exit 1
 while true; do
-  bash "$FARM/_worker/mac_worker.sh"; rc=$?
+  bash "$FARM/_worker/worker_mac.sh"; rc=$?
   [ $rc -eq 0 ] && break
   echo "Worker beendet (Code $rc) – Neustart in 15 s ... (Ctrl+C: beenden)"; sleep 15
-  [ -f "$FARM/_worker/mac_worker.sh" ] || FARM="$(find_farm)"
+  [ -f "$FARM/_worker/worker_mac.sh" ] || FARM="$(find_farm)"
   while [ -z "$FARM" ]; do connect || sleep 60; done
 done
