@@ -404,6 +404,8 @@ class STUDIO_PT_camera(_SidebarPanel, Panel):
         row.prop(own, "use_resolution", icon='PINNED' if own.use_resolution else 'UNPINNED', translate=False,
                  text="%d × %d" % (round(render.resolution_x * pct), round(render.resolution_y * pct)))
 
+        _draw_orbit(layout, scene, cam)
+
         # Backdrop: what the camera sees behind the product, and the floor it stands on
         box, _head, is_open = section(layout, "backdrop", "Backdrop", 'IMAGE_BACKGROUND')
         if is_open:
@@ -492,6 +494,25 @@ def dof_hint(space):
     if region is not None and region.view_perspective != 'CAMERA':
         return "Shown in the camera view (Numpad 0)"
     return ""
+
+
+def _draw_orbit(layout, scene, cam):
+    """Orbit: the camera around its target (angles, distance, height, offsets)."""
+    from . import keys
+    rq = scene.studio
+    box, head, is_open = section(layout, "orbit", "Orbit", 'ORIENTATION_GIMBAL', default_open=False)
+    keys.button(head, 'ORBIT')
+    if not is_open:
+        return
+    col = box.column(align=True)
+    col.enabled = not rq.camera_locked
+    col.prop(rq, "orbit_horizontal")
+    col.prop(rq, "orbit_vertical")
+    if cam.data.type != 'ORTHO':        # orthographic: the distance changes nothing in the picture
+        col.prop(rq, "orbit_distance")
+    col.prop(rq, "orbit_height")
+    col.prop(rq, "orbit_side_offset")
+    col.prop(rq, "orbit_up_offset")
 
 
 def draw_dof(layout, cam, space):

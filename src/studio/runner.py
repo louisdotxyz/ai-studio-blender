@@ -829,8 +829,18 @@ class Runner:
         if item.variant:
             from .variants import V
             variant = V.plan(item.variant)
+        overrides = plan.as_list()
+        own = []                       # this job's own size and samples (the scene stays as it is)
+        if getattr(item, "job_width", 0) > 0 and getattr(item, "job_height", 0) > 0:
+            own += [["render.resolution_x", item.job_width], ["render.resolution_y", item.job_height],
+                    ["render.resolution_percentage", 100]]
+        if getattr(item, "job_samples", 0) > 0 and scene.render.engine == 'CYCLES':
+            own += [["cycles.samples", item.job_samples]]
+        if own:
+            paths = {o[0] for o in own}
+            overrides = core.camera_last([o for o in overrides if o[0] not in paths] + own)
         return {"uid": item.uid, "scene": scene.name, "animation": self.animation,
-                "overrides": plan.as_list(), "camera": camera_spec, "variant": variant}
+                "overrides": overrides, "camera": camera_spec, "variant": variant}
 
     def _watch(self, scene):
         job = self.current

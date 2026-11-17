@@ -454,9 +454,12 @@ def editor_create(scene):
     """editor(scene), made if missing (not in a draw): same size, frame rate, colours as the film."""
     film = film_scene(scene)
     found = editor(film)
+    wanted = "%s_cut" % film.name
     if found is None:
-        found = bpy.data.scenes.new("%s · Schnitt" % film.name)
+        found = bpy.data.scenes.new(wanted)
         found[FILM_KEY] = film.name
+    elif found.name != wanted and bpy.data.scenes.get(wanted) is None:
+        found.name = wanted                       # NAME_cut (earlier: "NAME · Schnitt")
     if film.get(CUT_KEY) != found.name:
         film[CUT_KEY] = found.name
     _match(found, film)

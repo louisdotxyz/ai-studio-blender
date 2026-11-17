@@ -251,6 +251,10 @@ class STUDIO_Item(PropertyGroup):
     section: StringProperty(options={'HIDDEN'})
     keep_frames: BoolProperty(options={'HIDDEN'})
     redo: BoolProperty(options={'HIDDEN'})          # every frame again (else frames there in its quality stay)
+    # this job only (the scene stays): its own size and samples, 0 = the scene's
+    job_width: IntProperty(options={'HIDDEN'})
+    job_height: IntProperty(options={'HIDDEN'})
+    job_samples: IntProperty(options={'HIDDEN'})
 
 
 def _pin_changed(self, context):
@@ -448,6 +452,12 @@ class STUDIO_Settings(PropertyGroup):
         items=[('LOW', "Low", "Small file, for previews"), ('MEDIUM', "Medium", "Smaller file"),
                ('HIGH', "High", "Recommended"), ('PERC_LOSSLESS', "Lossless", "Visually lossless, large file")],
         default='HIGH')
+    low_fast_light: BoolProperty(
+        name="Fast Light", default=False,
+        description="Low Quality: at most 3 light bounces, no caustics, no motion blur (faster, light a bit flatter)")
+    low_simplify: BoolProperty(
+        name="Simplify", default=False,
+        description="Low Quality: subdivision at most 1, textures at most 1024 px (faster, less memory)")
     low_denoise: BoolProperty(name="Denoise", description="Always denoise Low Quality renders (Cycles)",
                               default=True)
     name_pattern: EnumProperty(name="File Names", items=core.NAME_PATTERNS, default='NAME_CAM')

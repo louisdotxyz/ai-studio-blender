@@ -263,6 +263,10 @@ def run(job):
             overrides = list(overrides) + [["cycles.device", 'GPU']]
         _variant(job.get("variant") or [], saved)
         overrides = [o for o in overrides if o[0] != "camera"] + [o for o in overrides if o[0] == "camera"]
+        if any(p == "camera" for p, _v in overrides):
+            for marker in scene.timeline_markers:   # this copy only: no marker may switch to its camera
+                if marker.camera is not None:
+                    marker.camera = None
         _apply(scene, overrides, saved)
         expected = next((_value(v) for p, v in overrides if p == "camera"), None)
         if expected is not None and scene.camera != expected:  # a marker switched it: the job's camera counts

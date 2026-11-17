@@ -360,6 +360,7 @@ def _tick():
 LOCAL = os.path.expanduser("~/.cache/ai_studio_farm")
 REGISTRY = os.path.join(LOCAL, "jobs.json")
 EXT = {'PNG': "png", 'JPEG': "jpg", 'OPEN_EXR': "exr", 'TIFF': "tif"}
+FETCH_COPIES = 3          # frames copied at once from the share
 SETTLE = 5.0              # seconds a frame on the share stays unchanged before it is taken
 _jobs = []                # the farm's queue of this Mac, in order: queued → packing → copying → sent → done / error
 TRANSIENT = {"fetching", "new", "arrived", "looked", "t0", "h0", "per", "cancel", "seeded"}
@@ -437,6 +438,29 @@ def _raw_copy(scene):
     return path
 
 
+_SESSION = "%x" % int(time.time() * 1000)   # this Blender: an edit count is only comparable within it
+
+
+def _edits():
+    """Real edits of the scene (geometry, materials, lights, moves – not frame changes or AI Studio's lists)."""
+    from . import autoquality
+    return autoquality._edits[0]
+
+
+def outdated_jobs():
+    """Jobs of ours still rendering on the farm although the scene changed after they were sent (in this
+    Blender: real edits since; after a restart it is not known)."""
+    out = []
+    for job in _jobs:
+        if job.get("kind") != 'ANIM' or job["phase"] not in {"packing", "packed", "copying", "sent"}:
+            continue
+        if job.get("have", 0) >= total_of(job):
+            continue
+        if job.get("sent_session") == _SESSION and _edits() > job["sent_changes"]:
+            out.append(job)
+    return out
+
+
 def _format_of(overrides, fallback='PNG'):
     fmt = next((v for p, v in overrides if p == "render.image_settings.file_format"), fallback)
     return fmt if fmt in EXT else 'PNG'
@@ -457,6 +481,8 @@ def submit(scene, start, end, fmt=None, note="", kind='MANUAL', overrides=None, 
     job = {"job": name, "scene": scene.name, "kind": kind, "start": int(start), "end": int(end), "format": fmt,
            "ext": EXT.get(fmt, "png"), "overrides": overrides, "camera_spec": camera_spec, "note": note,
            "root": root, "raw": _raw_copy(scene), "phase": "queued", "progress": 0.0, "error": "", "size": 0,
+           "sent_changes": _edits(), "sent_session": _SESSION, "sent_file": bpy.data.filepath,
+           "sent_at": time.time(),
            "have": 0, "blend": bpy.data.filepath, "added": time.time(),
            "sent_by": "%s@%s" % (getpass.getuser(), socket.gethostname().split(".")[0])}
     job.update(extra)
@@ -582,12 +608,60 @@ def _packed(job):
 _alarm = {"offline": set(), "looked": 0.0}
 
 
+_awake = {"proc": None}
+
+
+def _keep_awake(on):
+    """While jobs of ours are on the way or on the farm this Mac does not sleep (it fetches the frames;
+    a night without it brought nothing from 3 to 10 o'clock)."""
+    proc = _awake["proc"]
+    if on and not bpy.app.background and (proc is None or proc.poll() is not None):
+        try:
+            _awake["proc"] = subprocess.Popen(["caffeinate", "-is", "-w", str(os.getpid())],
+                                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                              stderr=subprocess.DEVNULL)
+        except OSError:
+            _awake["proc"] = None
+    elif not on and proc is not None:
+        if proc.poll() is None:
+            proc.terminate()
+        _awake["proc"] = None
+
+
+def _reconnect():
+    """The share went away (sleep, VPN dropped): mounted again without asking when the login is in the
+    keychain; at most every 5 minutes."""
+    if time.time() - _alarm.get("mounted", 0.0) < 300 or _conn.get("busy_mount"):
+        return
+    _alarm["mounted"] = time.time()
+    try:
+        subprocess.Popen(["osascript", "-e", 'mount volume "smb://fileredu.ad.zhdk.ch/DDE"'],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except OSError:
+        pass
+
+
 def _watch_workers():
     """While jobs of ours are on the farm: the share's worker lines are read every minute (also with the
-    panel closed) and a Mac going offline is reported once."""
+    panel closed), a Mac going offline or no new frame for 10 minutes is reported once, the share is
+    mounted again when it went away, and this Mac stays awake."""
     from . import runner
+    busy = any(j["phase"] in {"queued", "packing", "packed", "copying", "sent"} for j in _jobs)
+    _keep_awake(busy)
     if not any(j["phase"] == "sent" for j in _jobs):
         return
+    if not connected():
+        if _alarm.get("had_share"):
+            _reconnect()
+        return
+    _alarm["had_share"] = True
+    last = last_frame_time()
+    if last and time.time() - last > STALL and not _alarm.get("stalled"):
+        _alarm["stalled"] = True
+        runner.notify("Render farm: no new frame for %d min" % ((time.time() - last) // 60))
+    elif last and time.time() - last <= STALL:
+        _alarm["stalled"] = False
     if time.time() - _alarm["looked"] > 60:
         _alarm["looked"] = time.time()
         _refresh(force=True)
@@ -752,7 +826,9 @@ def _note_frame(job, path, live=True):
 def _clock_offset(host):
     """How far behind our clock a worker's clock is (from the frames seen as they came), 0 if unknown."""
     diffs = sorted(seen - stamped for stamped, seen in _stamps.get(host, ()) if seen is not None)
-    return diffs[len(diffs) // 2] if diffs else 0.0
+    # the smallest gap: clock difference plus the shortest way to us (the median also held the waiting until a
+    # frame was fetched, which put frames in the future: "-27 min ago")
+    return diffs[0] if diffs else 0.0
 
 
 def seconds_per_frame(host):
@@ -819,7 +895,7 @@ def _collect_all():
             runner.notify("%s ready (render farm)" % job["note"])
             _save_registry()
             _reconcile()
-        elif not job.get("fetching") and now - job.get("looked", 0.0) >= 5.0:
+        elif not job.get("fetching") and now - job.get("looked", 0.0) >= min(60.0, 5.0 * (1 + job.get("quiet", 0))):
             job["looked"], job["fetching"] = now, True
             threading.Thread(target=_fetch, args=(job,), daemon=True).start()
 
@@ -841,29 +917,45 @@ def _fetch(job):
                 os.replace(target + ".part", target)
                 job["arrived"] = target
             return
-        have = new = 0
         skip = set(job.get("skip") or ())
+        prefix = job["job"] + "_"
+        listed = {}                                   # one look at the folder (over VPN: not one per frame)
+        with os.scandir(folder) as entries:
+            for entry in entries:
+                if entry.name.startswith(prefix):
+                    try:
+                        st = entry.stat()
+                    except OSError:
+                        continue
+                    listed[entry.name] = (st.st_size, st.st_mtime)
+        on_share = have = 0
+        todo = []
         for frame in range(job["start"], job["end"] + 1):
             if frame in skip:                         # rendered before: kept, the workers skip it
                 have += 1
+                on_share += 1
                 continue
-            local = os.path.join(job["folder"], "%s_%04d.%s" % (job["stem"], frame, job["ext"]))
-            source = os.path.join(folder, "%s_%04d.%s" % (job["job"], frame, job["ext"]))
-            try:
-                st = os.stat(source)
-            except OSError:
-                continue
-            if st.st_size <= 0 or now - st.st_mtime <= SETTLE:
+            name = "%s_%04d.%s" % (job["job"], frame, job["ext"])
+            size, mtime = listed.get(name, (0, 0.0))
+            if size <= 0 or now - mtime <= SETTLE:
                 continue                              # not rendered yet, or still being written
+            on_share += 1
+            local = os.path.join(job["folder"], "%s_%04d.%s" % (job["stem"], frame, job["ext"]))
             try:
                 mine = os.stat(local)
             except OSError:
                 mine = None
-            if mine is not None and mine.st_size > 0 and mine.st_mtime >= st.st_mtime:
+            if mine is not None and mine.st_size > 0 and mine.st_mtime >= mtime:
                 have += 1                             # fetched already (before a restart too)
                 if not job.get("seeded"):
                     _note_frame(job, local, live=False)
                 continue
+            todo.append((frame, os.path.join(folder, name), local, mine))
+        job["seeded"] = True
+        job["on_share"] = on_share
+
+        def fetch_one(item):
+            frame, source, local, mine = item
             shutil.copyfile(source, local + ".part")
             if mine is not None and mine.st_size > 0 and job.get("archive"):
                 os.makedirs(job["archive"], exist_ok=True)     # the older version of this frame (a copy:
@@ -873,18 +965,27 @@ def _fetch(job):
                 except OSError:
                     shutil.copyfile(local, kept)
             os.replace(local + ".part", local)       # … the new one takes its place in one step (never missing:
-            newest_frame.update(path=local, time=time.time(), title="%s · frame %d" % (job["note"] or job["job"], frame))
             #                                          Blender's Video Editor crashes on a frame file that is gone)
-            have += 1
-            new += 1
+            newest_frame.update(path=local, time=time.time(), title="%s · frame %d" % (job["note"] or job["job"], frame))
             _note_frame(job, local)
-            if new % 8 == 0:                          # many at once: show them as they come
-                job["new"] = job.get("new", 0) + 8
-                _note_progress(job, have)
-        job["seeded"] = True
-        if new:
-            job["new"] = job.get("new", 0) + new
+            return frame
+
+        new = 0
+        if todo:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=FETCH_COPIES) as pool:   # a few copies at once (VPN latency)
+                for _frame in pool.map(fetch_one, todo):
+                    have += 1
+                    new += 1
+                    if new % 8 == 0:                  # many at once: show them as they come
+                        job["new"] = job.get("new", 0) + 8
+                        _note_progress(job, have)
+            job["new"] = job.get("new", 0) + new % 8
         _note_progress(job, have)
+        job["quiet"] = 0 if new or on_share > job.get("seen_share", -1) else job.get("quiet", 0) + 1
+        job["seen_share"] = on_share
+        if new:
+            job["last_new"] = time.time()
         if have >= total_of(job) and job.get("skip"):
             done = os.path.join(job["root"], "queue", job["job"] + ".done")
             if not os.path.exists(done):              # the workers count only their own frames: we say it
@@ -945,10 +1046,28 @@ def remove_from_share(root, name, start, end, ext):
             pass
     folder = os.path.join(root, "renders", name)
     if os.path.isdir(folder):
+        there = set(os.listdir(folder))               # one look (over VPN not one per frame)
         for frame in range(start, end + 1):
-            path = os.path.join(folder, "%s_%04d.%s" % (name, frame, ext))
-            if not os.path.exists(path):
-                open(path, "wb").close()
+            file = "%s_%04d.%s" % (name, frame, ext)
+            if file not in there:
+                open(os.path.join(folder, file), "wb").close()
+
+
+def _retire(root, name, start, end, ext):
+    """(thread) A job of ours not wanted any more: an empty file for every frame not rendered (the workers
+    skip it) and a .done (no worker starts it again). Nothing is deleted."""
+    renders = os.path.join(root, "renders", name)
+    try:
+        os.makedirs(renders, exist_ok=True)
+        there = set(os.listdir(renders))
+        for frame in range(start, end + 1):
+            file = "%s_%04d.%s" % (name, frame, ext)
+            if file not in there:
+                open(os.path.join(renders, file), "wb").close()
+        with open(os.path.join(root, "queue", name + ".done"), "w", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S") + " replaced by a newer job\n")
+    except OSError as ex:
+        print("AI Studio farm: older job not stopped:", ex)
 
 
 def supersede(folder):
@@ -959,18 +1078,9 @@ def supersede(folder):
     for job in [j for j in _jobs if j.get("kind") == 'ANIM' and j["phase"] != "done"
                 and os.path.normcase(os.path.abspath(j.get("folder", ""))) == folder]:
         if job["phase"] == "sent":
-            renders = os.path.join(job["root"], "renders", job["job"])
-            try:
-                os.makedirs(renders, exist_ok=True)
-                for frame in range(job["start"], job["end"] + 1):
-                    path = os.path.join(renders, "%s_%04d.%s" % (job["job"], frame, job["ext"]))
-                    if not os.path.exists(path):
-                        open(path, "wb").close()
-                with open(os.path.join(job["root"], "queue", job["job"] + ".done"), "w", encoding="utf-8") as f:
-                    f.write(time.strftime("%Y-%m-%d %H:%M:%S") + " replaced by a newer job\n")
-            except OSError as ex:
-                print("AI Studio farm: older job not stopped:", ex)
-            job["phase"] = "done"
+            job["phase"] = "done"                     # the share is written in a thread (over VPN: slow)
+            threading.Thread(target=_retire, args=(job["root"], job["job"], job["start"], job["end"], job["ext"]),
+                             daemon=True).start()
         else:
             if job["phase"] == "packing":
                 proc = _procs.pop(job["job"], None)
@@ -1036,10 +1146,11 @@ def _row_text(job):
         what = "upload %.1f/%.1f GB" % (job["progress"] * job["size"] / 1e9, job["size"] / 1e9)
     else:
         have = job.get("have", 0)
+        ready = job.get("on_share", have) - have
         if job["kind"] != 'ANIM':
             what = "on the farm" if not have else "done"
         elif have or _renders(job["job"]):
-            what = "%d/%d" % (have, total)
+            what = "%d/%d" % (have, total) + (" · %d coming" % ready if ready > 0 else "")
             secs = left(job)
             if secs:
                 what += " · ~%s left" % format_time(secs)
@@ -1133,7 +1244,7 @@ def draw_rows(layout, buttons=True):
 BLOCKS = "▁▂▃▄▅▆▇█"
 BUCKET = 300.0            # seconds per bar of the graph
 BARS = 12                 # the last hour
-GRAPH_ROWS = 6            # the Render tab shows the last 30 minutes
+STALL = 600.0             # no new frame this long while workers are online: said in the Render tab
 
 
 def _clock(secs):
@@ -1200,7 +1311,7 @@ def worker_states(view=None):
         key = name.lower()
         status_time = now - age
         frames = [t + _clock_offset(key) for t, _s in _stamps.get(key, ())]
-        last_frame = max(frames + [view.get("last_frame", {}).get(key, 0.0)])
+        last_frame = min(now, max(frames + [view.get("last_frame", {}).get(key, 0.0)]))
         per = seconds_per_frame(key) or 0.0
         since = max(status_time, last_frame)
         if what.startswith("rendert "):
@@ -1234,110 +1345,107 @@ def _job_note(name):
     return "%s (older job)" % short if short != name else name
 
 
+def last_frame_time():
+    """When the last frame of ours came (0 if none yet)."""
+    return max((finished for finished, _w, _s in _events), default=0.0)
+
+
 def draw_state(layout, context):
-    """Under the switch while the farm is on (or still works for us): how fast the farm is, what each Mac
-    does and how fast it is, or what is missing."""
+    """The farm in short: Macs and speed, the frames of the last hour, each Mac in one line; when something
+    is wrong (share, VPN, no Mac, no frame for a while) the way back in one click."""
     rq = context.scene.studio
     if not rq.farm_on and not active():
         return
     watch()
+    box = layout.box()
+    col = box.column(align=True)
     if not connected():
-        warn = layout.column(align=True)
-        warn.alert = True
-        warn.label(text="Share not connected" + (": renders stay on this Mac" if rq.farm_on else ""), icon='ERROR')
-        row = layout.row(align=True)
+        row = col.row(align=True)
+        row.alert = True
+        row.label(text="Share not connected" + (": renders stay on this Mac" if rq.farm_on and not active() else
+                                                ": frames wait on the farm"), icon='ERROR')
+        row = col.row(align=True)
+        row.scale_y = 1.2
         row.operator(STUDIO_OT_farm_connect.bl_idname, icon='LINKED')
+        row.operator(STUDIO_OT_farm_vpn.bl_idname, icon='WORLD')
         row.operator(STUDIO_OT_farm_refresh.bl_idname, text="", icon='FILE_REFRESH')
-        hint = layout.row()
+        hint = col.row()
         hint.active = False
-        hint.label(text="From home: VPN first, then connect", translate=False)
+        hint.label(text="From home: VPN first, then Connect (it reconnects by itself as soon as it can)",
+                   translate=False)
         return
     view = _view["scan"]
     if view is None:                                 # the first look at the share is on its way
-        row = layout.row()
+        row = col.row()
         row.active = False
         row.label(text="Looking at the render farm …", icon='TIME')
         return
     from .runner import format_time
     states = worker_states(view)
     workers = sum(1 for _n, st, _w, _s in states if st != 'offline')
-    gone = len(states) - workers
-    have, total, secs, _sending = summary()
+    have, total, secs, sending = summary()
     rate = farm_rate()
-    box = layout.box()
-    col = box.column(align=True)
-    head = col.row()
-    if not workers and (total > have or _sending):
-        head.alert = True                             # jobs wait but nobody renders: say it loud
-    head.label(text="%d of %d Macs online%s" % (workers, len(states), "" if workers else
-                                                " · nothing renders!" if total > have else ""),
-               icon='DESKTOP' if workers else 'ERROR', translate=False)
+    now = time.time()
+    last = last_frame_time()
+    waiting = total > have or sending
+    head = col.row(align=True)
+    if not workers and waiting:
+        head.alert = True
+        head.label(text="No Mac renders · last frame %s" % (time.strftime("%H:%M", time.localtime(last))
+                                                           if last else "–"), icon='ERROR', translate=False)
+    else:
+        head.label(text="%d Mac%s%s" % (workers, "" if workers == 1 else "s",
+                                        " · %.1f frames/min" % rate if rate and workers else ""),
+                   icon='DESKTOP', translate=False)
     if total:
         right = head.row()
         right.alignment = 'RIGHT'
-        right.label(text="%d/%d frames%s" % (have, total, " · ~%s left" % format_time(secs)
-                                             if secs and workers else ""), translate=False)
+        right.label(text="%d/%d%s" % (have, total, " · ~%s" % format_time(secs) if secs and workers else ""),
+                    translate=False)
     head.operator(STUDIO_OT_farm_refresh.bl_idname, text="", icon='FILE_REFRESH', emboss=False)
-    row = col.row()                                  # the farm's speed in plain words
-    row.label(text="Speed", icon='SORTTIME')
-    right = row.row()
-    right.alignment = 'RIGHT'
-    if rate and workers:
-        right.label(text="%.1f frames/min · one every %.0f s" % (rate, 60.0 / rate), translate=False)
-    else:
-        right.active = False
-        right.label(text="no frames yet" if workers else "stopped", translate=False)
-    loading = [(n, j, since) for n, st, j, since in states if st == 'loading']
-    if loading and not rate:                         # the start: the Macs load the file before the first frame
-        longest = max(time.time() - since for _n, _j, since in loading)
+    if workers and waiting and last and now - last > STALL and not any(st == 'loading' for _n, st, _j, _s in states):
         row = col.row()
-        row.label(text="Start", icon='FILE_REFRESH')
-        right = row.row()
-        right.alignment = 'RIGHT'
-        right.label(text="%d Mac%s load %s · %s" % (len(loading), "" if len(loading) == 1 else "s",
-                                                   _job_note(loading[0][1]), _clock(longest)), translate=False)
+        row.alert = True
+        row.label(text="No new frame for %s" % format_time(now - last), icon='ERROR', translate=False)
     every = frames_per_bucket()
-    if any(every):                                   # the last 30 minutes, newest on top: one bar per 5 minutes
-        graph = box.column(align=True)
-        graph.separator(factor=0.3)
-        sub = graph.row()
-        sub.active = False
-        sub.label(text="Frames per 5 minutes", icon='GRAPH')
+    if any(every):                                   # the last hour: one ring per 5 minutes (full = the most)
         top = max(every) or 1
-        now = time.time()
-        for back, count in enumerate(reversed(every[-GRAPH_ROWS:])):
-            end = now - back * BUCKET
-            bar = graph.row(align=True)
-            bar.scale_y = 0.75
-            bar.progress(factor=count / top, type='BAR', text="%s  ·  %d frames" % (
-                time.strftime("%H:%M", time.localtime(end - BUCKET)), count) if count else
-                time.strftime("%H:%M", time.localtime(end - BUCKET)))
-        col = box.column(align=True)
-    col.separator(factor=0.5)
+        rings = col.row(align=True)
+        for count in every:
+            rings.progress(factor=count / top, type='RING', text="")
+        legend = col.row()
+        legend.active = False
+        legend.scale_y = 0.7
+        legend.label(text=time.strftime("%H:%M", time.localtime(now - BARS * BUCKET)), translate=False)
+        right = legend.row()
+        right.alignment = 'RIGHT'
+        right.label(text="now %d · hour %d frames" % (every[-1], sum(every)), translate=False)
     icons = {'rendering': 'RENDER_ANIMATION', 'loading': 'FILE_REFRESH', 'waiting': 'TIME', 'offline': 'CANCEL'}
+    lines = col.column(align=True)
     for name, state, job, since in states:
         key = name.lower()
-        row = col.row()
+        row = lines.row()
+        row.scale_y = 0.9
         if state == 'offline':
             row.alert = True
         row.label(text=name, icon=icons[state], translate=False)
         doing = row.row()
         doing.active = state == 'rendering'
-        doing.label(text={"rendering": _job_note(job), "loading": "loads %s · %s" % (_job_note(job), _clock(time.time() - since)),
-                          "waiting": "waits for a job",
-                          "offline": "OFFLINE since %s" % time.strftime("%H:%M", time.localtime(since))}[state],
+        doing.label(text={"rendering": _job_note(job),
+                          "loading": "loads · %s" % _clock(now - since),
+                          "waiting": "waits",
+                          "offline": "offline since %s" % time.strftime("%H:%M", time.localtime(since))}[state],
                     translate=False)
         right = row.row()
         right.alignment = 'RIGHT'
         per = seconds_per_frame(key)
-        stats = _hosts.get(key)
         busy = busy_share(key)
-        right.label(text=("%.0f s/frame%s" % (per, " · %d %%" % round(busy * 100) if busy and state == 'rendering'
-                                               else "")) if per and stats else "—", translate=False)
-    if gone:
+        right.label(text=("%.0f s%s" % (per, " · %d %%" % round(busy * 100) if busy and state == 'rendering'
+                                        else "")) if per else "", translate=False)
+    if not workers and waiting:
         hint = col.row()
         hint.active = False
-        hint.label(text="Offline: wake the Mac, start the worker again (Terminal command)", translate=False)
+        hint.label(text="Start the worker on the Macs (stick file) or wake them", translate=False)
 
 
 # ------------------------------------------------------------------ operators
@@ -1397,6 +1505,20 @@ class STUDIO_OT_farm_refresh(Operator):
         return {'FINISHED'}
 
 
+class STUDIO_OT_farm_vpn(Operator):
+    bl_idname = "studio.farm_vpn"
+    bl_label = "VPN"
+    bl_description = "Open the ZHdK VPN (Cisco Secure Client): connect there, then the share"
+    bl_options = {'INTERNAL'}
+
+    def execute(self, _context):
+        for app in ("Cisco Secure Client", "Cisco AnyConnect Secure Mobility Client"):
+            if subprocess.run(["open", "-a", app], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+                return {'FINISHED'}
+        self.report({'WARNING'}, "No Cisco VPN app found")
+        return {'CANCELLED'}
+
+
 class STUDIO_OT_farm_connect(Operator):
     bl_idname = "studio.farm_connect"
     bl_label = "Connect Share"
@@ -1411,7 +1533,8 @@ class STUDIO_OT_farm_connect(Operator):
         return {'FINISHED'}
 
 
-classes = (STUDIO_OT_farm_move, STUDIO_OT_farm_remove, STUDIO_OT_farm_refresh, STUDIO_OT_farm_connect)
+classes = (STUDIO_OT_farm_move, STUDIO_OT_farm_remove, STUDIO_OT_farm_refresh, STUDIO_OT_farm_connect,
+           STUDIO_OT_farm_vpn)
 
 
 def register():
@@ -1427,6 +1550,7 @@ def register():
 
 
 def unregister():
+    _keep_awake(False)
     for timer in (_tick, _pump):
         if bpy.app.timers.is_registered(timer):
             bpy.app.timers.unregister(timer)

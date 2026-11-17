@@ -40,7 +40,11 @@ class T:
         scene = bpy.context.scene
         render = scene.render
         keep = (scene.camera, render.resolution_percentage, scene.cycles.samples, render.filepath)
-        if camera is not None:
+        bound = []
+        if camera is not None:                     # markers that bind cameras would switch it back
+            bound = [(m, m.camera) for m in scene.timeline_markers if m.camera is not None]
+            for marker, _cam in bound:
+                marker.camera = None
             scene.camera = camera
         render.resolution_percentage, scene.cycles.samples = pct, samples
         out = os.path.join(_attachments(), name)
@@ -48,6 +52,8 @@ class T:
         try:
             bpy.ops.render.render(write_still=True)
         finally:
+            for marker, cam in bound:
+                marker.camera = cam
             scene.camera, render.resolution_percentage, scene.cycles.samples, render.filepath = keep
         return out, T.mean(out)
 

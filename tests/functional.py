@@ -2837,6 +2837,10 @@ def render_farm_folder():
     keep, farm._jobs[:] = list(farm._jobs), [old]
     try:
         farm.supersede(old["folder"])
+        for _wait in range(40):                      # the share is written in a thread
+            if os.path.exists(os.path.join(root, "queue", "old_job.done")):
+                break
+            time.sleep(0.05)
         frames = sorted(os.listdir(os.path.join(root, "renders", "old_job")))
         check("sent again: the older job skips its frames left and is done, nothing is deleted on the share",
               old["phase"] == "done" and len(frames) == 3 and os.path.exists(os.path.join(root, "queue", "old_job.done"))

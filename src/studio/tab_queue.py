@@ -839,7 +839,19 @@ def draw_quality(layout, context):
             else:
                 row.prop(cy, "use_adaptive_sampling", text="Noise Threshold", toggle=True)
             col.prop(cy, "time_limit", text="Time Limit")
-            box.prop(cy, "use_denoising", text="Denoise", toggle=True, icon='SHADERFX')
+            col = box.column(align=True)                 # light paths: total and the main kinds
+            col.prop(cy, "max_bounces", text="Light Bounces")
+            row = col.row(align=True)
+            row.prop(cy, "diffuse_bounces", text="Diffuse")
+            row.prop(cy, "glossy_bounces", text="Glossy")
+            row.prop(cy, "transmission_bounces", text="Glass")
+            col.prop(cy, "sample_clamp_indirect", text="Clamp Indirect")
+            row = box.row(align=True)
+            row.prop(cy, "use_denoising", text="Denoise", toggle=True, icon='SHADERFX')
+            row.prop(render, "use_motion_blur", text="Motion Blur", toggle=True, icon='ONIONSKIN_ON')
+            row = box.row(align=True)
+            row.prop(render, "film_transparent", text="Transparent", toggle=True, icon='IMAGE_RGB_ALPHA')
+            row.prop(render, "use_persistent_data", text="Keep Data", toggle=True, icon='MEMORY')
         elif hasattr(scene, "eevee"):
             box.prop(scene.eevee, "taa_render_samples", text="Samples")
     box, head, is_open = section(layout, "render_lq", "Low Quality", 'SORTTIME')
@@ -852,7 +864,10 @@ def draw_quality(layout, context):
             _factor_row(box, "Samples", LOW_SCALES, STUDIO_OT_low_scale.bl_idname, p.low_samples_percent,
                         target="samples")
         if cycles:
-            box.prop(rq, "low_denoise", text="Denoise", toggle=True, icon='SHADERFX')
+            row = box.row(align=True)
+            row.prop(rq, "low_denoise", text="Denoise", toggle=True, icon='SHADERFX')
+            row.prop(rq, "low_fast_light", text="Fast Light", toggle=True, icon='LIGHT')
+            row.prop(rq, "low_simplify", text="Simplify", toggle=True, icon='MOD_DECIM')
 
 
 class STUDIO_PT_output(Panel):
@@ -1110,11 +1125,11 @@ class STUDIO_PT_render_queue(_SidebarPanel, Panel):
         if not RUN.busy:
             shots.draw_check(layout, scene)
         from . import renderfarm
-        head = layout.row(align=True)              # where renders go · settings
-        head.scale_y = 1.3
+        _draw_renders(layout, context, review=False)   # first what came out (the newest image or frame)
+        draw_queue(layout, context)                    # then what is coming
+        head = layout.row(align=True)                  # where renders go (this Mac / the farm) · settings
+        head.scale_y = 1.2
         renderfarm.draw_switch(head, context)
         head.popover(STUDIO_PT_output.__name__, text="", icon='PREFERENCES')
         renderfarm.draw_state(layout, context)
-        draw_quality(layout, context)              # High / Low Quality right here, where they are looked for
-        draw_queue(layout, context)
-        _draw_renders(layout, context, review=False)
+        draw_quality(layout, context)

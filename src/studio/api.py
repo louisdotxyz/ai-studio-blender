@@ -967,17 +967,69 @@ def key_pose(from_view=True):
     return m.key_pose(scene, cameras.active_camera(scene), from_view=from_view)
 
 
-def section_render(section=None, quality=None, frames=None, force=False):
+def assembly_check(collection=None):
+    """Loose parts: in a product collection (or `collection`), mesh objects without a parent while most of
+    its parts hang on one assembly object (they stay behind when the product is moved).
+    Returns [{collection, root, loose: [names]}]; empty when all is well."""
+    import collections as _c
+    scene = bpy.context.scene
+    groups = [bpy.data.collections[collection]] if collection else \
+        [c for c in scene.collection.children_recursive if any(o.type == 'MESH' for o in c.objects)]
+    out = []
+    for coll in groups:
+        meshes = [o for o in coll.all_objects if o.type == 'MESH']
+        if len(meshes) < 3:
+            continue
+        roots = _c.Counter()
+        for obj in meshes:
+            top = obj
+            while top.parent is not None:
+                top = top.parent
+            if top is not obj:
+                roots[top.name] += 1
+        if not roots:
+            continue
+        root, count = roots.most_common(1)[0]
+        loose = [o.name for o in meshes if o.parent is None and o.name != root and o.name not in roots]
+        if loose and count >= 0.6 * len(meshes):
+            out.append({"collection": coll.name, "root": root, "loose": loose})
+    return out
+
+
+def farm_share_status():
+    """The render farm's jobs of this file, from what was last looked at (never waits for the share):
+    [{job, note, phase, total, on_share (rendered there), fetched (here), open}]."""
+    from . import renderfarm
+    out = []
+    for job in renderfarm._jobs:
+        total = renderfarm.total_of(job)
+        fetched = job.get("have", 0)
+        on_share = max(fetched, job.get("on_share", fetched))
+        out.append({"job": job["job"], "note": job.get("note", ""), "phase": job["phase"], "total": total,
+                    "on_share": on_share, "fetched": fetched, "open": max(0, total - on_share)})
+    return out
+
+
+def section_render(section=None, quality=None, frames=None, force=False, resolution=None, samples=None):
     """Render a section's frames (None: every section that needs it) into animation/Frames/<section>/;
     they come into the Video Editor by themselves. quality None = by itself (Low first, High once nothing
     changed), else 'LOW' / 'HIGH'. frames=(a, b): only those frames again; else frames there in that quality
     stay (a longer section renders only its new frames). force=True: every frame again though nothing changed
     (e.g. after frames from a wrong camera): each older frame stays until its new one comes. Sending a section
-    again stops its older render.
+    again stops its older render. resolution=(w, h) / samples=N: only for this job, the scene stays as it is
+    (e.g. one section in 4K with 512 samples; implies force for that section).
     With the render farm on (scene.studio.farm_on) the sections render there. Returns what was queued."""
     scene = bpy.context.scene
+    before = {i.uid for i in scene.studio.items}
     result = bpy.ops.studio.add(mode='ANIM', section=section or "", quality=quality or 'DEFAULT',
-                                frames="%d-%d" % tuple(frames) if frames else "", force=bool(force))
+                                frames="%d-%d" % tuple(frames) if frames else "",
+                                force=bool(force or resolution or samples))
+    for item in scene.studio.items:
+        if item.uid not in before and item.mode == 'ANIM':
+            if resolution:
+                item.job_width, item.job_height = int(resolution[0]), int(resolution[1])
+            if samples:
+                item.job_samples = int(samples)
     return [{"section": i.section, "quality": i.quality, "frames": [i.frame_start, i.frame_end]}
             for i in scene.studio.items if i.mode == 'ANIM'] if 'FINISHED' in result else []
 

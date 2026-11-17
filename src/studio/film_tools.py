@@ -230,6 +230,13 @@ def problems(scene):
                 out.append((name, 'OUTDATED', "%s: the strip has another length than the section" % name))
         except (AttributeError, ReferenceError):
             pass
+    try:
+        from . import renderfarm
+        for job in renderfarm.outdated_jobs():
+            out.append((job.get("section", ""), 'OUTDATED_FARM', "%s renders on the farm from before your last "
+                        "change: send it again for the new state" % (job.get("note") or job["job"])))
+    except Exception:
+        pass
     items = {c.section: c for c in scene.studio.cut_items}
     for cam, names in users.items():
         for name in names[1:]:
