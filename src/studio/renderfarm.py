@@ -928,6 +928,8 @@ def submit(scene, start, end, fmt=None, note="", kind='MANUAL', overrides=None, 
     except OSError:
         pass
     _save_registry()
+    if _control["farm"] != "an":                  # after "Log Out All Macs": the next job switches the farm on
+        set_control("an", root=root)
     if not bpy.app.timers.is_registered(_pump):
         bpy.app.timers.register(_pump, first_interval=0.5, persistent=True)
     return job
@@ -2014,7 +2016,11 @@ def draw_state(layout, context):
     if not workers and waiting:
         hint = col.row()
         hint.active = False
-        hint.label(text="Start the worker on the Macs (stick file) or wake them", translate=False)
+        hint.label(text="On the Macs: double-click \"Renderfarm Start (Mac).terminal\" in Flamenco", translate=False)
+    if any(st != 'offline' for _n, st, _j, _s in states):
+        row = col.row()
+        row.alignment = 'RIGHT'
+        row.operator(STUDIO_OT_farm_logout.bl_idname, text="Log Out All Macs", icon='QUIT', emboss=False)
 
 
 # ------------------------------------------------------------------ operators
@@ -2069,6 +2075,42 @@ class STUDIO_OT_farm_refresh(Operator):
         if active() and not bpy.app.timers.is_registered(_pump):
             bpy.app.timers.register(_pump, first_interval=0.1, persistent=True)
         watch()
+        return {'FINISHED'}
+
+
+def set_control(farm, end="standby", root=None):
+    """(Thread) _worker/control.json, what every render Mac reads: farm "an"/"aus", end "standby" /
+    "abmelden" (log out; the autostart brings the farm back at the next login)."""
+    root = root or share_root()
+
+    def write():
+        try:
+            path = os.path.join(root, "_worker", "control.json")
+            with open(path + ".tmp", "w", encoding="utf-8") as f:
+                json.dump({"farm": farm, "ende": end, "seit": int(time.time()), "von": socket.gethostname()}, f)
+            os.replace(path + ".tmp", path)
+            _control["farm"] = farm
+        except OSError as ex:
+            print("AI Studio farm: control.json:", ex)
+    threading.Thread(target=write, daemon=True).start()
+
+
+_control = {"farm": None}
+
+
+class STUDIO_OT_farm_logout(Operator):
+    bl_idname = "studio.farm_logout"
+    bl_label = "Log Out All Macs"
+    bl_description = ("Every render Mac logs out now (after the 10 frames it is on); at their next login the "
+                      "farm starts again by itself, and the next job switches it on")
+    bl_options = {'INTERNAL'}
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, _context):
+        set_control("aus", "abmelden")
+        self.report({'INFO'}, "The render Macs log out")
         return {'FINISHED'}
 
 
@@ -2172,7 +2214,7 @@ class STUDIO_OT_farm_retry(Operator):
 
 
 classes = (STUDIO_OT_farm_move, STUDIO_OT_farm_remove, STUDIO_OT_farm_refresh, STUDIO_OT_farm_retry,
-           STUDIO_OT_farm_restart)
+           STUDIO_OT_farm_restart, STUDIO_OT_farm_logout)
 
 
 def register():

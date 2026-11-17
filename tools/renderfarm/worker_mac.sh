@@ -4,8 +4,9 @@
 # Wird vom Server gestartet, Updates wirken also sofort auf allen Rechnern.
 # 0.5.0: Uebersicht der Jobs, Frames und Macs gleich nach dem Start und beim Warten; jedes fertige
 #        Frame mit Zeit und Stand des Jobs.
-# 0.6.0: meldet sich ab, wenn so lange kein Job kam (control.json "abmelden_nach" in Minuten, Standard 60,
-#        0 = nie); nach dem naechsten Anmelden startet der Autostart die Renderfarm wieder.
+# 0.6.0: alle Macs auf einmal abmelden, wenn du es sagst (AI Studio: "Log Out All Macs", oder Terminal:
+#        bash "Renderfarm Start (Mac).command" --alle-abmelden); control.json "abmelden_nach" (Minuten ohne
+#        Job, Standard 0 = nie). Nach dem naechsten Anmelden startet der Autostart die Renderfarm wieder.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION=$(cat "$ROOT/_worker/VERSION" 2>/dev/null || echo "?")
@@ -26,7 +27,7 @@ remount() {   # Server-Verbindung pruefen und bei Bedarf neu verbinden (Login au
   t 10 ls "$Q" >/dev/null 2>&1
 }
 control() {   # liest _worker/control.json: farm an/aus, ende standby/abmelden/herunterfahren, abmelden_nach (min)
-  python3 -c "import json,sys;c=json.load(open(sys.argv[1]));print(c.get('farm','an'),c.get('ende','standby'),int(c.get('seit',0)),int(c.get('abmelden_nach',60)))" "$ROOT/_worker/control.json" 2>/dev/null || echo "an standby 0 60"
+  python3 -c "import json,sys;c=json.load(open(sys.argv[1]));print(c.get('farm','an'),c.get('ende','standby'),int(c.get('seit',0)),int(c.get('abmelden_nach',0)))" "$ROOT/_worker/control.json" 2>/dev/null || echo "an standby 0 0"
 }
 LAST_WORK=$(date +%s)
 frames_done() { find "$OUT/$1" -type f -size +0 2>/dev/null | wc -l | tr -d ' '; }

@@ -6,7 +6,8 @@
 #     Schlüsselbund; beim ersten Mal fragt macOS)
 #   - richtet den Autostart ein: nach jedem Anmelden öffnet sich dieses Fenster von selbst
 #   - hält den Mac wach, solange es läuft, und startet den Worker nach Absturz oder Server-Ausfall neu
-#   - meldet den Mac ab, wenn 60 min kein Job kam (_worker/control.json "abmelden_nach", 0 = nie)
+#   - meldet alle Macs auf einmal ab, wenn du es sagst: AI Studio "Log Out All Macs" oder
+#     bash "<diese Datei>" --alle-abmelden   (wieder rendern: --farm-an; beim nächsten Job geht es von selbst)
 #   - startet nie einen zweiten Worker auf demselben Mac
 # Autostart wieder entfernen:  bash "<diese Datei>" --entfernen
 printf '\033]0;Renderfarm\007'
@@ -21,6 +22,13 @@ if [ "$1" = "--entfernen" ]; then
   echo "Autostart entfernt."; exit 0
 fi
 
+control() {   # _worker/control.json schreiben: alle Macs hören darauf
+  python3 - "$FARM/_worker/control.json" "$1" "$2" <<'PY'
+import json, sys, time, socket
+json.dump({"farm": sys.argv[2], "ende": sys.argv[3], "seit": int(time.time()), "von": socket.gethostname()},
+          open(sys.argv[1], "w"))
+PY
+}
 find_farm() {
   [ -f "$DIR/_worker/worker_mac.sh" ] && { echo "$DIR"; return; }
   for v in /Volumes/DDE*; do [ -f "$v/$SUB/_worker/worker_mac.sh" ] && { echo "$v/$SUB"; return; }; done
@@ -36,6 +44,12 @@ connect() {   # den Server verbinden (gespeicherte Adresse mit Benutzername: Pas
 FARM="$(find_farm)"
 if [ -z "$FARM" ]; then
   until connect; do echo "Server nicht erreichbar (WLAN/VPN?) – neuer Versuch in 60 s ... (Ctrl+C: beenden)"; sleep 60; done
+fi
+if [ "$1" = "--alle-abmelden" ]; then
+  control aus abmelden && echo "Alle Render-Macs melden sich ab (nach ihrem laufenden Paket von 10 Frames)."; exit 0
+fi
+if [ "$1" = "--farm-an" ]; then
+  control an standby && echo "Renderfarm an."; exit 0
 fi
 xattr -dr com.apple.quarantine "$FARM/_worker" "$FARM/Renderfarm Start (Mac).command" \
   "$FARM/Renderfarm Start (Mac).terminal" 2>/dev/null
