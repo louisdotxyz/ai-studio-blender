@@ -450,6 +450,9 @@ def editor(scene):
     return next((s for s in bpy.data.scenes if s.get(FILM_KEY) == film.name), None)
 
 
+CUT_WORLD = "Cut World"   # an empty world for the Video Editor's scene
+
+
 def editor_create(scene):
     """editor(scene), made if missing (not in a draw): same size, frame rate, colours as the film."""
     film = film_scene(scene)
@@ -463,6 +466,9 @@ def editor_create(scene):
     if film.get(CUT_KEY) != found.name:
         film[CUT_KEY] = found.name
     _match(found, film)
+    if found.world is None:                       # add-ons that read the world on every frame (Physical
+        world = bpy.data.worlds.get(CUT_WORLD) or bpy.data.worlds.new(CUT_WORLD)   # Starlight …) need one
+        found.world = world
     if found.sequence_editor is None:
         found.sequence_editor_create()
     return found
@@ -1083,40 +1089,148 @@ def export_target(scene):
     """(path without extension, extension) of the export with its settings now."""
     rq = scene.studio
     fmt = getattr(rq, "cut_export_format", 'MP4')
-    name = video_name(getattr(rq, "cut_export_name", "").strip() or scene.name)
+    name = video_name(getattr(rq, "cut_export_name", "").strip() or film_scene(scene).name)
     if fmt == 'PNG':
         return os.path.join(cut_folder(), name, name + "_"), ".png"
     return os.path.join(cut_folder(), name), VIDEO_FORMATS[fmt][2]
 
 
+def export_left_out(scene):
+    return set(filter(None, getattr(scene.studio, "cut_export_skip", "").split("\n")))
+
+
+def export_sections(scene):
+    """[(section, first, last)] of the sections chosen for the export that have strips, in film order."""
+    skip = export_left_out(scene)
+    out = []
+    for name, _s, _e, _m in sections_of(scene):
+        strips = [s for s in ours(scene) if _get(s, SECTION_KEY) == name and not s.mute
+                  and _get(s, KIND_KEY) in {"SECTION", "HOLD", "FREEZE"}]
+        if strips and name not in skip:
+            out.append((name, int(min(s.frame_final_start for s in strips)),
+                        int(max(s.frame_final_end for s in strips)) - 1))
+        elif strips:
+            out.append((name, None, None))           # left out: it splits the film in two
+    return out
+
+
+def export_plan(scene):
+    """[(label, first, last, path)] to render and the path of the one video they are joined into (or "").
+    One File: neighbouring sections render as one range (with their transitions), gaps are joined after;
+    Per Section: one video each. The Range set by Claude (preview range, the active clip) is one range."""
+    rq = scene.studio
+    target, ext = export_target(scene)
+    choice = getattr(rq, "cut_export_range", 'ALL')
+    if choice != 'ALL':
+        span = export_range(scene)
+        return ([("", span[0], span[1], target)] if span else []), ""
+    found = export_sections(scene)
+    chosen = [f for f in found if f[1] is not None]
+    if not chosen:
+        return [], ""
+    png = getattr(rq, "cut_export_format", 'MP4') == 'PNG'
+    if getattr(rq, "cut_export_split", 'ONE') == 'EACH':
+        plan = []
+        for name, a, b in chosen:
+            own = video_name("%s %s" % (os.path.basename(target.rstrip("_")), name))
+            path = os.path.join(cut_folder(), own, own + "_") if png else os.path.join(cut_folder(), own)
+            plan.append((name, a, b, path))
+        return plan, ""
+    groups = []                                      # neighbours together, a left-out section splits
+    for name, a, b in found:
+        if a is None:
+            groups.append(None)
+        elif groups and groups[-1] is not None:
+            groups[-1][1], groups[-1][2] = groups[-1][1], b
+            groups[-1][0].append(name)
+        else:
+            groups.append([[name], a, b])
+    groups = [g for g in groups if g is not None]
+    if len(groups) == 1 or png:                      # frames: one folder, numbered by film frame
+        return [(" + ".join(g[0]), g[1], g[2], target) for g in groups], ""
+    from . import film as film_module
+    work = os.path.join(cut_folder(), film_module.FILM_DIR)
+    return [(" + ".join(g[0]), g[1], g[2], os.path.join(work, "part_%02d_" % n)) for n, g in enumerate(groups)], target
+
+
+def _to_archive(path):
+    """An older export of that name goes to archiv (a file or a frames folder)."""
+    if not os.path.exists(path) or (os.path.isdir(path) and not os.listdir(path)):
+        return
+    base, ext = os.path.splitext(os.path.basename(path)) if os.path.isfile(path) else (os.path.basename(path), "")
+    old = os.path.join(cut_folder(), "archiv", "%s %s%s" % (base, time.strftime("%Y-%m-%d %H%M%S"), ext))
+    os.makedirs(os.path.dirname(old), exist_ok=True)
+    os.replace(path, old)
+
+
+EXPORT_SCRIPT = r"""
+import bpy, glob, json, os, re, time
+J = json.load(open(%r, encoding="utf-8"))
+S = J["status"]
+T = sum(b - a + 1 for _l, a, b, _p in J["ranges"]) * (2 if J["join"] else 1)
+t0 = time.time()
+def put(**v):
+    v.update(updated=time.time(), pid=os.getpid(), total=T, parts=1, part=1, started=t0)
+    json.dump(v, open(S + '.tmp', 'w')); os.replace(S + '.tmp', S)
+n = [0]
+def step(*a):
+    n[0] += 1; put(state='rendering', done=n[0], per_frame=(time.time() - t0) / n[0])
+bpy.app.handlers.render_write.append(step)
+sc = bpy.context.scene
+def named(P):                               # <P>0001-0108.mp4 -> <P>.mp4
+    made = [f for f in glob.glob(glob.escape(P) + '*') if re.fullmatch(r'\d+-\d+\.(mp4|mov|webm|mkv)', f[len(P):])]
+    if not made:
+        return None
+    m = max(made, key=os.path.getmtime); out = P + os.path.splitext(m)[1]; os.replace(m, out); return out
+put(state='rendering', done=0)
+parts = []
+for _label, a, b, P in J["ranges"]:
+    sc.frame_start, sc.frame_end = a, b
+    sc.render.filepath = P
+    os.makedirs(os.path.dirname(P), exist_ok=True)
+    bpy.ops.render.render(animation=True)
+    if J["video"]:
+        parts.append(named(P))
+if J["join"] and all(parts):                # sections with a gap between them: one video after the other
+    sed = sc.sequence_editor
+    every = list(sed.strips_all if hasattr(sed, "strips_all") else sed.sequences_all)
+    for s in every:
+        s.mute = True
+    strips = sed.strips if hasattr(sed, "strips") else sed.sequences
+    channel = min(128, 1 + max((s.channel for s in every), default=0))
+    f = 1
+    for p in parts:
+        f = strips.new_movie(os.path.basename(p), p, channel, f).frame_final_end
+    sc.frame_start, sc.frame_end = 1, f - 1
+    sc.render.filepath = J["join"]
+    bpy.ops.render.render(animation=True)
+    named(J["join"])
+    for p in parts:
+        os.remove(p)
+put(state='done', done=T, finished=time.time())
+"""
+
+
 def export(scene, path=None):
-    """The strips as one video (or PNG frames) with the export settings of the Video Editor's Export tab
-    (format, quality, size, range, music) in its own Blender process; the older export of that name goes
-    to archiv. Returns (video path or frames folder, log path)."""
+    """The chosen sections (Video Editor · Export: one file or one per section) as video or PNG frames with
+    the export settings (format, quality, size) in its own Blender process; an older export of that name
+    goes to archiv. Returns (video path or folder, log path)."""
     if not ours(scene):
         build(scene)
-    frames = export_range(scene)
-    if frames is None:
-        raise ValueError("Nothing rendered yet: render the sections first")
+    ranges, join = export_plan(scene)
+    if not ranges:
+        raise ValueError("Nothing to export: render the sections first (or choose one)")
+    if path and len(ranges) == 1 and not join:
+        ranges = [(ranges[0][0], ranges[0][1], ranges[0][2], path)]
     rq = scene.studio
     fmt = getattr(rq, "cut_export_format", 'MP4')
     folder = cut_folder()
     from . import film as film_module
     work = os.path.join(folder, film_module.FILM_DIR)       # like a film: its bar shows the progress
     os.makedirs(work, exist_ok=True)
-    target, ext = export_target(scene)
-    path = path or target
-    if fmt == 'PNG':
-        frames_dir = os.path.dirname(path)
-        if os.path.isdir(frames_dir) and os.listdir(frames_dir):
-            old = os.path.join(folder, "archiv", "%s %s" % (os.path.basename(frames_dir), time.strftime("%Y-%m-%d %H%M%S")))
-            os.makedirs(os.path.dirname(old), exist_ok=True)
-            os.replace(frames_dir, old)
-        os.makedirs(frames_dir, exist_ok=True)
-    elif os.path.isfile(path + ext):
-        old = os.path.join(folder, "archiv", "%s %s%s" % (os.path.basename(path), time.strftime("%Y-%m-%d %H%M%S"), ext))
-        os.makedirs(os.path.dirname(old), exist_ok=True)
-        os.replace(path + ext, old)
+    ext = ".png" if fmt == 'PNG' else VIDEO_FORMATS[fmt][2]
+    for _label, _a, _b, out in ranges if not join else [(None, None, None, join)]:
+        _to_archive(os.path.dirname(out) if fmt == 'PNG' else out + ext)
     film = scene
     scene = editor_create(film)                      # the strips render from the Video Editor's scene
     render = scene.render
@@ -1155,11 +1269,11 @@ def export(scene, path=None):
                         strip.mute = True
                         muted.append(strip)
         render.resolution_percentage = int(getattr(rq, "cut_export_size", '100'))
-        render.filepath = path
+        render.filepath = ranges[0][3]
         render.use_file_extension = True
         render.use_sequencer = True                   # the copy renders the strips
         RUN.preparing = True
-        scene.frame_start, scene.frame_end = frames
+        scene.frame_start, scene.frame_end = ranges[0][1], ranges[-1][2]
         blend = os.path.join(work, "cut.blend")
         bpy.ops.wm.save_as_mainfile(filepath=blend, copy=True, compress=False, relative_remap=True,
                                     check_existing=False)
@@ -1181,34 +1295,23 @@ def export(scene, path=None):
         for strip in muted:
             strip.mute = False
         RUN.preparing = False
-    with open(os.path.join(work, "job.json"), "w", encoding="utf-8") as f:
-        json.dump({"scene": scene.name, "out": path, "frames": list(frames), "cut": True}, f)
     status = os.path.join(work, "status.json")
-    total = frames[1] - frames[0] + 1
+    job = os.path.join(work, "export.json")
+    with open(job, "w", encoding="utf-8") as f:
+        json.dump({"ranges": [list(r) for r in ranges], "join": join, "video": fmt != 'PNG', "status": status}, f)
+    with open(os.path.join(work, "job.json"), "w", encoding="utf-8") as f:
+        json.dump({"scene": scene.name, "out": join or ranges[0][3], "frames": [ranges[0][1], ranges[-1][2]],
+                   "cut": True}, f)
     log = os.path.join(work, "log.txt")
     with open(log, "w", encoding="utf-8") as f:
-        script = (                                         # render with progress, then <path>0001-0108.mp4 → .mp4
-            "import bpy, glob, json, os, re, time\n"
-            "S, T, P = %r, %d, %r\n"
-            "t0 = time.time()\n"
-            "def put(**v):\n"
-            "    v.update(updated=time.time(), pid=os.getpid(), total=T, parts=1, part=1, started=t0)\n"
-            "    json.dump(v, open(S + '.tmp', 'w')); os.replace(S + '.tmp', S)\n"
-            "n = [0]\n"
-            "def step(*a):\n"
-            "    n[0] += 1; put(state='rendering', done=n[0], per_frame=(time.time() - t0) / n[0])\n"
-            "bpy.app.handlers.render_write.append(step)\n"
-            "put(state='rendering', done=0)\n"
-            "bpy.ops.render.render(animation=True)\n"
-            "made = [f for f in glob.glob(glob.escape(P) + '*') if re.fullmatch(r'\\d+-\\d+\\.(mp4|mov|webm)', f[len(P):])]\n"
-            "if made:\n"
-            "    m = max(made, key=os.path.getmtime); os.replace(m, P + os.path.splitext(m)[1])\n"
-            "put(state='done', done=T, finished=time.time())\n" % (status, total, path))
         proc = subprocess.Popen([bpy.app.binary_path, "-b", blend, "--factory-startup", "-S", scene.name,
-                                 "--python-expr", script],
+                                 "--python-expr", EXPORT_SCRIPT % job],
                                 stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
     film_module.register_process(work, folder, "Export %s" % film.name, proc.pid)
-    return (os.path.dirname(path) if fmt == 'PNG' else path + ext), log
+    if len(ranges) > 1 and not join:
+        return folder, log
+    out = join or ranges[0][3]
+    return (os.path.dirname(out) if fmt == 'PNG' else out + ext), log
 
 
 def edl(scene, path=None):

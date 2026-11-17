@@ -72,6 +72,7 @@ class STUDIO_OT_add(Operator):
     frames: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})    # a film: "a-b" only these frames again
     other: BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})       # shift-click: the other quality
     force: BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})       # a film: render again though nothing changed
+    folder: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})    # a film: a version of its own (Frames/<s> <this>)
 
     @classmethod
     def description(cls, context, props):
@@ -114,23 +115,24 @@ class STUDIO_OT_add(Operator):
         return quality
 
     def execute(self, context):
+        from . import cut
+        scene = cut.film_scene(context.scene)        # from the Video Editor's scene: the film's 3D scene
         if self.mode == 'ANIM':
-            return self._film(context)
+            return self._film(context, scene)
         # The camera bar's camera, not the viewport selection: cameras are usually
         # hidden, and hidden objects cannot be selected.
-        cam = context.scene.objects.get(self.camera) if self.camera else active_camera(context.scene)
+        cam = scene.objects.get(self.camera) if self.camera else active_camera(scene)
         if cam is None or cam.type != 'CAMERA':
             self.report({'WARNING'}, "No active camera, pick one in the Render tab")
             return {'CANCELLED'}
         from . import autoquality
-        scene = context.scene
         key = autoquality.still_key(cam.name)
         quality = self._quality(scene, key)
         item = self._item(scene, cam, quality, 'STILL')
         autoquality.record(scene, key)
         self.report({'INFO'}, "AI Studio: added %s (%s)" % (runner.item_label(scene, item),
                                                            "HQ" if quality == 'HIGH' else "LQ"))
-        return self._start(context)
+        return self._start(context, scene)
 
     def _item(self, scene, cam, quality, mode):
         rq = scene.studio
@@ -154,20 +156,19 @@ class STUDIO_OT_add(Operator):
         item.parts = 1
         return item
 
-    def _start(self, context):
+    def _start(self, context, scene=None):
         p = runner.prefs(context)
         if (p is None or p.auto_render) and not RUN.busy:
             try:
-                RUN.start(context.scene)
+                RUN.start(scene or context.scene)
             except Exception as ex:
                 self.report({'ERROR'}, str(ex))
                 return {'CANCELLED'}
         return {'FINISHED'}
 
-    def _film(self, context):
+    def _film(self, context, scene):
         """One entry per section (each renders its frames in its own process, one after the other)."""
         from . import autoquality, cut
-        scene = context.scene
         found = cut.sections_of(scene)
         if self.section:
             found = [f for f in found if f[0] == self.section]
@@ -186,7 +187,7 @@ class STUDIO_OT_add(Operator):
             if cam is None or cam.type != 'CAMERA':
                 no_camera.append(name)
                 continue
-            if name in waiting or cut._rendering(name, fresh=True):
+            if not self.folder and (name in waiting or cut._rendering(name, fresh=True)):
                 if not self.section:
                     skipped.append(name)
                     continue
@@ -213,10 +214,11 @@ class STUDIO_OT_add(Operator):
                 continue
             item = self._item(scene, cam, quality, 'ANIM')
             item.section, item.keep_frames, item.redo = name, keep, bool(self.force)
+            item.job_folder = self.folder
             item.percentage = 100       # a film: High Quality at full size (Low: its share of it), whatever
             #                             size the scene is set to for the viewport
             item.frame_start, item.frame_end = a, b
-            if not keep:
+            if not keep and not self.folder:
                 autoquality.record(scene, key)
                 added_sections.append(name)
             added.append("%s %s" % (name, "HQ" if quality == 'HIGH' else "LQ"))
@@ -234,7 +236,7 @@ class STUDIO_OT_add(Operator):
                 missing or ": everything is in High Quality and nothing changed"))
             return {'CANCELLED'}
         self.report({'WARNING'} if no_camera else {'INFO'}, "Rendering %s%s" % (", ".join(added), missing))
-        return self._start(context)
+        return self._start(context, scene)
 
 
 class STUDIO_OT_clear(Operator):

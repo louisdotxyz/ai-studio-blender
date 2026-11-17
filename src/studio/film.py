@@ -189,6 +189,8 @@ def films(fresh=False):
         state = st.get("state", "")
         if state == "done":
             kind = 'DONE'
+        elif alive and stuck(st):
+            kind = 'STUCK'
         elif alive:
             kind = 'ENCODING' if state == "encoding" else 'RENDERING'
         elif state == "failed":
@@ -198,6 +200,17 @@ def films(fresh=False):
         out.append((film, st, kind))
     _films_cache[:] = [now, out]
     return out
+
+
+STUCK_AFTER = 1200.0      # a film whose status did not move for this long (and 4 frames' time) hangs
+
+
+def stuck(st):
+    """The film's process lives but nothing happened for a long time (it hangs: the queue goes on)."""
+    updated = st.get("updated")
+    if not updated or st.get("state") == "encoding":
+        return False
+    return time.time() - updated > max(STUCK_AFTER, 4 * (st.get("per_frame") or 0))
 
 
 def mine(film):
@@ -332,6 +345,8 @@ def text(film, st, kind):
         bits.append("making the video")
     elif kind == 'PAUSED':
         bits.append("stopped")
+    elif kind == 'STUCK':
+        bits.append("hangs for %s" % format_time(time.time() - st.get("updated", time.time())))
     elif kind == 'FAILED':
         bits.append(st.get("error", "failed")[:60])
     return " · ".join(bits)
@@ -454,6 +469,9 @@ def _poll():
         return 5.0
     for film, st, kind in now:
         key = film["dir"]
+        if kind == 'STUCK' and st.get("total", 0) <= 1 and _seen.get(key) != 'STUCK' and mine(film):
+            runner.log("preview film hangs, stopped: %s" % film.get("label"))
+            stop(key)                                # a preview image that hangs: stopped, the queue goes on
         if kind == 'RENDERING' and film.get("scene") and mine(film):     # its new frames into the strips
             done = st.get("done", 0)
             last = _filled.get(key, (0, 0.0))
@@ -492,7 +510,7 @@ def _poll():
             forget(key)
         _seen[key] = kind
     runner.tag_redraw()
-    return 2.0 if any(k in {'RENDERING', 'ENCODING'} for _f, _s, k in now) else None
+    return 2.0 if any(k in {'RENDERING', 'ENCODING', 'STUCK'} for _f, _s, k in now) else None
 
 
 def _ensure_timer():
@@ -513,13 +531,58 @@ def draw(layout, buttons=True):
                 op = row.operator("studio.film", text="", icon='X', emboss=False)
                 op.film, op.action = film["dir"], "REMOVE"
         else:
-            row.label(text=text(film, st, kind), icon='ERROR' if kind == 'FAILED' else 'PAUSE',
+            sub = row.row(align=True)
+            sub.alert = kind in {'FAILED', 'STUCK'}
+            sub.label(text=text(film, st, kind), icon='ERROR' if kind in {'FAILED', 'STUCK'} else 'PAUSE',
                       translate=False)
-            if buttons:
+            if buttons and kind == 'STUCK':          # hangs: stop it and take it out in one click
+                op = row.operator("studio.film", text="", icon='X')
+                op.film, op.action = film["dir"], "REMOVE"
+            elif buttons:
                 op = row.operator("studio.film", text="", icon='PLAY')
                 op.film, op.action = film["dir"], "RESUME"
                 op = row.operator("studio.film", text="", icon='X')
                 op.film, op.action = film["dir"], "FORGET"
+
+
+def queue_trouble():
+    """How many entries of the queue need a look: films that failed or hang, uploads that broke off or
+    stopped (shown red; each is removed with one click in the queue)."""
+    from . import renderfarm
+    bad = sum(1 for _f, _s, kind in films_here() if kind in {'FAILED', 'STUCK'})
+    return bad + sum(1 for j in renderfarm._jobs if j["phase"] in {"error", "retry"})
+
+
+def draw_total(layout, empty=""):
+    """One bar for everything that renders (films of this Mac and the farm's jobs): frames, time left. Returns
+    True if something renders; else the `empty` text (if any) as a quiet line."""
+    from . import renderfarm
+    from .runner import format_time
+    have, total, secs, sending = renderfarm.summary()
+    farm_stopped = total > have and renderfarm._view["scan"] is not None and not renderfarm.online_count()
+    for _entry, st, kind in films_here():
+        if kind in {'RENDERING', 'ENCODING', 'PAUSED', 'STUCK'}:
+            have += st.get("done", 0)
+            total += st.get("total", 0)
+            left = time_left(st) if kind == 'RENDERING' else None
+            secs = max(secs or 0.0, left or 0.0) or secs
+    if not total:
+        if empty:
+            row = layout.row()
+            row.active = False
+            row.label(text=empty, translate=False)
+        return False
+    bits = ["Renders %d/%d" % (have, total)]
+    if secs:
+        bits.append("~%s left" % format_time(secs))
+    if sending:
+        bits.append("%d being sent" % sending)
+    row = layout.row()
+    if farm_stopped:                  # jobs wait on the farm, but no Mac is online
+        row.alert = True
+        bits.append("farm offline!")
+    row.progress(factor=min(1.0, have / total), type='BAR', text=" · ".join(bits))
+    return True
 
 
 class STUDIO_OT_film(Operator):

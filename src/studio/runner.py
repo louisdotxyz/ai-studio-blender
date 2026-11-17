@@ -512,8 +512,12 @@ class Runner:
     def start(self, scene, quality=None, animation=None):
         """Renders the list. quality/animation are only defaults for entries without
         their own (older files); every entry normally carries its own."""
+        from . import cut
+        scene = cut.film_scene(scene)   # never the Video Editor's scene (no camera, no objects: black frames)
         if self.busy:
             return   # already running: it reads the list live and takes new entries along
+        if not any(o.type == 'CAMERA' for o in scene.objects):
+            raise RuntimeError("%s has no camera: nothing to render there" % scene.name)
         if not any(item.camera for item in scene.studio.items) and not _previews:
             raise RuntimeError("No camera in the queue")
         if not _previews:
@@ -661,7 +665,8 @@ class Runner:
             label = "%s · %s" % (item.variant, label)
         if self.animation:   # a section's frames: animation/Frames/<section>/<section>_0001.png …
             from . import cut
-            path = cut.frames_folder(item.section or cut.WHOLE)
+            path = cut.frames_folder((item.section or cut.WHOLE) + (" " + item.job_folder if getattr(
+                item, "job_folder", "") else ""))   # a version of its own stays out of the film
             own = item.frame_end > 0 and item.frame_end >= item.frame_start
             a, b = (item.frame_start, item.frame_end) if own else (scene.frame_start, scene.frame_end)
             frames = len(range(a, b + 1, scene.frame_step))

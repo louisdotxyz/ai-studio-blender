@@ -996,6 +996,55 @@ def assembly_check(collection=None):
     return out
 
 
+HELPER_WORDS = ("ref", "hilfe", "helper", "proxy", "guide", "hilfs")
+
+
+def helper_offsets(min_mm=10.0, max_mm=500.0):
+    """Helper meshes (hidden in renders, shown as wire/bounds, or named REF / Hilfe / helper …) that are the
+    same shape as a visible part but sit beside it: [{helper, part, offset_mm: (x, y, z), distance_mm}].
+    A helper 100 mm off its part means whatever follows the helper (a constraint, a boolean, a measurement)
+    is off too."""
+    from mathutils import Vector
+    scene = bpy.context.scene
+    unit = (scene.unit_settings.scale_length or 1.0) * 1000.0
+
+    def box(obj):
+        corners = [obj.matrix_world @ Vector(c) for c in obj.bound_box]
+        lo = Vector((min(c.x for c in corners), min(c.y for c in corners), min(c.z for c in corners)))
+        hi = Vector((max(c.x for c in corners), max(c.y for c in corners), max(c.z for c in corners)))
+        return (lo + hi) / 2, hi - lo
+
+    meshes = [o for o in scene.objects if o.type == 'MESH']
+    helpers = [o for o in meshes if o.hide_render or o.display_type in {'WIRE', 'BOUNDS'}
+               or any(w in o.name.lower() for w in HELPER_WORDS)]
+    parts = [o for o in meshes if o not in helpers]
+    out = []
+    for helper in helpers:
+        centre, size = box(helper)
+        if size.length < 1e-6:
+            continue
+        stem = helper.name.lower().split(".")[0]
+        for w in HELPER_WORDS:
+            stem = stem.replace(w, "")
+        stem = stem.strip(" _-|")
+        best = None
+        for part in parts:
+            same_data = part.data == helper.data
+            named = stem and stem in part.name.lower()
+            if not (same_data or named):
+                continue
+            c2, s2 = box(part)
+            if any(abs(a - b) > 0.05 * max(a, b, 1e-6) for a, b in zip(size, s2)):
+                continue                              # another shape: not its twin
+            gap = (c2 - centre) * unit
+            if best is None or gap.length < best.length:
+                best, twin = gap, part
+        if best is not None and min_mm <= best.length <= max_mm:
+            out.append({"helper": helper.name, "part": twin.name, "offset_mm": tuple(round(v, 1) for v in best),
+                        "distance_mm": round(best.length, 1)})
+    return out
+
+
 def farm_share_status():
     """The render farm's jobs of this file, from what was last looked at (never waits for the share):
     [{job, note, phase, total, on_share (rendered there), fetched (here), open}]."""
@@ -1010,20 +1059,21 @@ def farm_share_status():
     return out
 
 
-def section_render(section=None, quality=None, frames=None, force=False, resolution=None, samples=None):
+def section_render(section=None, quality=None, frames=None, force=False, resolution=None, samples=None, version=None):
     """Render a section's frames (None: every section that needs it) into animation/Frames/<section>/;
     they come into the Video Editor by themselves. quality None = by itself (Low first, High once nothing
     changed), else 'LOW' / 'HIGH'. frames=(a, b): only those frames again; else frames there in that quality
     stay (a longer section renders only its new frames). force=True: every frame again though nothing changed
     (e.g. after frames from a wrong camera): each older frame stays until its new one comes. Sending a section
     again stops its older render. resolution=(w, h) / samples=N: only for this job, the scene stays as it is
-    (e.g. one section in 4K with 512 samples; implies force for that section).
+    (e.g. one section in 4K with 512 samples; implies force for that section). version="4K": a version of its
+    own into Frames/<section> 4K (the section's frames and its strip in the film stay; nothing is stopped).
     With the render farm on (scene.studio.farm_on) the sections render there. Returns what was queued."""
-    scene = bpy.context.scene
+    scene = _cut_scene()                          # the film's scene, also when the Video Editor's is active
     before = {i.uid for i in scene.studio.items}
     result = bpy.ops.studio.add(mode='ANIM', section=section or "", quality=quality or 'DEFAULT',
                                 frames="%d-%d" % tuple(frames) if frames else "",
-                                force=bool(force or resolution or samples))
+                                force=bool(force or resolution or samples or version), folder=version or "")
     for item in scene.studio.items:
         if item.uid not in before and item.mode == 'ANIM':
             if resolution:
@@ -1050,19 +1100,26 @@ def cut_build(transitions=None):
     return dict(report, scene=made.name)
 
 
-def cut_export(edl=False, format=None, quality=None, size=None, range=None, music=None, name=None):
-    """The film as one video (or PNG frames) in the background into animation/Export, with the Export tab's
-    settings; given values change them first: format 'MP4' / 'H265' / 'PRORES' / 'WEBM' / 'PNG', quality
-    'PERC_LOSSLESS' / 'HIGH' / 'MEDIUM' / 'LOW', size 100 / 50 / 25, range 'ALL' / 'PREVIEW' / 'CLIP',
+def cut_export(edl=False, format=None, quality=None, size=None, range=None, music=None, name=None, sections=None,
+               split=None):
+    """The film as video (or PNG frames) in the background into animation/Export, with the Video Editor's
+    Export settings; given values change them first: sections (names; None = as chosen there, [] = all),
+    split 'ONE' (one video, sections with a gap between them are joined) / 'EACH' (one video per section),
+    format 'MP4' / 'H265' / 'PRORES' / 'WEBM' / 'PNG', quality 'PERC_LOSSLESS' / 'HIGH' / 'MEDIUM' / 'LOW',
+    size 100 / 50 / 25, range 'ALL' / 'PREVIEW' / 'CLIP' (PREVIEW / CLIP instead of the sections),
     music True/False, name (file name). edl=True also writes an EDL. Returns the paths."""
     from . import cut
-    scene = bpy.context.scene
+    scene = _cut_scene()
     rq = scene.studio
     for prop, value in (("cut_export_format", format), ("cut_export_quality", quality),
                         ("cut_export_size", None if size is None else str(int(size))),
-                        ("cut_export_range", range), ("cut_export_music", music), ("cut_export_name", name)):
+                        ("cut_export_range", range), ("cut_export_music", music), ("cut_export_name", name),
+                        ("cut_export_split", split)):
         if value is not None:
             setattr(rq, prop, value)
+    if sections is not None:
+        every = [n for n, _s, _e, _m in cut.sections_of(scene)]
+        rq.cut_export_skip = "\n".join(n for n in every if sections and n not in sections)
     video, log = cut.export(scene)
     out = {"video": video, "log": log}
     if edl:

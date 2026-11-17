@@ -321,7 +321,7 @@ def _retire_strays(root, view):
     me = "%s@%s" % (getpass.getuser(), socket.gethostname().split(".")[0])
     newest = {}
     for job in list(_jobs):
-        if job["phase"] in {"queued", "packing", "packed", "copying", "sent"} and job.get("note"):
+        if job["phase"] in {"queued", "packing", "packed", "copying", "retry", "sent"} and job.get("note"):
             newest[job["note"]] = max(newest.get(job["note"], ""), job["job"])
     known = {j["job"] for j in _jobs}
     for seen in view.get("jobs", []):
@@ -426,11 +426,11 @@ def takes(scene, item):
 
 
 def active():
-    return [j for j in _jobs if j["phase"] in {"queued", "packing", "packed", "copying", "sent"}]
+    return [j for j in _jobs if j["phase"] in {"queued", "packing", "packed", "copying", "retry", "sent"}]
 
 
 def sending():
-    return any(j["phase"] in {"queued", "packing", "packed", "copying"} for j in _jobs)
+    return any(j["phase"] in {"queued", "packing", "packed", "copying", "retry"} for j in _jobs)
 
 
 def renders_section(folder):
@@ -439,7 +439,8 @@ def renders_section(folder):
 
 
 def _save_registry():
-    keep = [{k: v for k, v in j.items() if k not in TRANSIENT} for j in _jobs if j["phase"] == "sent"]
+    keep = [{k: v for k, v in j.items() if k not in TRANSIENT} for j in _jobs
+            if j["phase"] in {"sent", "retry", "copying"}]
     try:
         os.makedirs(LOCAL, exist_ok=True)
         with open(REGISTRY + ".tmp", "w", encoding="utf-8") as f:
@@ -454,6 +455,8 @@ def _load_registry():
         with open(REGISTRY, encoding="utf-8") as f:
             for job in json.load(f):
                 if not any(j["job"] == job["job"] for j in _jobs):
+                    if job.get("phase") == "copying":     # Blender closed during the upload: it goes on
+                        job.update(phase="retry", retry_at=0.0)
                     _jobs.append(job)
     except (OSError, ValueError):
         pass
@@ -472,12 +475,8 @@ def _raw_copy(scene):
     if need and free < need:
         raise ValueError("Not enough space on this Mac (%.1f GB free, about %.1f GB needed)" % (free / 1e9, need / 1e9))
     path = os.path.join(LOCAL, "copy_%s.blend" % time.strftime("%Y%m%d-%H%M%S"))
-    runner.RUN.preparing = True                  # saving is no scene change
-    try:
-        bpy.ops.wm.save_as_mainfile(filepath=path, copy=True, compress=False, relative_remap=True,
-                                    check_existing=False)
-    finally:
-        runner.RUN.preparing = False
+    from . import film
+    film._scene_copy(path)                       # nothing changed since the last copy: a hard link, no save
     _raw[key] = path
     return path
 
@@ -551,7 +550,7 @@ def submit_item(scene, item, job, animation, path, camera, quality):
         fmt = _format_of(overrides)
         supersede(path)                              # sent again: the older job of this section stops
         skip = []
-        if not item.keep_frames and not getattr(item, "redo", False):
+        if not item.keep_frames and not getattr(item, "redo", False) and not getattr(item, "job_folder", ""):
             # Frames there in this quality (or better) stay: a longer intro renders only its new frames.
             st = cut.frame_status(section, a, b, fresh=True)
             wanted = {'HIGH'} if quality == 'HIGH' else {'HIGH', 'LOW'}
@@ -566,7 +565,9 @@ def submit_item(scene, item, job, animation, path, camera, quality):
         with open(os.path.join(meta, "job.json"), "w", encoding="utf-8") as f:
             json.dump({"scene": scene.name, "quality": quality, "section": section, "frames": [a, b],
                        "overrides": keep, "farm": True, "camera_name": camera.name}, f, indent=1)
-        return submit(scene, a, b, fmt, "%s · %s" % (section, "HQ" if quality == 'HIGH' else "LQ"), kind='ANIM',
+        version = getattr(item, "job_folder", "")
+        return submit(scene, a, b, fmt, "%s%s · %s" % (section, " " + version if version else "",
+                                                      "HQ" if quality == 'HIGH' else "LQ"), kind='ANIM',
                       overrides=overrides, folder=path, stem=stem, section=section, quality=quality,
                       camera_name=camera.name, skip=skip,
                       archive=os.path.join(cut.archive_folder(), "%s %s" % (os.path.basename(path),
@@ -588,6 +589,8 @@ def _pump():
             ready = next((j for j in _jobs if j["phase"] == "packed"), None)
             if ready is not None:
                 _start_copy(ready)
+            else:
+                _retry_due()
         if not any(j["phase"] in {"packing", "packed"} for j in _jobs):
             nxt = next((j for j in _jobs if j["phase"] == "queued"), None)
             if nxt is not None:
@@ -691,7 +694,7 @@ def _watch_workers():
     panel closed), a Mac going offline or no new frame for 10 minutes is reported once, the share is
     mounted again when it went away, and this Mac stays awake."""
     from . import runner
-    busy = any(j["phase"] in {"queued", "packing", "packed", "copying", "sent"} for j in _jobs)
+    busy = any(j["phase"] in {"queued", "packing", "packed", "copying", "retry", "sent"} for j in _jobs)
     _keep_awake(busy)
     if not any(j["phase"] == "sent" for j in _jobs):
         return
@@ -724,34 +727,63 @@ def _start_copy(job):
     threading.Thread(target=_copy, args=(job, job["packed"]), daemon=True).start()
 
 
+RETRIES = 6               # an upload that broke off (VPN, share gone, timeout) is tried again this often
+RETRY_WAIT = (30, 60, 120, 240, 300, 300)   # seconds before each new try
+
+
+def _sample_hash(path, size):
+    """A fingerprint of a file from 16 blocks spread over it (a full hash would read 0.5 GB over VPN)."""
+    import hashlib
+    digest = hashlib.sha1(str(size).encode())
+    block = 1 << 20
+    with open(path, "rb") as f:
+        for n in range(16):
+            f.seek(max(0, (size - block) * n // 15))
+            digest.update(f.read(block))
+    return digest.hexdigest()
+
+
 def _copy(job, packed):
-    """The packed copy onto the share: <job>.blend.part → <job>.blend, then <job>.json (last)."""
+    """The packed copy onto the share: <job>.blend.part → <job>.blend, then <job>.json (last). A copy that
+    broke off goes on where it stopped (the .part stays for that); a full copy is checked (size and a
+    fingerprint) before it counts."""
     root, name, size = job["root"], job["job"], job["size"]
     queue = os.path.join(root, "queue")
     part = os.path.join(queue, name + ".blend.part")
+    final = os.path.join(queue, name + ".blend")
     try:
         if not os.path.isdir(root):
             raise OSError("Share not connected: %s" % CONNECT_HINT)
         os.makedirs(queue, exist_ok=True)
-        free = shutil.disk_usage(queue).free
-        if free < size * 1.05:
-            raise OSError("The share is full (%.1f GB free, %.1f GB needed)" % (free / 1e9, size / 1e9))
-        copied = 0
-        with open(packed, "rb") as src, open(part, "wb") as dst:
-            while True:
-                block = src.read(CHUNK)
-                if not block:
-                    break
-                if job.get("cancel"):
-                    raise InterruptedError
-                dst.write(block)
-                copied += len(block)
-                job["progress"] = copied / size if size else 1.0
-            dst.flush()
-            os.fsync(dst.fileno())
-        if os.path.getsize(part) != size:
-            raise OSError("The copy on the share is incomplete")
-        os.replace(part, os.path.join(queue, name + ".blend"))
+        there = os.path.getsize(part) if os.path.exists(part) else -1
+        done_before = there < 0 and os.path.exists(final) and os.path.getsize(final) == size
+        if not done_before:
+            free = shutil.disk_usage(queue).free
+            if free < (size - max(0, there)) * 1.05:
+                raise OSError("The share is full (%.1f GB free, %.1f GB needed)" % (free / 1e9, size / 1e9))
+            start = 0
+            if 0 < there <= size:                  # go on where it broke off (the last block again)
+                start = max(0, (there // CHUNK - 1) * CHUNK)
+            copied = start
+            with open(packed, "rb") as src, open(part, "r+b" if start else "wb") as dst:
+                src.seek(start)
+                dst.seek(start)
+                dst.truncate(start)
+                while True:
+                    block = src.read(CHUNK)
+                    if not block:
+                        break
+                    if job.get("cancel"):
+                        raise InterruptedError
+                    dst.write(block)
+                    copied += len(block)
+                    job["progress"] = copied / size if size else 1.0
+                dst.flush()
+                os.fsync(dst.fileno())
+            if os.path.getsize(part) != size or _sample_hash(part, size) != _sample_hash(packed, size):
+                os.remove(part)                    # wrong somewhere: the next try copies it anew
+                raise OSError("The copy on the share differs from this Mac's")
+            os.replace(part, final)
         if job.get("skip"):                      # frames that are rendered already: the workers skip them
             folder = os.path.join(root, "renders", name)
             os.makedirs(folder, exist_ok=True)
@@ -764,7 +796,8 @@ def _copy(job, packed):
             json.dump({"scene": job["scene"], "start": job["start"], "end": job["end"], "format": job["format"],
                        "sent_by": job["sent_by"], "note": job["note"]}, f, indent=1)
         os.replace(meta, os.path.join(queue, name + ".json"))      # now the job is ready
-        job.update(phase="sent" if job["kind"] in {'STILL', 'ANIM'} else "done", progress=1.0)
+        job.update(phase="sent" if job["kind"] in {'STILL', 'ANIM'} else "done", progress=1.0, error="",
+                   tries=0)
         _reconcile()
         shutil.rmtree(os.path.join(LOCAL, name), ignore_errors=True)
         _view["force"] = True                    # looked at again soon (the old view stays until then)
@@ -775,9 +808,28 @@ def _copy(job, packed):
         except OSError:
             pass
     except OSError as ex:
-        reason = "the share is full" if getattr(ex, "errno", 0) == 28 else str(ex)
-        job.update(phase="error", error="Copy to the share stopped: %s (%s stays, it is never a job)"
-                   % (reason, os.path.basename(part)))
+        full = getattr(ex, "errno", 0) == 28 or "is full" in str(ex)
+        tries = job.get("tries", 0) + 1
+        if full or tries > RETRIES:
+            reason = "the share is full" if full else "%s (tried %d times)" % (ex, tries - 1)
+            job.update(phase="error", error="Upload stopped: %s · Retry tries again" % reason)
+        else:                                    # VPN dropped, timeout, share away: again in a while
+            job.update(phase="retry", tries=tries, error=str(ex)[:80],
+                       retry_at=time.time() + RETRY_WAIT[min(tries, len(RETRY_WAIT)) - 1])
+        _save_registry()
+
+
+def _retry_due():
+    """(Blender's thread) An upload that broke off starts again when its time came and the share is there."""
+    if any(j["phase"] == "copying" for j in _jobs):
+        return
+    job = next((j for j in _jobs if j["phase"] == "retry" and time.time() >= j.get("retry_at", 0.0)), None)
+    if job is None or not connected():
+        return
+    if not os.path.isfile(job.get("packed", "")):
+        job.update(phase="error", error="The packed file is gone: send it again")
+        return
+    _start_copy(job)
 
 
 def total_of(job):
@@ -826,13 +878,13 @@ def starts_in(job):
 
 def summary():
     """All of ours on the farm in one: (frames there, frames in all, seconds left or None, jobs sending)."""
-    jobs = [j for j in _jobs if j["phase"] in {"queued", "packing", "packed", "copying", "sent"}
+    jobs = [j for j in _jobs if j["phase"] in {"queued", "packing", "packed", "copying", "retry", "sent"}
             and j["kind"] == 'ANIM']
     have = sum(j.get("have", 0) for j in jobs)
     total = sum(total_of(j) for j in jobs)
     per = _per_frame()
     return have, total, (per * max(0, total - have) if per else None), \
-        sum(1 for j in jobs if j["phase"] in {"queued", "packing", "packed", "copying"})
+        sum(1 for j in jobs if j["phase"] in {"queued", "packing", "packed", "copying", "retry"})
 
 
 def _note_frame(job, path, live=True):
@@ -933,6 +985,13 @@ def _collect_all():
                 pass
             runner.notify("%s ready (render farm)" % job["note"])
             _save_registry()
+        elif job["kind"] == 'ANIM' and job.get("farm_done") and job.get("have", 0) < total_of(job):
+            job["phase"] = "done"                    # the farm closed it short: never waits for frames forever
+            runner.log("farm job %s closed with %d frames missing" % (job["job"], job["farm_done"]))
+            runner.notify("%s: the farm finished it, %d frames missing (render the section again)"
+                          % (job["note"] or job["job"], job["farm_done"]))
+            _save_registry()
+            threading.Thread(target=_reconcile, daemon=True).start()
         elif job["kind"] == 'ANIM' and job.get("have", 0) >= total_of(job):
             job["phase"] = "done"
             cut.on_film_done(job["scene"])
@@ -972,7 +1031,7 @@ def _fetch(job):
                     except OSError:
                         continue
                     listed[entry.name] = (st.st_size, st.st_mtime)
-        on_share = have = 0
+        on_share = have = settling = 0
         todo = []
         for frame in range(job["start"], job["end"] + 1):
             if frame in skip:                         # rendered before: kept, the workers skip it
@@ -982,6 +1041,7 @@ def _fetch(job):
             name = "%s_%04d.%s" % (job["job"], frame, job["ext"])
             size, mtime = listed.get(name, (0, 0.0))
             if size <= 0 or now - mtime <= SETTLE:
+                settling += size > 0
                 continue                              # not rendered yet, or still being written
             on_share += 1
             local = os.path.join(job["folder"], "%s_%04d.%s" % (job["stem"], frame, job["ext"]))
@@ -1030,11 +1090,14 @@ def _fetch(job):
         job["seen_share"] = on_share
         if new:
             job["last_new"] = time.time()
+        done = os.path.join(job["root"], "queue", job["job"] + ".done")
         if have >= total_of(job) and job.get("skip"):
-            done = os.path.join(job["root"], "queue", job["job"] + ".done")
             if not os.path.exists(done):              # the workers count only their own frames: we say it
                 with open(done, "w", encoding="utf-8") as f:
                     f.write(time.strftime("%Y-%m-%d %H:%M:%S") + " all frames there\n")
+        elif not todo and not settling and have < total_of(job) and os.path.exists(done):
+            job["farm_done"] = total_of(job) - have   # finished on the farm without these frames (a newer
+            #                                           job of the section took them, or the worker failed)
         job["error"] = ""
     except OSError as ex:
         if job["kind"] != 'STILL' or not isinstance(ex, FileNotFoundError):
@@ -1159,6 +1222,9 @@ def remove(name):
             proc.terminate()
     elif phase == "copying":
         job["cancel"] = True
+    elif phase == "retry":                         # confirmed: its half upload goes too (in a thread)
+        part = os.path.join(job["root"], "queue", name + ".blend.part")
+        threading.Thread(target=lambda: os.path.exists(part) and os.remove(part), daemon=True).start()
     elif phase == "sent":
         remove_from_share(job["root"], name, job["start"], job["end"], job["ext"])
     _jobs.remove(job)
@@ -1224,7 +1290,7 @@ def rows():
 def total_left():
     """Seconds until everything of ours on the farm is done, or None."""
     secs, known = 0.0, False
-    for job in [j for j in _jobs if j["phase"] in {"queued", "packing", "packed", "copying", "sent"}
+    for job in [j for j in _jobs if j["phase"] in {"queued", "packing", "packed", "copying", "retry", "sent"}
                 and j["kind"] == 'ANIM']:
         one = left(job)
         if one is not None:
@@ -1233,7 +1299,7 @@ def total_left():
     return secs if known else None
 
 
-SENDING = {"queued", "packing", "packed", "copying"}
+SENDING = {"queued", "packing", "packed", "copying", "retry"}
 
 
 def _send_text(job):
@@ -1243,6 +1309,11 @@ def _send_text(job):
         return "%s · packing the file" % (job["note"] or job["job"])
     if job["phase"] == "packed":
         return "%s · packed, uploads next" % (job["note"] or job["job"])
+    if job["phase"] == "retry":
+        wait = max(0, int(job.get("retry_at", 0.0) - time.time()))
+        return "%s · upload broke off, goes on %s (try %d of %d)" % (
+            job["note"] or job["job"], "in %d s" % wait if wait else "when the share is there",
+            job.get("tries", 1) + 1, RETRIES + 1)
     return "%s · upload %d %% of %.1f GB" % (job["note"] or job["job"], round(job["progress"] * 100),
                                             job["size"] / 1e9)
 
@@ -1257,7 +1328,8 @@ def draw_rows(layout, buttons=True):
         row = layout.row(align=True)
         sub = row.row(align=True)
         sub.active = False
-        sub.label(text=_send_text(job), icon='EXPORT' if job["phase"] == "copying" else 'TIME', translate=False)
+        sub.label(text=_send_text(job), icon={'copying': 'EXPORT', 'retry': 'FILE_REFRESH'}.get(job["phase"], 'TIME'),
+                  translate=False)
         if buttons:
             row.operator(STUDIO_OT_farm_remove.bl_idname, text="", icon='X', emboss=False).job = job["job"]
     for n, job in enumerate(farm):
@@ -1265,6 +1337,8 @@ def draw_rows(layout, buttons=True):
         if job["phase"] == "error":
             row.alert = True
             row.label(text="%s: %s" % (job["note"] or job["job"], job["error"]), icon='ERROR', translate=False)
+            if os.path.isfile(job.get("packed", "")):
+                row.operator(STUDIO_OT_farm_retry.bl_idname, text="", icon='FILE_REFRESH').job = job["job"]
             row.operator(STUDIO_OT_farm_remove.bl_idname, text="", icon='X', emboss=False).job = job["job"]
             continue
         total = total_of(job)
@@ -1449,60 +1523,56 @@ def draw_state(layout, context):
     now = time.time()
     last = last_frame_time()
     waiting = total > have or sending
-    head = col.row(align=True)
+    rendering = [(n, j) for n, st, j, _s in states if st == 'rendering']
+    head = col.row(align=True)                       # Macs at work · speed · what is left
     if not workers and waiting:
         head.alert = True
         head.label(text="No Mac renders · last frame %s" % (time.strftime("%H:%M", time.localtime(last))
                                                            if last else "–"), icon='ERROR', translate=False)
     else:
-        head.label(text="%d Mac%s%s" % (workers, "" if workers == 1 else "s",
-                                        " · %.1f frames/min" % rate if rate and workers else ""),
+        head.label(text="%d of %d Macs render%s" % (len(rendering), len(states),
+                                                    " · %.1f frames/min" % rate if rate and rendering else ""),
                    icon='DESKTOP', translate=False)
-    if total:
-        right = head.row()
-        right.alignment = 'RIGHT'
-        right.label(text="%d/%d%s" % (have, total, " · ~%s" % format_time(secs) if secs and workers else ""),
-                    translate=False)
     head.operator(STUDIO_OT_farm_refresh.bl_idname, text="", icon='FILE_REFRESH')
+    if total:
+        line = col.row()
+        line.active = False
+        line.label(text="%d of %d frames%s" % (have, total, " · ~%s left, done at %s" % (
+            format_time(secs), time.strftime("%H:%M", time.localtime(now + secs))) if secs and workers else ""),
+                   icon='RENDER_ANIMATION', translate=False)
     if workers and waiting and last and now - last > STALL and not any(st == 'loading' for _n, st, _j, _s in states):
         row = col.row()
         row.alert = True
         row.label(text="No new frame for %s" % format_time(now - last), icon='ERROR', translate=False)
-    every = frames_per_bucket()
-    if any(every):                                   # the last hour: one ring per 5 minutes (full = the most)
-        top = max(every) or 1
-        rings = col.row(align=True)
-        for count in every:
-            rings.progress(factor=count / top, type='RING', text="")
-        legend = col.row()
-        legend.active = False
-        legend.scale_y = 0.7
-        legend.label(text=time.strftime("%H:%M", time.localtime(now - BARS * BUCKET)), translate=False)
-        right = legend.row()
-        right.alignment = 'RIGHT'
-        right.label(text="now %d · hour %d frames" % (every[-1], sum(every)), translate=False)
-    icons = {'rendering': 'RENDER_ANIMATION', 'loading': 'FILE_REFRESH', 'waiting': 'TIME', 'offline': 'CANCEL'}
-    lines = col.column(align=True)
+    lines = col.column(align=True)                   # each Mac: how busy it is (the bar) and how fast
     for name, state, job, since in states:
         key = name.lower()
-        row = lines.row()
-        row.scale_y = 0.9
-        if state == 'offline':
-            row.alert = True
-        row.label(text=name, icon=icons[state], translate=False)
-        doing = row.row()
-        doing.active = state == 'rendering'
-        doing.label(text={"rendering": _job_note(job),
-                          "loading": "loads · %s" % _clock(now - since),
-                          "waiting": "waits",
-                          "offline": "offline since %s" % time.strftime("%H:%M", time.localtime(since))}[state],
-                    translate=False)
-        right = row.row()
-        right.alignment = 'RIGHT'
         per = seconds_per_frame(key)
-        busy = busy_share(key)
-        right.label(text=("%.0f s%s" % (per, " · %d %%" % round(busy * 100) if busy and state == 'rendering'
-                                        else "")) if per else "", translate=False)
+        row = lines.row(align=True)
+        if state == 'rendering':
+            busy = busy_share(key)
+            hour = sum(frames_per_bucket(key, now))
+            row.progress(factor=busy if busy is not None else 1.0, type='BAR', text="%s · %s%s%s" % (
+                name, "%.0f s per frame" % per if per else "renders",
+                " · %d %% busy" % round(busy * 100) if busy is not None else "",
+                " · %d in 1 h" % hour if hour else ""))
+            continue
+        sub = row.row(align=True)
+        sub.alert = state == 'offline'
+        sub.active = state != 'waiting'
+        sub.label(text="%s · %s" % (name, {
+            "loading": "loads the file · %s" % _clock(now - since),
+            "waiting": "waits for a job",
+            "offline": "offline since %s" % time.strftime("%H:%M", time.localtime(since))}[state]),
+            icon={'loading': 'FILE_REFRESH', 'waiting': 'TIME', 'offline': 'CANCEL'}[state], translate=False)
+    if rendering:
+        doing = sorted({_job_note(j) for _n, j in rendering if j})
+        every = frames_per_bucket(None, now)
+        foot = col.row()
+        foot.active = False
+        foot.scale_y = 0.8
+        foot.label(text="%s · last hour %d frames, best 5 min %d" % (", ".join(doing)[:48], sum(every), max(every)),
+                   translate=False)
     if not workers and waiting:
         hint = col.row()
         hint.active = False
@@ -1564,6 +1634,25 @@ class STUDIO_OT_farm_refresh(Operator):
         return {'FINISHED'}
 
 
+class STUDIO_OT_farm_retry(Operator):
+    bl_idname = "studio.farm_retry"
+    bl_label = "Retry"
+    bl_description = "Upload it again, from where it broke off"
+    bl_options = {'INTERNAL'}
+
+    job: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    def execute(self, _context):
+        job = next((j for j in _jobs if j["job"] == self.job), None)
+        if job is None:
+            return {'CANCELLED'}
+        job.update(phase="retry", tries=0, retry_at=0.0, error="")
+        reconnect(mount=True)
+        if not bpy.app.timers.is_registered(_pump):
+            bpy.app.timers.register(_pump, first_interval=0.1, persistent=True)
+        return {'FINISHED'}
+
+
 class STUDIO_OT_farm_vpn(Operator):
     bl_idname = "studio.farm_vpn"
     bl_label = "VPN"
@@ -1593,7 +1682,7 @@ class STUDIO_OT_farm_connect(Operator):
 
 
 classes = (STUDIO_OT_farm_move, STUDIO_OT_farm_remove, STUDIO_OT_farm_refresh, STUDIO_OT_farm_connect,
-           STUDIO_OT_farm_vpn)
+           STUDIO_OT_farm_vpn, STUDIO_OT_farm_retry)
 
 
 def register():

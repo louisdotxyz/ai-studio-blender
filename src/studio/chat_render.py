@@ -135,16 +135,7 @@ def _camera_text(names, cams):
 def draw_inline(layout, context):
     """One row in the chat: [cameras ▾][All] [Render]. Size and format come from the Render tab; progress
     and comparing are there too."""
-    if context.area is not None and context.area.type == 'SEQUENCE_EDITOR':   # the cut chat: format · export
-        from . import cut
-        rq = cut.film_scene(getattr(context, "sequencer_scene", None) or context.scene).studio
-        row = layout.row(align=True)
-        row.scale_y = 1.2
-        row.prop(rq, "cut_export_format", text="")
-        quality = row.row(align=True)
-        quality.enabled = rq.cut_export_format not in {'PRORES', 'PNG'}
-        quality.prop(rq, "cut_export_quality", text="")
-        row.operator("studio.cut", text="Export", icon='EXPORT').action = 'EXPORT'
+    if context.area is not None and context.area.type == 'SEQUENCE_EDITOR':   # the cut chat: export is in Studio
         return
     scene = context.scene
     cams = cameras.scene_cameras(scene)

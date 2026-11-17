@@ -142,31 +142,8 @@ def _fit_rows(context, rows, unit, key):
 def _draw_render_total(layout):
     """One bar for every film that renders (this Mac and the render farm): frames, time left. Many renders
     must not fill the chat; each one is in the Render tab."""
-    from .studio import film, renderfarm
-    from .studio.runner import format_time
-    have, total, secs, sending = renderfarm.summary()
-    farm_stopped = total > have and renderfarm._view["scan"] is not None and not renderfarm.online_count()
-    films = 0
-    for entry, st, kind in film.films_here():
-        if kind in {'RENDERING', 'ENCODING', 'PAUSED'}:
-            films += 1
-            have += st.get("done", 0)
-            total += st.get("total", 0)
-            left = film.time_left(st) if kind == 'RENDERING' else None
-            secs = max(secs or 0.0, left or 0.0) or secs
-    if not total:
-        return False
-    bits = ["Renders %d/%d" % (have, total)]
-    if secs:
-        bits.append("~%s left" % format_time(secs))
-    if sending:
-        bits.append("%d being sent" % sending)
-    row = layout.row()
-    if farm_stopped:                  # jobs wait on the farm, but no Mac is online
-        row.alert = True
-        bits.append("farm offline!")
-    row.progress(factor=min(1.0, have / total), type='BAR', text=" · ".join(bits))
-    return True
+    from .studio import film
+    return film.draw_total(layout)
 
 
 PREVIEW_LINES = 2

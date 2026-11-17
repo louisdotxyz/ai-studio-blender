@@ -255,6 +255,7 @@ class STUDIO_Item(PropertyGroup):
     job_width: IntProperty(options={'HIDDEN'})
     job_height: IntProperty(options={'HIDDEN'})
     job_samples: IntProperty(options={'HIDDEN'})
+    job_folder: StringProperty(options={'HIDDEN'})   # a version of its own: Frames/<section> <this>
 
 
 def _pin_changed(self, context):
@@ -560,6 +561,12 @@ class STUDIO_Settings(PropertyGroup):
                                      "the renders, a film's frames into the Video Editor)", 'NETWORK_DRIVE', 1)],
         get=lambda self: 1 if self.farm_on else 0,
         set=lambda self, value: setattr(self, "farm_on", bool(value)))
+    cut_export_skip: StringProperty(name="Left Out", description="Sections left out of the export (one per line)",
+                                    default="", options=set())
+    cut_export_split: EnumProperty(
+        name="Files", options=set(), default='ONE',
+        items=[('ONE', "One File", "The chosen sections in one video, one after the other", 'FILE_MOVIE', 0),
+               ('EACH', "Per Section", "One video per chosen section", 'DOCUMENTS', 1)])
     cut_export_music: BoolProperty(name="With Music", description="The music strip goes into the video",
                                    default=True, options=set())
     cut_export_name: StringProperty(name="File Name", description="Name of the export (empty: the scene's "

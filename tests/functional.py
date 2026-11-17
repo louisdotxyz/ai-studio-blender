@@ -2548,6 +2548,17 @@ def motion_sections():
                   kinds == ["CROSS", "HOLD", "SECTION", "SECTION"] and cut.strip_range(scene) == (1, 50 + 60 - 6 + 4)
                   and cut.scene_frame(scene, hero, hero.frame_final_start) == ("02 Hero", 51),
                   (kinds, cut.strip_range(scene)))
+            rq.cut_export_split, rq.cut_export_skip = 'ONE', ""
+            one, join = cut.export_plan(scene)
+            rq.cut_export_skip = "01 Intro"
+            only, _j = cut.export_plan(scene)
+            rq.cut_export_split, rq.cut_export_skip = 'EACH', ""
+            each, _j = cut.export_plan(scene)
+            rq.cut_export_split = 'ONE'
+            check("export: both sections in one range; one left out; one video per section",
+                  len(one) == 1 and not join and (one[0][1], one[0][2]) == cut.strip_range(scene)
+                  and [r[0] for r in only] == ["02 Hero"] and [r[0] for r in each] == ["01 Intro", "02 Hero"]
+                  and each[0][3] != each[1][3], (one, only, each))
             aq = mod("studio.autoquality")
             key = aq.section_key("02 Hero")
             before = aq.next_quality(scene, key)
@@ -2831,6 +2842,24 @@ def render_farm_folder():
     check("farm: .done → done; job names are safe", farm.scan(root)["jobs"][0]["state"] == 'done'
           and farm.job_name("/x/VELO now.blend", "Szene 1", 0).startswith("VELO_now_19")
           and farm.job_name("/x/VELO now.blend", "Szene 1", 0).endswith("_Szene_1"))
+    packed = os.path.join(root, "packed.blend")             # an upload that broke off goes on where it stopped
+    with open(packed, "wb") as f:
+        f.write(os.urandom(3 * farm.CHUNK + 1234))
+    size = os.path.getsize(packed)
+    with open(packed, "rb") as src, open(os.path.join(root, "queue", "c_job.blend.part"), "wb") as dst:
+        dst.write(src.read(2 * farm.CHUNK + 99))
+    up = {"root": root, "job": "c_job", "size": size, "scene": "Scene", "start": 1, "end": 2, "format": "PNG",
+          "sent_by": "t", "note": "c", "kind": 'ANIM', "phase": "copying", "packed": packed, "progress": 0.0}
+    keep_jobs = list(farm._jobs)
+    farm._copy(up, packed)
+    resumed = up["phase"] == "sent" and os.path.getsize(os.path.join(root, "queue", "c_job.blend")) == size
+    gone = dict(up, job="d_job", root=os.path.join(root, "missing"), phase="copying")
+    farm._copy(gone, packed)
+    check("farm upload: goes on from the half file, checked; a broken one is tried again later",
+          resumed and gone["phase"] == "retry" and gone["tries"] == 1 and gone["retry_at"] > time.time(),
+          (up["phase"], up.get("error"), gone.get("phase"), gone.get("error")))
+    farm._jobs[:] = keep_jobs
+    farm._save_registry()
     keep_view = dict(farm._view)
     farm._view.update(busy=True, since=time.monotonic() - 60)
     hung = farm.stuck()
