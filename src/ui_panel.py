@@ -169,7 +169,7 @@ def _draw_render_total(layout):
     return True
 
 
-PREVIEW_LINES = 5
+PREVIEW_LINES = 2
 
 
 def prompt_preview_lines(context):
@@ -187,7 +187,10 @@ def prompt_preview_lines(context):
         return []
     if len(lines) <= 1:
         return []
-    return (["…"] + lines[-PREVIEW_LINES:]) if len(lines) > PREVIEW_LINES else lines
+    if len(lines) > PREVIEW_LINES:                 # the end, where you write: "…" at the start of the first line
+        lines = lines[-PREVIEW_LINES:]
+        lines[0] = "… " + lines[0]
+    return lines
 
 
 def _draw_prompt_preview(layout, context):
@@ -195,11 +198,9 @@ def _draw_prompt_preview(layout, context):
     if not lines:
         return
     col = layout.column(align=True)
-    col.scale_y = 0.8
-    col.active = False
+    col.scale_y = 0.85
     for line in lines:
         col.label(text=line or " ", translate=False)
-    col.separator(factor=0.4)
 
 
 class _ChatPanel:
@@ -683,7 +684,6 @@ class _ChatPanel:
         row = col.row(align=True)
         row.scale_y = 1.4
         _prop_with_placeholder(row, context.window_manager, "claude_prompt", placeholder)
-        row.operator("claude.edit_prompt", text="", icon='TEXT')
         row.operator("claude.send", text="", icon='EVENT_RETURN')
         row.operator("claude.queue_chat", text="", icon='NEXT_KEYFRAME')
         if busy:

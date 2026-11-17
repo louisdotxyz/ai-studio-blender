@@ -589,8 +589,9 @@ def _timeline(context):
         return None
     if region is None or region.type != 'WINDOW':
         return None
-    scene = getattr(context, "sequencer_scene", None) or context.scene
-    return scene if scene is not None and scene.sequence_editor is not None else None
+    from . import cut
+    scene = cut.film_scene(getattr(context, "sequencer_scene", None) or context.scene)
+    return scene if scene is not None and cut._sed_of(scene) is not None else None
 
 
 def _draw_bands():
@@ -671,7 +672,8 @@ _handlers = []
 # ------------------------------------------------------------------ operators
 
 def _scene(context):
-    return getattr(context, "sequencer_scene", None) or context.scene
+    from . import cut
+    return cut.film_scene(getattr(context, "sequencer_scene", None) or context.scene)
 
 
 class STUDIO_OT_film_proof(Operator):

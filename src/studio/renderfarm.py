@@ -1183,6 +1183,7 @@ def draw_switch(row, context):
 
 
 LOADING = 900.0           # a worker that started a job may take this long for its first frame (loading)
+OFFLINE_SHOWN = 1200.0    # an offline worker stays in the list this long (to notice it), then it goes
 
 
 def worker_states(view=None):
@@ -1213,8 +1214,8 @@ def worker_states(view=None):
             state = 'waiting'
         else:
             state = 'offline'
-        if state == 'offline' and now - since > 12 * 3600:
-            continue                                  # not used for a long time: not listed
+        if state == 'offline' and now - since > OFFLINE_SHOWN:
+            continue                                  # gone for a while: not listed any more
         out.append((name, state, what.split(" ", 1)[1].strip() if what.startswith("rendert ") else "", since))
     return out
 

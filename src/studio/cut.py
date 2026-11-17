@@ -75,6 +75,7 @@ def cut_folder():
 
 def sections_of(scene):
     """[(name, start, end, marker or None)]: the sections, or the whole film as one."""
+    scene = film_scene(scene)
     found = [(m.name, s, e, m) for m, s, e in motion.sections(scene)]
     return found or [(WHOLE, scene.frame_start, scene.frame_end, None)]
 
@@ -425,8 +426,73 @@ def _tag(strip, kind, section=""):
         pass
 
 
+CUT_KEY = "studio_cut_scene"     # on the film's scene: the name of its Video Editor scene
+FILM_KEY = "studio_film_scene"   # on the Video Editor scene: the name of the film's scene
+
+
+def film_scene(scene):
+    """The film's (3D) scene of a scene: itself, or for the Video Editor scene the scene it cuts."""
+    if scene is None:
+        return None
+    name = scene.get(FILM_KEY)
+    return (bpy.data.scenes.get(name) or scene) if name else scene
+
+
+def editor(scene):
+    """The Video Editor scene of the film (the strips live there, with their own playhead: scrubbing never
+    moves the 3D scene, so Claude and the 3D view are not disturbed). None if it has none yet."""
+    film = film_scene(scene)
+    if film is None:
+        return None
+    found = bpy.data.scenes.get(film.get(CUT_KEY, ""))
+    if found is not None and found.get(FILM_KEY) == film.name:
+        return found
+    return next((s for s in bpy.data.scenes if s.get(FILM_KEY) == film.name), None)
+
+
+def editor_create(scene):
+    """editor(scene), made if missing (not in a draw): same size, frame rate, colours as the film."""
+    film = film_scene(scene)
+    found = editor(film)
+    if found is None:
+        found = bpy.data.scenes.new("%s · Schnitt" % film.name)
+        found[FILM_KEY] = film.name
+    if film.get(CUT_KEY) != found.name:
+        film[CUT_KEY] = found.name
+    _match(found, film)
+    if found.sequence_editor is None:
+        found.sequence_editor_create()
+    return found
+
+
+def _match(ed, film):
+    r, f = ed.render, film.render
+    for attr in ("resolution_x", "resolution_y", "fps", "fps_base", "pixel_aspect_x", "pixel_aspect_y"):
+        if getattr(r, attr) != getattr(f, attr):
+            setattr(r, attr, getattr(f, attr))
+    if not r.use_sequencer:
+        r.use_sequencer = True
+    for attr in ("view_transform", "look", "exposure", "gamma"):
+        try:
+            if getattr(ed.view_settings, attr) != getattr(film.view_settings, attr):
+                setattr(ed.view_settings, attr, getattr(film.view_settings, attr))
+        except (AttributeError, TypeError):
+            pass
+
+
+def _sed_of(scene):
+    ed = editor(scene)
+    return ed.sequence_editor if ed is not None else None
+
+
+def playhead(scene):
+    """The Video Editor's frame (its own scene), the film's when there is none yet."""
+    ed = editor(scene)
+    return (ed or scene).frame_current
+
+
 def ours(scene):
-    sed = scene.sequence_editor
+    sed = _sed_of(scene)
     return [s for s in _all(sed) if _get(s, KIND_KEY)] if sed is not None else []
 
 
@@ -485,7 +551,7 @@ def _fit(scene, strip, width):
 
 def settings(scene, section):
     """The cut settings of a section (made the first time)."""
-    items = scene.studio.cut_items
+    items = film_scene(scene).studio.cut_items
     item = next((c for c in items if c.section == section), None)
     if item is None:
         item = items.add()
@@ -505,7 +571,7 @@ def _channelbag(block):
 
 
 def _remove_ours(scene, keep=()):
-    sed = scene.sequence_editor
+    sed = _sed_of(scene)
     gone = [s for s in ours(scene) if _get(s, KIND_KEY) not in keep]
     names = {strip.name for strip in gone}
     strips = _strips(sed)
@@ -514,7 +580,7 @@ def _remove_ours(scene, keep=()):
             strips.remove(strip)
         except (RuntimeError, ReferenceError):
             pass
-    bag = _channelbag(scene)
+    bag = _channelbag(editor(scene)) if editor(scene) is not None else None
     if bag is not None and names:
         for fc in list(bag.fcurves):
             if fc.data_path.startswith("sequence_editor.") and any('"%s"' % n in fc.data_path for n in names):
@@ -545,10 +611,17 @@ def _sources(scene):
 def show_in_video_editor(scene):
     """The Video Editing workspace shows this scene (Blender 5: each workspace has its sequencer scene);
     the strips show their names, not their file paths."""
+    ed = editor_create(scene)
     for space in bpy.data.workspaces:
-        if "video" in space.name.lower() and hasattr(space, "sequencer_scene") and space.sequencer_scene is not scene:
+        if "video" in space.name.lower() and hasattr(space, "sequencer_scene") and \
+                getattr(space, "use_scene_time_sync", False):
             try:
-                space.sequencer_scene = scene
+                space.use_scene_time_sync = False   # scrubbing the cut never moves the 3D scene
+            except (AttributeError, TypeError, RuntimeError):
+                pass
+        if "video" in space.name.lower() and hasattr(space, "sequencer_scene") and space.sequencer_scene is not ed:
+            try:
+                space.sequencer_scene = ed
             except (AttributeError, TypeError, RuntimeError):
                 pass
     for screen in bpy.data.screens:
@@ -566,7 +639,7 @@ def show_in_video_editor(scene):
 
 def _make_section_strip(scene, name, kind, data, channel, at):
     """(strip, paths) of a section: its frames, an older film's frames or a 3.9 video."""
-    strips = _strips(scene.sequence_editor)
+    strips = _strips(editor_create(scene).sequence_editor)
     if kind == "FRAMES":
         if not data["shown"]:
             return None, None                      # nothing done yet: it comes with its first frames
@@ -596,7 +669,7 @@ def _music(scene):
     music = bpy.path.abspath(rq.cut_music) if rq.cut_music else ""
     if music and os.path.isfile(music):
         span = film_edit.content_range(scene)
-        sound = _strips(scene.sequence_editor).new_sound(name="Music", filepath=music, channel=film_edit.TOP + 6,
+        sound = _strips(editor_create(scene).sequence_editor).new_sound(name="Music", filepath=music, channel=film_edit.TOP + 6,
                                                          frame_start=span[0] if span else scene.frame_start)
         _tag(sound, "MUSIC")
 
@@ -606,7 +679,9 @@ def build(scene):
     videos of 3.x if a section has no frames yet), back to back, then their holds and transitions and the
     music. Replaces our strips (and changes made to them); your own strips stay."""
     from . import film_edit
-    sed = scene.sequence_editor or scene.sequence_editor_create()
+    scene = film_scene(scene)
+    _move_old_strips(scene)
+    sed = editor_create(scene).sequence_editor
     scene.render.use_sequencer = False              # F12 and the renders: the 3D scene, not the strips
     show_in_video_editor(scene)
     _remove_ours(scene, keep={"LOOK", "BARS", "TITLE", "FADE"})   # the film's look, bars, titles, fades stay
@@ -739,6 +814,7 @@ def sync(scene):
     """After a render: only adds. The first time all strips are made; later the strips read their files
     again and fit their size, and a section without a strip yet comes in at its place in the film (after
     the section before it). Your moves, trims and cuts stay. Returns "built" or "synced"."""
+    scene = film_scene(scene)
     if not ours(scene):
         build(scene)
         return "built"
@@ -788,6 +864,7 @@ def repair(scene):
     """Our image strips never point at a frame file that is empty or missing (Blender's Video Editor
     crashes drawing one): such frames show the nearest done frame; a strip without any is removed
     (it comes again with its first frames)."""
+    scene = film_scene(scene)
     from . import film_edit
     fixed = 0
     for strip in [s for s in ours(scene) if s.type == 'IMAGE']:
@@ -842,7 +919,8 @@ def refresh(scene):
 
 def _scene_named(name):
     scene = bpy.data.scenes.get(name) if name else bpy.context.scene
-    return scene if scene is not None and (scene.timeline_markers or scene.sequence_editor or name) else None
+    scene = film_scene(scene)
+    return scene if scene is not None and (scene.timeline_markers or editor(scene) or name) else None
 
 
 def on_film_done(scene_name=None):
@@ -904,7 +982,7 @@ def scene_frame(scene, strip, frame=None):
     found = next(((s, e) for n, s, e, _m in sections_of(scene) if n == section), None)
     if found is None:
         return section, None
-    frame = scene.frame_current if frame is None else frame
+    frame = playhead(scene) if frame is None else frame
     from . import film_edit
     shown = film_edit.frame_of(strip, frame)          # from the file name: <section>_0042.png
     if shown is not None:
@@ -917,7 +995,7 @@ def still_for_labels(scene, strip, frame=None):
     """The image of a section strip at `frame` (default: the playhead, else its last frame) as a PNG
     in the export folder: "<section> Standbild.png" (for labels in Keynote). Returns the path."""
     import shutil
-    frame = scene.frame_current if frame is None else frame
+    frame = playhead(scene) if frame is None else frame
     elements = list(getattr(strip, "elements", []))
     if not elements:
         raise ValueError("The strip has no images")
@@ -961,7 +1039,7 @@ def snap_to_beats(scene):
 
 def strip_range(scene):
     """(first, last) frame of all strips (what the export renders)."""
-    sed = scene.sequence_editor
+    sed = _sed_of(scene)
     found = [s for s in _all(sed) if not s.mute] if sed is not None else []
     if not found:
         return None
@@ -988,9 +1066,10 @@ def export_range(scene):
     """(first, last) frame the export renders: all strips, the preview range or the active clip."""
     rq = scene.studio
     choice = getattr(rq, "cut_export_range", 'ALL')
-    if choice == 'PREVIEW' and scene.use_preview_range:
-        return scene.frame_preview_start, scene.frame_preview_end
-    sed = scene.sequence_editor
+    ed = editor(scene) or scene
+    if choice == 'PREVIEW' and ed.use_preview_range:
+        return ed.frame_preview_start, ed.frame_preview_end
+    sed = _sed_of(scene)
     active = sed.active_strip if sed is not None else None
     if choice == 'CLIP' and active is not None:
         return int(active.frame_final_start), int(active.frame_final_end) - 1
@@ -1019,8 +1098,8 @@ def export(scene, path=None):
     rq = scene.studio
     fmt = getattr(rq, "cut_export_format", 'MP4')
     folder = cut_folder()
-    from . import film
-    work = os.path.join(folder, film.FILM_DIR)       # like a film: its bar shows the progress
+    from . import film as film_module
+    work = os.path.join(folder, film_module.FILM_DIR)       # like a film: its bar shows the progress
     os.makedirs(work, exist_ok=True)
     target, ext = export_target(scene)
     path = path or target
@@ -1035,6 +1114,8 @@ def export(scene, path=None):
         old = os.path.join(folder, "archiv", "%s %s%s" % (os.path.basename(path), time.strftime("%Y-%m-%d %H%M%S"), ext))
         os.makedirs(os.path.dirname(old), exist_ok=True)
         os.replace(path + ext, old)
+    film = scene
+    scene = editor_create(film)                      # the strips render from the Video Editor's scene
     render = scene.render
     images = render.image_settings
     ff = render.ffmpeg
@@ -1060,7 +1141,7 @@ def export(scene, path=None):
                 _set(ff, "ffmpeg_prores_profile", 'HQ')
             else:
                 _set(ff, "constant_rate_factor", getattr(rq, "cut_export_quality", 'HIGH'))
-            music = [s for s in ours(scene) if _get(s, KIND_KEY) == "MUSIC"]
+            music = [s for s in ours(film) if _get(s, KIND_KEY) == "MUSIC"]
             if music and getattr(rq, "cut_export_music", True):
                 if not _set(ff, "audio_codec", audio):
                     _set(ff, "audio_codec", 'AAC')
@@ -1123,7 +1204,7 @@ def export(scene, path=None):
         proc = subprocess.Popen([bpy.app.binary_path, "-b", blend, "--factory-startup", "-S", scene.name,
                                  "--python-expr", script],
                                 stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
-    film.register_process(work, folder, "Export %s" % scene.name, proc.pid)
+    film_module.register_process(work, folder, "Export %s" % film.name, proc.pid)
     return (os.path.dirname(path) if fmt == 'PNG' else path + ext), log
 
 
@@ -1223,8 +1304,8 @@ TOOL_ACTIONS = (
 
 
 def _scene(context):
-    """The scene the Video Editor shows (Blender 5: the workspace's sequencer scene)."""
-    return getattr(context, "sequencer_scene", None) or context.scene
+    """The film's scene of what the Video Editor shows (its own scene since 4.10)."""
+    return film_scene(getattr(context, "sequencer_scene", None) or context.scene)
 
 
 class STUDIO_OT_cut(Operator):
@@ -1293,7 +1374,7 @@ class STUDIO_OT_cut_strip(Operator):
     def execute(self, context):
         scene = _scene(context)
         found = next(((s, e, m) for n, s, e, m in sections_of(scene) if n == self.section), None)
-        sed = scene.sequence_editor
+        sed = _sed_of(scene)
         active = sed.active_strip if sed is not None else None
         strip = active if active is not None and _get(active, SECTION_KEY) == self.section else \
             section_strip(scene, self.section)
@@ -1362,7 +1443,7 @@ class STUDIO_OT_cut_tool(Operator):
         from . import film_edit
         scene = _scene(context)
         wm = context.window_manager
-        sed = scene.sequence_editor
+        sed = _sed_of(scene)
         active = sed.active_strip if sed is not None else None
         color = 'WHITE' if self.white else 'BLACK'
         try:
@@ -1373,7 +1454,7 @@ class STUDIO_OT_cut_tool(Operator):
             elif self.action in {'FILM_FADE_IN', 'FILM_FADE_OUT'}:
                 film_edit.fade(scene, self.action[10:], wm.studio_cut_fade, color)
             elif self.action == 'FREEZE':
-                film_edit.freeze(scene, scene.frame_current, wm.studio_cut_hold)
+                film_edit.freeze(scene, playhead(scene), wm.studio_cut_hold)
             elif self.action == 'LOOK_ALL':
                 if active is None:
                     raise ValueError("Pick a clip first")
@@ -1408,13 +1489,14 @@ class STUDIO_OT_cut_go(Operator):
         scene = _scene(context)
         strip = section_strip(scene, self.section)
         found = next(((s, m) for n, s, _e, m in sections_of(scene) if n == self.section), None)
+        ed = editor(scene) or scene
         if strip is not None:
-            scene.frame_current = strip.frame_final_start
-            for other in _all(scene.sequence_editor):
+            ed.frame_current = strip.frame_final_start
+            for other in _all(ed.sequence_editor):
                 other.select = other == strip
-            scene.sequence_editor.active_strip = strip
+            ed.sequence_editor.active_strip = strip
         elif found is not None:
-            scene.frame_current = found[0]
+            ed.frame_current = found[0]
         if found is not None and found[1] is not None and found[1].camera is not None:
             scene.camera = found[1].camera
         return {'FINISHED'}
@@ -1457,19 +1539,42 @@ def _ratio_changed(wm, context):
 OLD_SOURCE_KEY = "studio_cut_source"    # 3.9: the cut had its own scene ("Schnitt") with this key
 
 
+def _move_old_strips(film):
+    """Until 4.10 the strips were in the film's own scene: they go (built again in the Video Editor scene).
+    Your own strips stay where they are."""
+    sed = film.sequence_editor
+    old = [s for s in _all(sed) if _get(s, KIND_KEY)] if sed is not None else []
+    if not old:
+        return 0
+    strips = _strips(sed)
+    for strip in sorted(old, key=lambda s: _get(s, KIND_KEY) not in {"FADE", "CROSS", "DIP"}):
+        try:
+            strips.remove(strip)
+        except (RuntimeError, ReferenceError):
+            pass
+    bag = _channelbag(film)
+    if bag is not None:
+        for fc in list(bag.fcurves):
+            if fc.data_path.startswith("sequence_editor."):
+                bag.fcurves.remove(fc)
+    return len(old)
+
+
 def _migrate():
-    """A file from 3.9: the Video Editor showed the cut's own scene; now it shows the film's scene with the
-    strips in it (the old cut scene stays, it can be deleted)."""
+    """A file from before 4.10 (strips in the film's scene) or 3.9 (a cut scene of its own): the film gets
+    its Video Editor scene, built from the frames there."""
     for space in bpy.data.workspaces:
-        old = getattr(space, "sequencer_scene", None)
-        main = bpy.data.scenes.get(old.get(OLD_SOURCE_KEY, "")) if old is not None else None
-        if main is None or main is old:
+        shown = getattr(space, "sequencer_scene", None)
+        if shown is None or shown.get(FILM_KEY):
+            continue
+        main = bpy.data.scenes.get(shown.get(OLD_SOURCE_KEY, "")) or shown
+        sed = main.sequence_editor
+        if sed is None or not any(_get(s, KIND_KEY) for s in _all(sed)):
             continue
         try:
             sync(main)
-            space.sequencer_scene = main
-            print("AI Studio: the film of %s is now in its own Video Editor (%s can be deleted)" % (main.name,
-                                                                                                old.name))
+            print("AI Studio: the cut of %s is now in its own scene (%s): scrubbing leaves the 3D scene alone"
+                  % (main.name, editor(main).name))
         except (RuntimeError, ReferenceError, OSError, ValueError, AttributeError) as ex:
             print("AI Studio: cut:", ex)
     return None
@@ -1483,7 +1588,7 @@ def _loaded(_dummy=None):
         scenes = []
     for scene in scenes:                     # before the first redraw: no strip on an empty frame file
         try:
-            if scene.sequence_editor is not None and repair(scene):
+            if not scene.get(FILM_KEY) and editor(scene) is not None and repair(scene):
                 print("AI Studio: %s: strips on unfinished frames repaired" % scene.name)
         except (RuntimeError, ReferenceError, AttributeError) as ex:
             print("AI Studio: repair:", ex)

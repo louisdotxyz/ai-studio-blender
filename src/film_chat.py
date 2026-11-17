@@ -31,8 +31,9 @@ def video_mode(window=None):
 
 
 def _scene(window):
+    from .studio import cut
     space = window.workspace
-    return getattr(space, "sequencer_scene", None) or window.scene
+    return cut.film_scene(getattr(space, "sequencer_scene", None) or window.scene)
 
 
 def _cut_chat_id(scene):

@@ -10,7 +10,7 @@ import bpy
 import bpy.utils.previews
 from bpy.props import BoolProperty, StringProperty
 
-from . import chatview, core, prompt_editor, ui_menus
+from . import chatview, core, ui_menus
 
 # Moved into their own modules; re-exported so `ui.<name>` keeps working.
 from .ui_common import (
@@ -127,7 +127,6 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     chatview.register()
-    prompt_editor.register()
     bpy.types.WindowManager.claude_chat_title = StringProperty(
         name="Chat Name",
         description="Name of this chat – click to rename it",
@@ -166,7 +165,6 @@ def unregister():
     del bpy.types.WindowManager.claude_use_selection
     del bpy.types.WindowManager.claude_show_setup
     del bpy.types.WindowManager.claude_chat_title
-    prompt_editor.unregister()
     chatview.unregister()
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

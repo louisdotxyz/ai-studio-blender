@@ -79,7 +79,7 @@ def _other_scene(layout, context):
 
 
 def _active(scene):
-    sed = scene.sequence_editor
+    sed = cut._sed_of(scene)
     strip = sed.active_strip if sed is not None else None
     if strip is None or cut._get(strip, cut.KIND_KEY) in {"BARS", "MUSIC", "DIP", "CROSS", "FADE"} or \
             strip.type not in {'IMAGE', 'MOVIE', 'ADJUSTMENT', 'TEXT'}:
@@ -126,7 +126,7 @@ def _clip_header(layout, scene, strip):
     shown = cut.scene_frame(scene, strip)[1]
     if shown is None:
         return
-    index = int(scene.frame_current - round(strip.frame_start))
+    index = int(cut.playhead(scene) - round(strip.frame_start))
     codes = st.get("codes") or []
     code = codes[index] if 0 <= index < len(codes) else None
     words = {'HIGH': "High Quality", 'LOW': "Low Quality", 'DRAFT': "draft", '': "not rendered yet"}
@@ -341,8 +341,8 @@ def _sections_tab(layout, scene, context):
         info.active = False
         info.label(text="Next renders together ~%s" % format_time(total), icon='TIME', translate=False)
     _problems(layout, scene)
-    frame = scene.frame_current
-    sed = scene.sequence_editor
+    frame = cut.playhead(scene)
+    sed = cut._sed_of(scene)
     active = sed.active_strip if sed is not None else None
     for name, start, end, marker in cut.sections_of(scene):
         strip = cut.section_strip(scene, name)

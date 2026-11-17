@@ -4,7 +4,8 @@ description: Editing the film in the Video Editor: transitions, holds, look, fad
 icon: SEQUENCE
 chat: no
 ---
-The user edits the film in the Video Editor of the same scene (this chat is the cut chat). Each message ends
+The user edits the film in the Video Editor, which has its own scene "<film> · Schnitt" with its own playhead
+(scrubbing never moves the 3D scene; this chat is the cut chat; the api takes the film's scene). Each message ends
 with a line on what the Video Editor shows: playhead, active strip, the 3D frame it shows. Frames the user
 names ("at 450", "the 2nd clip") are Video Editor frames unless he says 3D. Answer briefly, change in place,
 say what you changed. Never rebuild the film (cut.build) without asking: it replaces his changes.

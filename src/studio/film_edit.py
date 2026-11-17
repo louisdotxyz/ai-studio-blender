@@ -27,11 +27,12 @@ TOP = 6                                       # fades, titles, the look and bars
 # ------------------------------------------------------------------ helpers
 
 def _sed(scene):
-    return scene.sequence_editor or scene.sequence_editor_create()
+    """The film's strips (in its Video Editor scene, made if missing)."""
+    return cut.editor_create(scene).sequence_editor
 
 
 def _top_level(scene):
-    sed = scene.sequence_editor
+    sed = cut._sed_of(scene)
     return list(_strips(sed)) if sed is not None else []
 
 
@@ -52,7 +53,7 @@ def content_range(scene):
 
 
 def _keys_of(scene, strip):
-    bag = cut._channelbag(scene)
+    bag = cut._channelbag(strip.id_data)
     if bag is None:
         return []
     mark = '["%s"]' % strip.name
@@ -437,7 +438,7 @@ def letterbox_ratio(scene):
 
 def title(scene, text, frame=None, length=48, place='CENTER', size=0.07):
     """A text strip at `frame` (default: the playhead): centred or as a lower third."""
-    frame = scene.frame_current if frame is None else frame
+    frame = cut.playhead(scene) if frame is None else frame
     channel = _free_channel(scene, frame, frame + length, TOP)
     strip = cut._effect(_strips(_sed(scene)), "Title %s" % text[:20], 'TEXT', channel, frame, length)
     strip.text = text
@@ -451,7 +452,7 @@ def title(scene, text, frame=None, length=48, place='CENTER', size=0.07):
 
 def state(scene):
     """What the Video Editor shows, for Claude: playhead, the active strip, the strips in order."""
-    sed = scene.sequence_editor
+    sed = cut._sed_of(scene)
     active = sed.active_strip if sed is not None else None
     strips = []
     for s in sorted(_top_level(scene), key=lambda s: (s.frame_final_start, s.channel)):
@@ -466,23 +467,26 @@ def state(scene):
                                                               ("saturation", 1), ("warmth", 0))):
             entry["look"] = look_of(s)
         strips.append(entry)
-    out = {"scene": scene.name, "playhead": scene.frame_current, "strips": strips,
+    here = cut.playhead(scene)
+    out = {"scene": scene.name, "playhead": here, "strips": strips,
            "active": active.name if active is not None else None}
     if active is not None and active.type == 'IMAGE':
-        out["active_3d_frame"] = frame_of(active, scene.frame_current)
+        out["active_3d_frame"] = frame_of(active, here)
     return out
 
 
 def context_line(scene):
     """A short line about the Video Editor for every message from the cut chat."""
-    sed = scene.sequence_editor
+    sed = cut._sed_of(scene)
     active = sed.active_strip if sed is not None else None
-    parts = ["Video Editor of %s, playhead frame %d" % (scene.name, scene.frame_current)]
+    here = cut.playhead(scene)
+    parts = ["Video Editor of %s (its own scene: its playhead is not the 3D scene's frame), playhead frame %d"
+             % (scene.name, here)]
     if active is not None:
         text = "active strip %s (%s, channel %d, frames %d-%d" % (
             active.name, active.type, active.channel, active.frame_final_start, active.frame_final_end - 1)
         if active.type == 'IMAGE':
-            shown = frame_of(active, scene.frame_current)
+            shown = frame_of(active, here)
             if shown is not None:
                 text += ", shows 3D frame %d" % shown
         parts.append(text + ")")

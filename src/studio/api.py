@@ -1074,13 +1074,14 @@ def section_camera(section, own=False, lock=None):
 
 
 def _cut_scene():
-    return getattr(bpy.context, "sequencer_scene", None) or bpy.context.scene
+    from . import cut
+    return cut.film_scene(getattr(bpy.context, "sequencer_scene", None) or bpy.context.scene)
 
 
 def _clip(scene, target):
     """A strip by its name or its section's name (the section's first strip)."""
     from . import cut
-    sed = scene.sequence_editor
+    sed = cut._sed_of(scene)
     if sed is None:
         raise ValueError("Nothing in the Video Editor yet")
     strip = sed.strips_all.get(target) if hasattr(sed, "strips_all") else sed.sequences_all.get(target)

@@ -2506,8 +2506,14 @@ def motion_sections():
         try:
             built, report = cut.build(scene)
             intro = cut.section_strip(scene, "01 Intro")
-            check("strips in the same scene, where the frames are, Low Quality scaled up, 3D still renders",
-                  built is scene and intro is not None and intro.frame_final_start == 1
+            ed = cut.editor(scene)
+            here = scene.frame_current
+            ed.frame_current = 37                     # scrubbing the cut
+            check("strips in the film's own Video Editor scene (scrubbing leaves the 3D frame), Low Quality "
+                  "scaled up, 3D still renders",
+                  built is scene and ed is not None and intro is not None and intro.id_data == ed
+                  and scene.frame_current == here and cut.film_scene(ed) == scene
+                  and intro.frame_final_start == 1
                   and intro.frame_final_duration == 50 and not scene.render.use_sequencer
                   and abs(intro.transform.scale_x - scene.render.resolution_x / 4) < 1e-3 and not report["missing"],
                   (built.name, intro and intro.frame_final_start, report))
@@ -2589,10 +2595,12 @@ def motion_sections():
             check("look, fade, film look, letterbox", look_mod is not None and abs(look_mod.contrast - 20) < 1e-3
                   and intro.modifiers.get(fe.COLOR_MOD) is not None and fe._ours(scene, "FADE")
                   and fe.film_look(scene, create=False) is not None and len(bars) == 2
-                  and state["playhead"] == scene.frame_current, (look_mod, [s["name"] for s in state["strips"]]))
+                  and state["playhead"] == cut.playhead(scene), (look_mod, [s["name"] for s in state["strips"]]))
         finally:
             cut._remove_ours(scene)
-            if not had_editor:
+            if cut.editor(scene) is not None:
+                bpy.data.scenes.remove(cut.editor(scene))
+            if not had_editor and scene.sequence_editor is not None:
                 scene.sequence_editor_clear()
             scene.render.use_sequencer = keep_seq
             cut._anim_folder = keep_folder
