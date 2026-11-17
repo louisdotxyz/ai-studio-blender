@@ -31,7 +31,25 @@ def check(name, ok, detail=""):
     print("%s %s %s" % ("PASS" if ok else "FAIL", name, detail))
 
 
+try:                                    # a stray SIGTERM (see _cpu_compositor) must not end the run silently
+    import signal as _signal
+    _signal.signal(_signal.SIGTERM, lambda *_a: print("FUNCTIONAL got SIGTERM (ignored)", flush=True))
+except (ValueError, OSError):
+    pass
+
+
+def _cpu_compositor():
+    """macOS ends a windowless Blender (SIGTERM) after a render with the GPU compositor when the GPU is
+    busy (the open Blender, renders): the tests composite on the CPU (same image)."""
+    for scene in bpy.data.scenes:
+        try:
+            scene.render.compositor_device = 'CPU'
+        except (AttributeError, TypeError):
+            pass
+
+
 def section(func):
+    _cpu_compositor()
     try:
         func()
     except Exception:
