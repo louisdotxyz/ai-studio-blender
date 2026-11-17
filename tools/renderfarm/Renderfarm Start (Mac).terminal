@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CommandString</key>
+	<string>bash -c 'for i in 1 2 3; do for v in /Volumes/DDE*; do f="$v/BDE_VID/BA/02_Studierende/Louis Widmer/Flamenco/Renderfarm Start (Mac).command"; [ -f "$f" ] &amp;&amp; exec bash "$f"; done; echo "Server wird verbunden ..."; osascript -e "mount volume \"smb://fileredu.ad.zhdk.ch/DDE\"" >/dev/null 2>&amp;1; sleep 10; done; echo "Server nicht gefunden: WLAN/VPN pruefen und nochmals oeffnen."'</string>
+	<key>RunCommandAsShell</key>
+	<false/>
+	<key>name</key>
+	<string>Renderfarm</string>
+	<key>type</key>
+	<string>Window Settings</string>
+	<key>ProfileCurrentVersion</key>
+	<real>2.07</real>
+	<key>columnCount</key>
+	<integer>100</integer>
+	<key>rowCount</key>
+	<integer>34</integer>
+	<key>shellExitAction</key>
+	<integer>1</integer>
+</dict>
+</plist>

@@ -4,6 +4,8 @@
 # Wird vom Server gestartet, Updates wirken also sofort auf allen Rechnern.
 # 0.5.0: Uebersicht der Jobs, Frames und Macs gleich nach dem Start und beim Warten; jedes fertige
 #        Frame mit Zeit und Stand des Jobs.
+# 0.6.0: meldet sich ab, wenn so lange kein Job kam (control.json "abmelden_nach" in Minuten, Standard 60,
+#        0 = nie); nach dem naechsten Anmelden startet der Autostart die Renderfarm wieder.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION=$(cat "$ROOT/_worker/VERSION" 2>/dev/null || echo "?")
@@ -23,9 +25,10 @@ remount() {   # Server-Verbindung pruefen und bei Bedarf neu verbinden (Login au
   [ -s "$SRVF" ] && osascript -e "mount volume \"$(cat "$SRVF")\"" >/dev/null 2>&1
   t 10 ls "$Q" >/dev/null 2>&1
 }
-control() {   # liest _worker/control.json: farm an/aus, ende standby/abmelden/herunterfahren
-  python3 -c "import json,sys;c=json.load(open(sys.argv[1]));print(c.get('farm','an'),c.get('ende','standby'),int(c.get('seit',0)))" "$ROOT/_worker/control.json" 2>/dev/null || echo "an standby 0"
+control() {   # liest _worker/control.json: farm an/aus, ende standby/abmelden/herunterfahren, abmelden_nach (min)
+  python3 -c "import json,sys;c=json.load(open(sys.argv[1]));print(c.get('farm','an'),c.get('ende','standby'),int(c.get('seit',0)),int(c.get('abmelden_nach',60)))" "$ROOT/_worker/control.json" 2>/dev/null || echo "an standby 0 60"
 }
+LAST_WORK=$(date +%s)
 frames_done() { find "$OUT/$1" -type f -size +0 2>/dev/null | wc -l | tr -d ' '; }
 bar() {       # [########............] fuer done/total
   local n=0 i s=""; [ "$2" -gt 0 ] && n=$((20 * $1 / $2)); [ $n -gt 20 ] && n=20
@@ -59,6 +62,10 @@ board() {     # die Uebersicht: offene Jobs mit Frames, die Macs mit ihrem Zusta
     line=$(head -1 "$f" | cut -d'|' -f1-2 | tr -s ' ')
     echo "  $line"
   done
+  read -r _ _ _ IDLE_MIN < <(control)
+  if [ "${IDLE_MIN:-0}" -gt 0 ]; then
+    echo "Ohne Jobs meldet sich dieser Mac in $(( IDLE_MIN - ($(date +%s) - LAST_WORK) / 60 )) min ab (Autostart danach)."
+  fi
   echo "-----------------------------------------"
 }
 
@@ -104,7 +111,7 @@ remount && board
 echo "Wartet auf Jobs ... (Beenden: Ctrl+C)"
 while true; do
   remount || { echo "$(date +%H:%M) Server nicht erreichbar, warte ..."; sleep 60; continue; }
-  read -r FARM ENDE SEIT < <(control)
+  read -r FARM ENDE SEIT IDLE_MIN < <(control)
   if [ "$FARM" = "aus" ]; then
     if [ "$SEIT" -ge "$STARTED" ] && [ "$ENDE" = "abmelden" ]; then
       status abgemeldet; echo "$(date +%H:%M) Farm aus -> melde ab"; sleep 5
@@ -127,6 +134,7 @@ while true; do
     board
     echo "$(date +%H:%M) Job $JOB (Szene $SCENE, Frames $START-$END)"
     status "rendert $JOB"
+    LAST_WORK=$(date +%s)
     ARGS=(-b "$B" --factory-startup); [ "$SCENE" != "-" ] && ARGS+=(-S "$SCENE")
     # in Paketen zu je CHUNK Frames rendern: so reagiert der Worker schnell auf "Farm aus"
     CHUNK=10; STOPPED=0
@@ -134,7 +142,7 @@ while true; do
       CE=$((CS + CHUNK - 1)); [ $CE -gt $END ] && CE=$END
       FREE=0; for ((f=CS; f<=CE; f++)); do ls "$OUT/$JOB/${JOB}_$(printf %04d $f)".* >/dev/null 2>&1 || { FREE=1; break; }; done
       [ $FREE = 1 ] || continue
-      read -r FARM _ _ < <(control); [ "$FARM" = "aus" ] && { STOPPED=1; break; }
+      read -r FARM _ _ _ < <(control); [ "$FARM" = "aus" ] && { STOPPED=1; break; }
       echo "$(date +%H:%M:%S) laedt die Datei fuer Frames $CS-$CE ..."
       T0=$(date +%s)
       RF_JOB="$JOB" RF_OUT="$OUT" RF_JSON="$J" "$BLENDER" "${ARGS[@]}" --python "$PY" -s $CS -e $CE -a 2>&1 \
@@ -148,6 +156,7 @@ while true; do
             esac
           done
     done
+    LAST_WORK=$(date +%s)
     [ $STOPPED = 1 ] && { echo "$(date +%H:%M) Farm aus - Job $JOB pausiert"; continue; }
     DONE=$(frames_done "$JOB")
     if [ "$DONE" -ge "$TOTAL" ]; then
@@ -155,6 +164,10 @@ while true; do
     fi
   done
   status wartet
+  if [ "${IDLE_MIN:-0}" -gt 0 ] && [ $(( $(date +%s) - LAST_WORK )) -ge $(( IDLE_MIN * 60 )) ]; then
+    status abgemeldet; echo "$(date +%H:%M) $IDLE_MIN min ohne Job -> melde ab"; sleep 5
+    osascript -e 'tell application "loginwindow" to «event aevtrlgo»'; exit 0
+  fi
   board
   echo "$(date +%H:%M) wartet auf Jobs ... (Beenden: Ctrl+C)"
   sleep 20
