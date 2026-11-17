@@ -129,6 +129,9 @@ while true; do
   fi
   for J in "$Q"/*.json; do
     [ -e "$J" ] || continue
+    if [ -n "$RF_ROOT" ] && [ "$ROOT/_worker/worker.sh" -nt "${BASH_SOURCE[0]}" ]; then
+      echo "$(date +%H:%M) neue Worker-Version auf dem Server -> startet neu"; exit 3   # der Start holt sie
+    fi
     JOB=$(basename "$J" .json); B="$Q/$JOB.blend"
     [ -f "$B" ] && [ ! -f "$Q/$JOB.done" ] || continue
     read -r SCENE START END JBV < <(python3 -c "import json,sys;c=json.load(open(sys.argv[1]));print(c.get('scene','-') or '-',c.get('start',0),c.get('end',0),c.get('blender','-'))" "$J" 2>/dev/null)
