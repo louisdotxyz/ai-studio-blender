@@ -41,10 +41,11 @@ board() {     # die Uebersicht: offene Jobs mit Frames, die Macs mit ihrem Zusta
   for J in "$Q"/*.json; do
     [ -e "$J" ] || continue
     JOB=$(basename "$J" .json)
-    [ -f "$Q/$JOB.done" ] && continue
+    [ -f "$Q/$JOB.done" ] || [ ! -f "$Q/$JOB.blend" ] && continue
     read -r S E < <(python3 -c "import json,sys;c=json.load(open(sys.argv[1]));print(c.get('start',0),c.get('end',0))" "$J" 2>/dev/null)
     TOTAL=$(( ${E:-0} - ${S:-0} + 1 )); DONE=$(frames_done "$JOB"); any=1
-    printf "  %-34s %s %4d/%-4d\n" "${JOB: -34}" "$(bar "$DONE" "$TOTAL")" "$DONE" "$TOTAL"
+    local short="$JOB"; [ ${#JOB} -gt 34 ] && short="..${JOB:${#JOB}-32}"
+    printf "  %-34s %s %4d/%-4d\n" "$short" "$(bar "$DONE" "$TOTAL")" "$DONE" "$TOTAL"
   done
   [ $any = 0 ] && echo "  keine offenen Jobs"
   echo
