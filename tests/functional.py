@@ -2872,7 +2872,7 @@ def render_farm_folder():
     now = time.time()
     keep_stamps = dict(farm._stamps)
     farm._stamps.clear()
-    view = {"worker_rows": [("MD-1", "wartet", "", True, 10.0), ("MD-2", "rendert x", "", True, 4000.0),
+    view = {"worker_rows": [("MD-1", "wartet", "", True, 10.0), ("MD-2", "rendert x", "", True, 1000.0),
                             ("MD-3", "rendert x", "", True, 60.0)]}
     states = {n: st for n, st, _j, _s in farm.worker_states(view)}
     view["last_frame"] = {"md-2": now - 30}          # its frames on the share show it renders
