@@ -337,6 +337,7 @@ def _modifier(strip, name, kind, create):
 
 
 def _apply_look(strip):
+    cut.quiet(strip)                                 # no read-ahead while the modifiers change
     b, c = strip.studio_brightness, strip.studio_contrast
     mod = _modifier(strip, LOOK_MOD, 'BRIGHT_CONTRAST', bool(b or c))
     if mod is not None:

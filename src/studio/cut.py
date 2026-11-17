@@ -480,7 +480,18 @@ def editor_create(scene):
             found.sequence_editor.use_prefetch = True
     except AttributeError:
         pass
+    no_audio_clock(found)
     return found
+
+
+def no_audio_clock(scene):
+    """The cut plays on the wall clock (drops frames when slow), not the audio clock: it has no sound, and
+    stopping a playback synced to CoreAudio crashed Blender on the Mac."""
+    try:
+        if scene.sync_mode == 'AUDIO_SYNC':
+            scene.sync_mode = 'FRAME_DROP'
+    except (AttributeError, TypeError):
+        pass
 
 
 def _match(ed, film):
@@ -586,11 +597,21 @@ def mark(strip, st, scene=None):
         pass
 
 
+def quiet(strip):
+    """Blender's read-ahead (prefetch) stops before a strip is changed from Python: it reads the strip in
+    its own thread, and a change under it crashed Blender (invalidating the strip stops it and waits)."""
+    try:
+        strip.invalidate_cache('RAW')
+    except (AttributeError, RuntimeError, TypeError, ReferenceError):
+        pass
+
+
 def _fit(scene, strip, width):
     """Frames of another size (Low Quality) fill the picture: scaled to the scene's width."""
     if width > 0 and hasattr(strip, "transform"):
         scale = scene.render.resolution_x / width
         if abs(strip.transform.scale_x - scale) > 1e-4:
+            quiet(strip)
             strip.transform.scale_x = strip.transform.scale_y = scale
 
 
@@ -691,6 +712,9 @@ def _keep_window_scene():
             film = bpy.data.scenes.get(name) if name else None
             if film is not None:
                 window.scene = film
+        for scene in bpy.data.scenes:
+            if scene.get(FILM_KEY):
+                no_audio_clock(scene)
         _marks_now()
         for space in bpy.data.workspaces:          # the Video Editor shows the cut, never the 3D scene
             shown = getattr(space, "sequencer_scene", None)
@@ -854,12 +878,11 @@ def _reload(scene, force=False):
             continue
         _seen[key] = sig
         try:
+            quiet(strip)                             # a frame rendered again keeps its name: not the old image
             if hasattr(strip, "directory"):
                 strip.directory = strip.directory
             elif hasattr(strip, "filepath"):
                 strip.filepath = strip.filepath
-            if hasattr(strip, "invalidate_cache"):   # a frame rendered again keeps its name: not the old image
-                strip.invalidate_cache('RAW')
         except (AttributeError, RuntimeError, TypeError):
             pass
     if len(_seen) > 2000:
@@ -955,9 +978,11 @@ def _point_to(strip, names, shown):
     elements = list(getattr(strip, "elements", []))
     if len(elements) != len(names):
         return
-    for element, wanted in zip(elements, shown):
-        if element.filename != wanted:
-            element.filename = wanted
+    changed = [(e, w) for e, w in zip(elements, shown) if e.filename != w]
+    if changed:
+        quiet(strip)
+    for element, wanted in changed:
+        element.filename = wanted
 
 
 def repair(scene):
@@ -1162,6 +1187,35 @@ def _set(owner, attr, value):
         return False
 
 
+def output_settings(scene):
+    """The scene's output settings (the export changes them for its copy and puts them back)."""
+    render = scene.render
+    images, ff = render.image_settings, render.ffmpeg
+    return (render.filepath, images.file_format, getattr(images, "media_type", None), render.use_file_extension,
+            render.use_sequencer, scene.frame_start, scene.frame_end, ff.format, ff.codec, ff.audio_codec,
+            ff.constant_rate_factor, render.resolution_percentage, images.color_mode,
+            getattr(ff, "ffmpeg_prores_profile", None))
+
+
+def restore_output(scene, keep):
+    """output_settings back. The media type first: in Blender 5 it limits the file formats (a video
+    allows only FFMPEG, so PNG failed after a video export and the export stopped with an error)."""
+    render = scene.render
+    images, ff = render.image_settings, render.ffmpeg
+    render.filepath = keep[0]
+    if keep[2] is not None:
+        _set(images, "media_type", keep[2])
+    _set(images, "file_format", keep[1])
+    render.use_file_extension, render.use_sequencer = keep[3], keep[4]
+    scene.frame_start, scene.frame_end = keep[5], keep[6]
+    for attr, value in zip(("format", "codec", "audio_codec", "constant_rate_factor"), keep[7:11]):
+        _set(ff, attr, value)
+    render.resolution_percentage = keep[11]
+    _set(images, "color_mode", keep[12])
+    if keep[13] is not None:
+        _set(ff, "ffmpeg_prores_profile", keep[13])
+
+
 def export_range(scene):
     """(first, last) frame the export renders: all strips, the preview range or the active clip."""
     rq = scene.studio
@@ -1327,10 +1381,7 @@ def export(scene, path=None):
     render = scene.render
     images = render.image_settings
     ff = render.ffmpeg
-    keep = (render.filepath, images.file_format, getattr(images, "media_type", None), render.use_file_extension,
-            render.use_sequencer, scene.frame_start, scene.frame_end, ff.format, ff.codec, ff.audio_codec,
-            ff.constant_rate_factor, render.resolution_percentage, images.color_mode,
-            getattr(ff, "ffmpeg_prores_profile", None))
+    keep = output_settings(scene)
     muted = []
     from .runner import RUN
     try:
@@ -1369,20 +1420,7 @@ def export(scene, path=None):
         bpy.ops.wm.save_as_mainfile(filepath=blend, copy=True, compress=False, relative_remap=True,
                                     check_existing=False)
     finally:
-        render.filepath, images.file_format = keep[0], keep[1]
-        if keep[2] is not None:
-            _set(images, "media_type", keep[2])
-            images.file_format = keep[1]
-        render.use_file_extension, render.use_sequencer = keep[3], keep[4]
-        scene.frame_start, scene.frame_end = keep[5], keep[6]
-        _set(ff, "format", keep[7])
-        _set(ff, "codec", keep[8])
-        _set(ff, "audio_codec", keep[9])
-        _set(ff, "constant_rate_factor", keep[10])
-        render.resolution_percentage = keep[11]
-        _set(images, "color_mode", keep[12])
-        if keep[13] is not None:
-            _set(ff, "ffmpeg_prores_profile", keep[13])
+        restore_output(scene, keep)
         for strip in muted:
             strip.mute = False
         RUN.preparing = False

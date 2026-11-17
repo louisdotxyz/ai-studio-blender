@@ -2556,6 +2556,14 @@ def motion_sections():
             rq.cut_export_split, rq.cut_export_skip = 'EACH', ""
             each, _j = cut.export_plan(scene)
             rq.cut_export_split = 'ONE'
+            ed = cut.editor_create(scene)
+            keep = cut.output_settings(ed)
+            cut._set(ed.render.image_settings, "media_type", 'VIDEO')
+            ed.render.image_settings.file_format = 'FFMPEG'
+            cut.restore_output(ed, keep)
+            check("export: the output settings come back after a video (PNG was refused while VIDEO)",
+                  ed.render.image_settings.file_format == keep[1] and ed.sync_mode != 'AUDIO_SYNC',
+                  (ed.render.image_settings.file_format, keep[1], ed.sync_mode))
             check("export: both sections in one range; one left out; one video per section",
                   len(one) == 1 and not join and (one[0][1], one[0][2]) == cut.strip_range(scene)
                   and [r[0] for r in only] == ["02 Hero"] and [r[0] for r in each] == ["01 Intro", "02 Hero"]
