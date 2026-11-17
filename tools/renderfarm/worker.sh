@@ -140,15 +140,24 @@ while true; do
     echo "$(date +%H:%M) Job $JOB (Szene $SCENE, Frames $START-$END)"
     status "rendert $JOB"
     LAST_WORK=$(date +%s)
-    ARGS=(-b "$B" --factory-startup); [ "$SCENE" != "-" ] && ARGS+=(-S "$SCENE")
+    # die .blend einmal auf diesen Mac kopieren: jedes Paket laedt dann von der eigenen Platte statt
+    # 0.5 GB ueber den Server (bei 12 Macs war das der Engpass)
+    CACHE="$HOME/.renderfarm/cache"; mkdir -p "$CACHE"
+    LB="$CACHE/$JOB.blend"
+    if [ ! -f "$LB" ] || [ "$(stat -f %z "$LB" 2>/dev/null)" != "$(stat -f %z "$B" 2>/dev/null)" ]; then
+      find "$CACHE" -name "*.blend*" -mmin +720 -delete 2>/dev/null      # alte Kopien (12 h) weg
+      echo "$(date +%H:%M:%S) kopiert die Datei auf diesen Mac ..."
+      cp -f "$B" "$LB.part" 2>/dev/null && mv -f "$LB.part" "$LB" || LB="$B"
+    fi
+    ARGS=(-b "$LB" --factory-startup); [ "$SCENE" != "-" ] && ARGS+=(-S "$SCENE")
     # in Paketen zu je CHUNK Frames rendern: so reagiert der Worker schnell auf "Farm aus"
-    CHUNK=10; STOPPED=0
+    CHUNK=20; STOPPED=0
     for ((CS=START; CS<=END; CS+=CHUNK)); do
       CE=$((CS + CHUNK - 1)); [ $CE -gt $END ] && CE=$END
       FREE=0; for ((f=CS; f<=CE; f++)); do ls "$OUT/$JOB/${JOB}_$(printf %04d $f)".* >/dev/null 2>&1 || { FREE=1; break; }; done
       [ $FREE = 1 ] || continue
       read -r FARM _ _ _ < <(control); [ "$FARM" = "aus" ] && { STOPPED=1; break; }
-      echo "$(date +%H:%M:%S) laedt die Datei fuer Frames $CS-$CE ..."
+      echo "$(date +%H:%M:%S) Frames $CS-$CE ..."
       T0=$(date +%s)
       RF_JOB="$JOB" RF_OUT="$OUT" RF_JSON="$J" "$BLENDER" "${ARGS[@]}" --python "$PY" -s $CS -e $CE -a 2>&1 \
         | while IFS= read -r line; do
