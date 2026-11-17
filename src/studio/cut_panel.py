@@ -20,9 +20,9 @@ TABS = (('CLIPS', "Clips", "The sections and the selected clip", 'SEQUENCE', 0),
         ('MOVES', "Transitions", "Between the sections, fades of film and clip", 'IPO_EASE_IN_OUT', 1),
         ('LOOK', "Look", "Light and colour of the selected clip", 'COLOR', 2),
         ('EXPORT', "Export", "The film as video or frames", 'EXPORT', 3))
-LEGEND = (('HIGH', "HQ", 'STRIP_COLOR_04'), ('LOW', "LQ", 'STRIP_COLOR_02'), ('OLD', "old", 'STRIP_COLOR_09'),
-          ('RENDERING', "renders", 'STRIP_COLOR_05'), ('MISSING', "missing", 'STRIP_COLOR_01'),
-          ('DRAFT', "draft", 'STRIP_COLOR_06'))
+LEGEND = (('HIGH', "up to date", 'STRIP_COLOR_04'), ('RENDERING', "renders", 'STRIP_COLOR_06'),
+          ('OLD', "old", 'STRIP_COLOR_02'), ('MISSING', "missing", 'STRIP_COLOR_01'),
+          ('DRAFT', "draft", 'STRIP_COLOR_09'))
 
 STATE_ICONS = {'HIGH': 'STRIP_COLOR_04', 'LOW': 'STRIP_COLOR_02', 'DRAFT': 'STRIP_COLOR_09', '': 'STRIP_COLOR_01'}
 MOVIES = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi"}

@@ -539,15 +539,42 @@ def _image(strips, name, paths, channel, start, fit='FIT'):
     return strip
 
 
-MARKS = {'HIGH': 'COLOR_04', 'LOW': 'COLOR_02', 'DRAFT': 'COLOR_09'}   # green, orange, grey (draft, preview)
+MARKS = {'HIGH': 'COLOR_04', 'LOW': 'COLOR_02', 'DRAFT': 'COLOR_09'}   # older names, kept for callers
+STATE_MARKS = {'FRESH': 'COLOR_04', 'RENDERING': 'COLOR_06', 'PENDING': 'COLOR_02', 'OPEN': 'COLOR_09'}
+#               green: all frames there and up to date · violet: renders now · orange: waits in the queue /
+#               on the farm, or changed since (it renders again) · grey: not (all) rendered, nothing on its way
 
 
-def mark(strip, st):
-    """A section strip's colour: green when all its frames are High Quality, orange when rendered (Low
-    Quality or not all yet), grey with drafts only."""
-    codes = st.get("codes") or []
-    tag = MARKS['HIGH'] if codes and all(c == 'HIGH' for c in codes) else \
-        MARKS['LOW'] if st.get("done") else MARKS['DRAFT']
+def section_state(scene, section, st):
+    """'FRESH' 'RENDERING' 'PENDING' or 'OPEN' of a section (its strip's colour)."""
+    from . import film_tools, renderfarm
+    folder = os.path.normcase(frames_folder(section))
+    for job in renderfarm.active():
+        if os.path.normcase(job.get("folder", "")) == folder and job.get("kind") == 'ANIM':
+            return 'RENDERING' if job["phase"] == "sent" and job.get("have", 0) < renderfarm.total_of(job) \
+                and renderfarm.online_count() else 'PENDING'
+    if _rendering(section):
+        return 'RENDERING'
+    film = film_scene(scene)
+    if any(i.section == section and i.mode == 'ANIM' for i in film.studio.items):
+        return 'PENDING'
+    if st.get("done") == st.get("total") and st.get("total"):
+        try:
+            changed = film_tools.next_quality(film, section, st) is not None
+        except Exception:
+            changed = False
+        return 'PENDING' if changed else 'FRESH'
+    return 'OPEN'
+
+
+def mark(strip, st, scene=None):
+    """A section strip's colour: green up to date, violet renders, orange waits or changed, grey open."""
+    if scene is None:
+        codes = st.get("codes") or []
+        tag = MARKS['HIGH'] if codes and all(c == 'HIGH' for c in codes) else \
+            MARKS['LOW'] if st.get("done") else MARKS['DRAFT']
+    else:
+        tag = STATE_MARKS[section_state(scene, _get(strip, SECTION_KEY), st)]
     try:
         if strip.color_tag != tag:
             strip.color_tag = tag
@@ -635,6 +662,22 @@ def _is_cut_space(space):
         not any(a.type == 'VIEW_3D' for screen in space.screens for a in screen.areas)
 
 
+_marked = [0.0]
+
+
+def _marks_now():
+    """Every 3 s: the section strips' colours follow the queue and the farm (not only new frames)."""
+    if time.monotonic() - _marked[0] < 3.0:
+        return
+    _marked[0] = time.monotonic()
+    for film in {film_scene(s) for s in bpy.data.scenes if s.get(CUT_KEY)}:
+        found = {n: (a, b) for n, a, b, _m in sections_of(film)}
+        for strip in ours(film):
+            name = _get(strip, SECTION_KEY)
+            if _get(strip, KIND_KEY) == "SECTION" and name in found:
+                mark(strip, frame_status(name, *found[name]), film)
+
+
 def _keep_window_scene():
     """The window always shows the 3D scene: the cut's scene is only ever in the Video Editor (Blender
     changed the window's scene to it at the top when the Video Editing workspace was opened)."""
@@ -644,6 +687,7 @@ def _keep_window_scene():
             film = bpy.data.scenes.get(name) if name else None
             if film is not None:
                 window.scene = film
+        _marks_now()
         for space in bpy.data.workspaces:          # the Video Editor shows the cut, never the 3D scene
             shown = getattr(space, "sequencer_scene", None)
             if shown is None or shown.get(FILM_KEY) or not _is_cut_space(space):
@@ -895,7 +939,7 @@ def sync(scene):
                     _fit(scene, strip, data["width"])
                     if _get(strip, KIND_KEY) == "SECTION" and data["shown"]:
                         _point_to(strip, data["names"], data["shown"])
-                        mark(strip, data)
+                        mark(strip, data, scene)
     repair(scene)
     _reload(scene)
     return "synced"

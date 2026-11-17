@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """A thin band along the bottom of each section clip in the Video Editor, frame by frame:
 
-  green   rendered in High Quality (new)        orange  Low Quality
-  grey    an older frame that is being rendered again
-  blue    renders now (not here yet)            red     missing (nothing renders it)
-  violet  a draft or the preview image stands in
+  green   rendered and up to date             violet  renders now (not here yet)
+  orange  an older frame that is rendered again   red   missing (nothing renders it)
+  grey    a draft or the preview image stands in
+The clip itself has the same colours (green up to date, violet renders, orange waits or changed).
 
 Worked out at most every 2 s per section (the timeline draws often); drawn with the GPU module."""
 
@@ -16,15 +16,15 @@ import bpy
 
 from . import cut
 
-COLORS = {
-    'HIGH': (0.30, 0.80, 0.36, 1.0),
-    'LOW': (0.95, 0.60, 0.15, 1.0),
-    'OLD': (0.55, 0.55, 0.58, 1.0),
-    'RENDERING': (0.25, 0.55, 1.0, 1.0),
+COLORS = {                                       # green up to date · violet renders · orange old, to be
+    'HIGH': (0.30, 0.80, 0.36, 1.0),             # replaced · red missing · grey a draft stands in
+    'LOW': (0.30, 0.80, 0.36, 1.0),
+    'OLD': (0.95, 0.60, 0.15, 1.0),
+    'RENDERING': (0.62, 0.38, 0.95, 1.0),
     'MISSING': (0.85, 0.22, 0.22, 1.0),
-    'DRAFT': (0.62, 0.42, 0.85, 1.0),
+    'DRAFT': (0.55, 0.55, 0.58, 1.0),
 }
-LABELS = (('HIGH', "HQ"), ('LOW', "LQ"), ('OLD', "old"), ('RENDERING', "renders"), ('MISSING', "missing"),
+LABELS = (('HIGH', "up to date"), ('RENDERING', "renders"), ('OLD', "old, comes again"), ('MISSING', "missing"),
           ('DRAFT', "draft"))
 _cache = {}
 _handle = [None]

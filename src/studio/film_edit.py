@@ -489,20 +489,43 @@ def state(scene):
 
 
 def context_line(scene):
-    """A short line about the Video Editor for every message from the cut chat."""
+    """A short line about the Video Editor for every message from the cut chat: where the playhead is
+    (which section, which 3D frame, how far rendered), what is selected. The user usually means exactly
+    that frame or clip ("here the light is too dark")."""
     sed = cut._sed_of(scene)
     active = sed.active_strip if sed is not None else None
     here = cut.playhead(scene)
+    sections = {n: (a, b) for n, a, b, _m in cut.sections_of(scene)}
     parts = ["Video Editor of %s (its own scene: its playhead is not the 3D scene's frame), playhead frame %d"
              % (scene.name, here)]
-    if active is not None:
-        text = "active strip %s (%s, channel %d, frames %d-%d" % (
-            active.name, active.type, active.channel, active.frame_final_start, active.frame_final_end - 1)
-        if active.type == 'IMAGE':
-            shown = frame_of(active, here)
-            if shown is not None:
-                text += ", shows 3D frame %d" % shown
-        parts.append(text + ")")
+    under = next((s for s in _top_level(scene) if s.type == 'IMAGE' and cut._get(s, cut.SECTION_KEY)
+                  and s.frame_final_start <= here < s.frame_final_end and not s.mute), None)
+    if under is not None:
+        section = cut._get(under, cut.SECTION_KEY)
+        shown = frame_of(under, here)
+        text = "under the playhead: section %s" % section
+        if shown is not None:
+            text += ", 3D frame %d (api.section_render(%r, frames=(%d, %d)) renders just it)" % (
+                shown, section, shown, shown)
+        if section in sections:
+            st = cut.frame_status(section, *sections[section])
+            text += ", %d/%d frames rendered, %s" % (st["done"], st["total"], {
+                'FRESH': "up to date", 'RENDERING': "renders now", 'PENDING': "waits / changed since",
+                'OPEN': "not all rendered"}[cut.section_state(scene, section, st)])
+        parts.append(text)
+    picked = [s for s in _top_level(scene) if s.select and s.type in {'IMAGE', 'MOVIE'}]
+    if active is not None and active not in picked:
+        picked.insert(0, active)
+    if picked:
+        words = []
+        for strip in picked[:6]:
+            section = cut._get(strip, cut.SECTION_KEY)
+            word = section or strip.name
+            if section in sections:
+                word += " (3D frames %d-%d, cut frames %d-%d)" % (sections[section][0], sections[section][1],
+                                                                  strip.frame_final_start, strip.frame_final_end - 1)
+            words.append(word)
+        parts.append("selected: " + ", ".join(words))
     span = content_range(scene)
     if span:
         parts.append("film frames %d-%d" % (span[0], span[1] - 1))
