@@ -253,7 +253,8 @@ def tick(on=None):
         if _want["folders"] != folders or _want["on"] != on:
             _want["folders"], _want["on"] = folders, on
             _wake.set()
-        changed, _changed_now = set(_changed), _changed.clear()
+        changed = set(_changed)
+        _changed.clear()
     if changed:                                    # old previews went: Blender reads those strips again
         for ed in [s for s in bpy.data.scenes if s.get(cut.FILM_KEY)]:
             for strip in cut.ours(cut.film_scene(ed)):
