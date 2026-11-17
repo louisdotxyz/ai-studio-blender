@@ -155,7 +155,15 @@ def restore_draft():
 
 
 def _send_prompt(wm):
-    if core.queue_prompt(wm.claude_prompt):
+    text = wm.claude_prompt
+    try:                                     # the cut chat: the frame and section it is about, in front
+        from . import film_chat
+        tag = film_chat.frame_tag()
+        if tag and not text.lstrip().startswith("(F"):
+            text = tag + text
+    except Exception:
+        pass
+    if core.queue_prompt(text):
         _clear_prompt(wm)
         chatview.scroll(-10**9)  # jump to the newest message
 

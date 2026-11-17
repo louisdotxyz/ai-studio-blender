@@ -279,7 +279,11 @@ def frame_status(section, start, end, fresh=False):
     key = (folder, start, end)
     now = time.monotonic()
     hit = _status.get(key)
-    if hit and not fresh and now - hit[0] < 1.0:
+    try:
+        stamp = os.stat(folder).st_mtime_ns          # a frame added or replaced changes the folder
+    except OSError:
+        stamp = None
+    if hit and not fresh and (now - hit[0] < 1.0 or (stamp is not None and hit[2] == stamp and now - hit[0] < 6.0)):
         return hit[1]
     job = _job_of(folder)
     ov = _overrides(job)
@@ -336,7 +340,7 @@ def frame_status(section, start, end, fresh=False):
            "poster": poster if use_poster else "",
            "job": bool(job), "job_width": job_width, "drafts": codes.count('DRAFT'), "codes": codes,
            "shown": fill_gaps(base)}
-    _status[key] = (now, out)
+    _status[key] = (now, out, stamp)
     return out
 
 

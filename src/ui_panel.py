@@ -609,8 +609,19 @@ class _ChatPanel:
             row.label(text=att["name"], translate=False, **att_icon(att["path"], att["kind"]))
             row.operator("claude.remove_attachment", text="", icon='X', emboss=False).index = i
             chips = True
+        from . import film_chat
+        cut_here = film_chat.where() if context.area is not None and context.area.type == 'SEQUENCE_EDITOR' \
+            else None
+        if cut_here is not None:             # the cut chat: the frame and section a message is about
+            section, here, shown, picked = cut_here
+            row = col.row(align=True)
+            text = "F%d%s" % (shown if shown is not None else here, " · " + section if section else "")
+            if picked and picked != [section]:
+                text += "  ·  selected: " + ", ".join(picked[:3])
+            row.label(text=text, icon='PLAY', translate=False)
+            chips = True
         selected = [o.name for o in getattr(context, "selected_objects", None) or []]
-        if selected and (prefs is None or prefs.send_selection):
+        if cut_here is None and selected and (prefs is None or prefs.send_selection):
             wm = context.window_manager
             row = col.row(align=True)
             row.active = wm.claude_use_selection

@@ -601,44 +601,6 @@ def _timeline(context):
     return scene if scene is not None and cut._sed_of(scene) is not None else None
 
 
-def _draw_bands():
-    context = bpy.context
-    try:
-        scene = _timeline(context)
-        if scene is None:
-            return
-        strips = [s for s in cut.ours(scene) if cut._get(s, cut.KIND_KEY) == "SECTION"]
-        if not strips:
-            return
-        import gpu
-        from gpu_extras.batch import batch_for_shader
-        sections = {n: (s, e) for n, s, e, _m in cut.sections_of(scene)}
-        quads = {}
-        for strip in strips:
-            run = None
-            for frame, code in strip_codes(scene, strip, sections) + [(None, None)]:
-                if run is not None and (code != run[1] or frame is None):
-                    x0, x1, y = run[0], run[2] + 1, strip.channel
-                    verts = quads.setdefault(run[1], [])
-                    verts += [(x0, y + BAND[0]), (x1, y + BAND[0]), (x1, y + BAND[1]),
-                              (x0, y + BAND[0]), (x1, y + BAND[1]), (x0, y + BAND[1])]
-                    run = None
-                if frame is None:
-                    break
-                run = [frame, code, frame] if run is None else [run[0], run[1], frame]
-        if not quads:
-            return
-        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-        gpu.state.blend_set('ALPHA')
-        for code, verts in quads.items():
-            batch = batch_for_shader(shader, 'TRIS', {"pos": verts})
-            shader.uniform_float("color", COLORS.get(code, COLORS['']))
-            batch.draw(shader)
-        gpu.state.blend_set('NONE')
-    except Exception as ex:                 # a drawing error must never stop the Video Editor
-        print("AI Studio: marks:", ex)
-
-
 def _draw_labels():
     context = bpy.context
     try:
@@ -658,13 +620,15 @@ def _draw_labels():
             span = sections.get(section)
             if span is None:
                 continue
-            text = label_of(cut.frame_status(section, span[0], span[1]), cut._rendering(section))
-            if not text:
-                continue
+            st = cut.frame_status(section, span[0], span[1])
+            state = cut.section_state(scene, section, st)
+            text = {'FRESH': "up to date", 'RENDERING': "renders %d/%d" % (st["done"], st["total"]),
+                    'PENDING': "waits", 'OPEN': "%d/%d" % (st["done"], st["total"])}[state]
             left = v2d.view_to_region(strip.frame_final_start, strip.channel + 0.9, clip=False)
             right = v2d.view_to_region(strip.frame_final_end, strip.channel + 0.9, clip=False)
             w, h = blf.dimensions(font, text)
-            if right[0] - left[0] < w + 80 * ui:
+            name_w = blf.dimensions(font, "%s | %d" % (strip.name, strip.frame_final_duration))[0]
+            if right[0] - left[0] < w + name_w + 40 * ui:   # never over the strip's own name
                 continue
             blf.position(font, right[0] - w - 6 * ui, right[1] - h - 3 * ui, 0)
             blf.color(font, 1.0, 1.0, 1.0, 0.85)
@@ -780,7 +744,6 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     space = bpy.types.SpaceSequenceEditor
-    _handlers.append(space.draw_handler_add(_draw_bands, (), 'WINDOW', 'POST_VIEW'))
     _handlers.append(space.draw_handler_add(_draw_labels, (), 'WINDOW', 'POST_PIXEL'))
     if not bpy.app.timers.is_registered(_keep_locks):
         bpy.app.timers.register(_keep_locks, first_interval=1.0, persistent=True)

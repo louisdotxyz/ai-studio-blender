@@ -116,6 +116,35 @@ def context_line():
         return ""
 
 
+def where():
+    """(section, cut frame, 3D frame, selected sections) of the Video Editor now, or None outside it."""
+    window = _window()
+    if window is None or not video_mode(window):
+        return None
+    try:
+        from .studio import cut, film_edit
+        scene = _scene(window)
+        here = cut.playhead(scene)
+        under = next((s for s in film_edit._top_level(scene) if s.type == 'IMAGE' and cut._get(s, cut.SECTION_KEY)
+                      and s.frame_final_start <= here < s.frame_final_end and not s.mute), None)
+        section = cut._get(under, cut.SECTION_KEY) if under is not None else ""
+        shown = film_edit.frame_of(under, here) if under is not None else None
+        picked = [cut._get(s, cut.SECTION_KEY) or s.name for s in film_edit._top_level(scene)
+                  if s.select and s.type in {'IMAGE', 'MOVIE'}]
+        return section, here, shown, picked
+    except Exception:
+        return None
+
+
+def frame_tag():
+    """'(F160 · 02 Orbit)' for a message written in the cut chat: what the user means by 'here'."""
+    found = where()
+    if found is None:
+        return ""
+    section, here, shown, _picked = found
+    return "(F%d%s) " % (shown if shown is not None else here, " · " + section if section else "")
+
+
 def register():
     if not bpy.app.timers.is_registered(_tick):
         bpy.app.timers.register(_tick, first_interval=1.0, persistent=True)
