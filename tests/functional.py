@@ -2584,8 +2584,9 @@ def motion_sections():
                   and filled["shown"][9] == "02 Hero_draft_0060.png" and filled["codes"][0] == 'LOW'
                   and not any("draft" in n for n in film._frames_of(folder, "02 Hero")), filled["codes"][8:13])
             cut.sync(scene)
-            check("an orange strip: rendered in Low Quality",
-                  cut.section_strip(scene, "02 Hero").color_tag == cut.MARKS['LOW'])
+            check("a grey strip: not all frames rendered and nothing on its way",
+                  cut.section_strip(scene, "02 Hero").color_tag == cut.STATE_MARKS['OPEN'],
+                  cut.section_strip(scene, "02 Hero").color_tag)
             fe_look = mod("studio.film_edit")
             graded = cut.section_strip(scene, "02 Hero")
             fe_look.set_look(graded, exposure=1.0, shadows=0.4)
