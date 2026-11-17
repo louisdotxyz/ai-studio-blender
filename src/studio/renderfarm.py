@@ -1753,6 +1753,17 @@ def last_frame_time():
     return max((finished for finished, _w, _s in _events), default=0.0)
 
 
+_mac_icons = {}
+
+
+def _mac_icon(name, fallback):
+    """A colour icon of this Blender (green: renders, blue: online and waiting)."""
+    if not _mac_icons:
+        _mac_icons.update(dict.fromkeys(bpy.types.UILayout.bl_rna.functions['prop'].parameters['icon']
+                                        .enum_items.keys(), True))
+    return name if name in _mac_icons else fallback
+
+
 def _draw_reconnect(col):
     row = col.row(align=True)
     row.scale_y = 1.2
@@ -1814,7 +1825,7 @@ def draw_state(layout, context):
         head.label(text="No Mac renders · last frame %s" % (time.strftime("%H:%M", time.localtime(last))
                                                            if last else "–"), icon='ERROR', translate=False)
     else:
-        head.label(text="%d of %d Macs render%s" % (len(rendering), len(states),
+        head.label(text="%d of %d Macs render%s" % (len(rendering), len([x for x in states if x[1] != 'offline']),
                                                     " · %.1f frames/min" % rate if rate and rendering else ""),
                    icon='DESKTOP', translate=False)
     head.operator(STUDIO_OT_farm_refresh.bl_idname, text="", icon='FILE_REFRESH')
@@ -1828,12 +1839,16 @@ def draw_state(layout, context):
         row = col.row()
         row.alert = True
         row.label(text="No new frame for %s" % format_time(now - last), icon='ERROR', translate=False)
-    lines = col.column(align=True)                   # each Mac: how busy it is (the bar) and how fast
+    lines = col.column(align=True)                   # each Mac: green renders, blue is there and waits
+    green, blue = _mac_icon('STRIP_COLOR_04', 'RENDER_ANIMATION'), _mac_icon('STRIP_COLOR_05', 'TIME')
     for name, state, job, since in states:
+        if state == 'offline':                       # gone: not shown
+            continue
         key = name.lower()
         per = seconds_per_frame(key)
         row = lines.row(align=True)
         if state == 'rendering':
+            row.label(text="", icon=green)
             busy = busy_share(key)
             hour = sum(frames_per_bucket(key, now))
             row.progress(factor=busy if busy is not None else 1.0, type='BAR', text="%s · %s%s%s" % (
@@ -1841,14 +1856,9 @@ def draw_state(layout, context):
                 " · %d %% busy" % round(busy * 100) if busy is not None else "",
                 " · %d in 1 h" % hour if hour else ""))
             continue
-        sub = row.row(align=True)
-        sub.alert = state == 'offline'
-        sub.active = state != 'waiting'
-        sub.label(text="%s · %s" % (name, {
+        row.label(text="%s · %s" % (name, {
             "loading": "loads the file · %s" % _clock(now - since),
-            "waiting": "waits for a job",
-            "offline": "offline since %s" % time.strftime("%H:%M", time.localtime(since))}[state]),
-            icon={'loading': 'FILE_REFRESH', 'waiting': 'TIME', 'offline': 'CANCEL'}[state], translate=False)
+            "waiting": "online, waits for a job"}.get(state, state)), icon=blue, translate=False)
     if rendering:
         doing = sorted({_job_note(j) for _n, j in rendering if j})
         every = frames_per_bucket(None, now)
