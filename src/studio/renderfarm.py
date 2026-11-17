@@ -843,11 +843,13 @@ def _took_over():
     _restart["report"] = rows
     _restart["state"] = "done"
     wanted = [r for r in rows if r["missing"]]
-    mode = getattr(scene.studio, "farm_resend", 'ASK')
-    if wanted and mode == 'AUTO' and scene.studio.farm_on:
+    if wanted and scene.studio.farm_on:               # quietly in the background: only the missing frames
         sent = resend_missing(scene, wanted)
         if sent:
-            runner.notify("Farm after the restart: sent again %s" % ", ".join(sent))
+            runner.log("farm after opening: sent again %s" % ", ".join(sent))
+    elif wanted:                                     # farm off: only then it asks
+        runner.notify("Missing frames in %s: switch the render farm on, or render them here"
+                      % ", ".join(r["section"] for r in wanted))
     taken = sum(1 for j in found if j.get("adopted"))
     if taken:
         runner.log("farm: %d jobs from the share taken over after the restart" % taken)
@@ -1923,7 +1925,6 @@ def draw_state(layout, context):
     if not rq.farm_on and not active() and not _restart["report"]:
         return
     watch()
-    _draw_restart(layout, context.scene)
     box = layout.box()
     col = box.column(align=True)
     if not connected() and _conn["time"] < 0 and not stuck():    # the first look is on its way
@@ -2154,44 +2155,6 @@ class STUDIO_OT_farm_restart(Operator):
                         pass
             threading.Thread(target=drop, daemon=True).start()
         return {'FINISHED'}
-
-
-def _draw_restart(col, scene):
-    """After a restart (or opening the file): per section here · on the farm · missing (and what was sent)."""
-    if _restart["shown"]:
-        return
-    rows = [r for r in _restart["report"] if r["missing"] or r["farm"] or r["outdated"]]
-    if not rows and not _restart["halves"] and not _restart["sent"]:
-        return
-    box = col.box()
-    head = box.row(align=True)
-    head.label(text="Since this file was opened", icon='RECOVER_LAST')
-    head.prop(scene.studio, "farm_resend", text="")
-    head.operator(STUDIO_OT_farm_restart.bl_idname, text="", icon='X', emboss=False).action = 'HIDE'
-    lines = box.column(align=True)
-    for row in rows:
-        bits = ["%d/%d here" % (row["done"], row["total"])]
-        if row["farm"]:
-            bits.append("%d on the farm" % row["farm"])
-        if row["missing"]:
-            bits.append("missing " + ", ".join("%d–%d" % r if r[0] != r[1] else "%d" % r[0]
-                                               for r in row["missing"][:3]) + (" …" if len(row["missing"]) > 3 else ""))
-        line = lines.row()
-        line.alert = bool(row["missing"]) or row["outdated"]
-        line.label(text="%s · %s%s" % (row["section"], " · ".join(bits), " · older than the scene"
-                                         if row["outdated"] else ""),
-                   icon='ERROR' if row["missing"] else ('CHECKMARK' if not row["farm"] else 'TIME'), translate=False)
-    if _restart["sent"]:
-        sent = box.row()
-        sent.active = False
-        sent.label(text="Sent again: " + ", ".join(_restart["sent"])[:90], icon='EXPORT', translate=False)
-    if any(r["missing"] for r in rows):
-        box.operator(STUDIO_OT_farm_restart.bl_idname, text="Send Missing Frames", icon='EXPORT').action = 'SEND'
-    if _restart["halves"]:
-        row = box.row(align=True)
-        row.label(text="%d half uploads on the share (%.1f GB)" % (
-            len(_restart["halves"]), sum(s for _j, s in _restart["halves"]) / 1e9), icon='ERROR', translate=False)
-        row.operator(STUDIO_OT_farm_restart.bl_idname, text="Remove", icon='TRASH').action = 'HALVES'
 
 
 class STUDIO_OT_farm_retry(Operator):

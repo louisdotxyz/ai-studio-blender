@@ -471,6 +471,11 @@ def editor_create(scene):
         found.world = world
     if found.sequence_editor is None:
         found.sequence_editor_create()
+    try:
+        if not found.sequence_editor.use_prefetch:    # frames read ahead in the background: smooth playback
+            found.sequence_editor.use_prefetch = True
+    except AttributeError:
+        pass
     return found
 
 
@@ -639,6 +644,14 @@ def _keep_window_scene():
             film = bpy.data.scenes.get(name) if name else None
             if film is not None:
                 window.scene = film
+        for space in bpy.data.workspaces:          # the Video Editor shows the cut, never the 3D scene
+            shown = getattr(space, "sequencer_scene", None)
+            if shown is None or shown.get(FILM_KEY) or not _is_cut_space(space):
+                continue
+            ed = editor(shown)
+            if ed is not None:
+                show_in_video_editor(shown)
+                break
     except (AttributeError, RuntimeError, ReferenceError):
         pass
     return 1.0
