@@ -203,9 +203,14 @@ class _ChatPanel:
         top.popover("CLAUDE_PT_help", text="", icon='QUESTION')
 
         # Chat area: fills what the cards, the input and the status line leave free.
-        skill_rows = len(skills.list_skills(core.workdir())) // SKILLS_PER_ROW + 1
+        shown = [s for s in skills.list_skills(core.workdir()) if s["in_chat"]]
+        skill_rows = len(shown) // SKILLS_PER_ROW + 1          # the rows drawn (with the + after the last)
         reserved = RESERVED_ROWS + len(core.attachments) + skill_rows + self._cards_height() \
             + len(prompt_preview_lines(context)) * 0.8
+        if context.area is not None and context.area.type == 'SEQUENCE_EDITOR':
+            reserved -= 1.6                  # no render row in the Video Editor's chat
+        if (prefs is None or prefs.send_selection) and getattr(context, "selected_objects", None):
+            reserved += 1                    # the "Selection: …" line
         if prefs is not None and prefs.backend == 'LOCAL':
             reserved += 1   # local model status has two lines
         rows = _fit_rows(context, int(max(6, context.region.height / unit - reserved)), unit, round(reserved * 4))

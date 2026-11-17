@@ -73,6 +73,7 @@ class STUDIO_OT_add(Operator):
     other: BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})       # shift-click: the other quality
     force: BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})       # a film: render again though nothing changed
     folder: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})    # a film: a version of its own (Frames/<s> <this>)
+    keep_running: BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})   # a film: what renders of it goes on
 
     @classmethod
     def description(cls, context, props):
@@ -187,7 +188,7 @@ class STUDIO_OT_add(Operator):
             if cam is None or cam.type != 'CAMERA':
                 no_camera.append(name)
                 continue
-            if not self.folder and (name in waiting or cut._rendering(name, fresh=True)):
+            if not self.folder and not self.keep_running and (name in waiting or cut._rendering(name, fresh=True)):
                 if not self.section:
                     skipped.append(name)
                     continue

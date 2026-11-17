@@ -8,6 +8,7 @@ and FUNCTIONAL_OK / FUNCTIONAL_FAIL at the end. Renders are tiny (Cycles, few sa
 
 import faulthandler
 import json
+import socket
 import math
 import os
 import sys
@@ -2585,6 +2586,14 @@ def motion_sections():
             cut.sync(scene)
             check("an orange strip: rendered in Low Quality",
                   cut.section_strip(scene, "02 Hero").color_tag == cut.MARKS['LOW'])
+            fe_look = mod("studio.film_edit")
+            graded = cut.section_strip(scene, "02 Hero")
+            fe_look.set_look(graded, exposure=1.0, shadows=0.4)
+            balance = graded.modifiers.get(fe_look.COLOR_MOD)
+            check("colour & light: +1 stop doubles the light, shadows lift; reset is neutral",
+                  balance is not None and abs(balance.color_balance.gain[1] - 2.0) < 0.01
+                  and abs(balance.color_balance.lift[0] - 1.1) < 1e-3, balance and tuple(balance.color_balance.gain))
+            fe_look.reset_look(graded)
             tools = mod("studio.film_tools")
             no_cam = {m.name for m in scene.timeline_markers if m.camera is None}
             check("check: sections without a camera are found",
@@ -2860,6 +2869,31 @@ def render_farm_folder():
           (up["phase"], up.get("error"), gone.get("phase"), gone.get("error")))
     farm._jobs[:] = keep_jobs
     farm._save_registry()
+    # after a restart: the list of this .blend comes back; jobs of the file on the share are taken over
+    blend = os.path.join(root, "Restart Test.blend")
+    farm._jobs.append(dict(up, job="r_job", phase="sent", blend=blend))
+    farm._save_registry()
+    farm._jobs[:] = keep_jobs
+    farm._load_registry(blend)
+    back = [j["job"] for j in farm._jobs if j.get("blend") == blend]
+    host = socket.gethostname().split(".")[0]
+    name = farm.job_name(blend, "01 Intro")
+    with open(os.path.join(root, "queue", name + ".json"), "w") as f:
+        json.dump({"scene": "Scene", "start": 1, "end": 9, "format": "PNG", "sent_by": "me@" + host,
+                   "note": "01 Intro · HQ"}, f)
+    open(os.path.join(root, "queue", name.replace("01_Intro", "02_Hero") + ".blend.part"), "wb").close()
+    farm._adopt(root, farm._file_prefix(blend), host, {"01 Intro": (os.path.join(root, "F"), "01_Intro")},
+                set(back), os.path.join(root, "A"))
+    taken = farm._restart["adopt"] or []
+    check("after a restart: the file's list is back, its job on the share is taken over, a half upload found",
+          back == ["r_job"] and [j["job"] for j in taken] == [name] and taken[0]["section"] == "01 Intro"
+          and len(farm._restart["halves"]) == 1, (back, taken, farm._restart["halves"]))
+    farm._jobs[:] = keep_jobs
+    farm._restart.update(adopt=None, halves=[])
+    try:
+        os.remove(farm._registry_path(blend))
+    except OSError:
+        pass
     keep_view = dict(farm._view)
     farm._view.update(busy=True, since=time.monotonic() - 60)
     hung = farm.stuck()

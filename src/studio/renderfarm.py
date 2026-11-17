@@ -394,6 +394,8 @@ def _tick():
         return 2.0
     if _view.pop("waiting", False):
         _view["force"] = True
+        if _restart["state"] == "offline" and not bpy.app.timers.is_registered(_after_load):
+            bpy.app.timers.register(_after_load, first_interval=1.0)   # compared now that the share is there
     _refresh(force=_view.pop("force", False))
     runner.tag_redraw()
     return REFRESH
@@ -438,28 +440,301 @@ def renders_section(folder):
     return any(j.get("kind") == 'ANIM' and os.path.normcase(j.get("folder", "")) == folder for j in active())
 
 
+KEEP = {"queued", "packing", "packed", "copying", "retry", "sent"}   # phases that survive a restart
+_loaded = {"blend": None, "seen": set()}
+_lock = threading.Lock()
+
+
+def _registry_path(blend):
+    """~/.cache/ai_studio_farm/jobs/<file>-<hash>.json: each .blend its own list of farm jobs."""
+    import hashlib
+    stem = re.sub(r"[^A-Za-z0-9_\-]+", "_", os.path.splitext(os.path.basename(blend))[0]) or "untitled"
+    return os.path.join(LOCAL, "jobs", "%s-%s.json" % (stem, hashlib.sha1(blend.encode()).hexdigest()[:8]))
+
+
 def _save_registry():
-    keep = [{k: v for k, v in j.items() if k not in TRANSIENT} for j in _jobs
-            if j["phase"] in {"sent", "retry", "copying"}]
-    try:
-        os.makedirs(LOCAL, exist_ok=True)
-        with open(REGISTRY + ".tmp", "w", encoding="utf-8") as f:
-            json.dump(keep, f, indent=1)
-        os.replace(REGISTRY + ".tmp", REGISTRY)
-    except OSError as ex:
-        print("AI Studio farm: jobs not kept:", ex)
+    """The jobs on their way or on the farm, per .blend (after every change of phase; from any thread)."""
+    groups = {b: [] for b in _loaded["seen"]}
+    for job in list(_jobs):
+        blend = job.get("blend") or _loaded["blend"]
+        if blend and job["phase"] in KEEP:
+            groups.setdefault(blend, []).append({k: v for k, v in job.items() if k not in TRANSIENT})
+    if _loaded["blend"]:
+        groups.setdefault(_loaded["blend"], [])
+    with _lock:
+        for blend, jobs in groups.items():
+            _loaded["seen"].add(blend)
+            path = _registry_path(blend)
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path + ".tmp", "w", encoding="utf-8") as f:
+                    json.dump(jobs, f, indent=1)
+                os.replace(path + ".tmp", path)
+            except OSError:
+                pass
 
 
-def _load_registry():
+def _migrate_registry():
+    """The one list of older versions (all files in one) into one list per file."""
+    if not os.path.exists(REGISTRY):
+        return
     try:
         with open(REGISTRY, encoding="utf-8") as f:
-            for job in json.load(f):
-                if not any(j["job"] == job["job"] for j in _jobs):
-                    if job.get("phase") == "copying":     # Blender closed during the upload: it goes on
-                        job.update(phase="retry", retry_at=0.0)
-                    _jobs.append(job)
+            old = json.load(f)
     except (OSError, ValueError):
-        pass
+        old = []
+    groups = {}
+    for job in old:
+        blend = job.get("blend") or job.get("sent_file")
+        if blend:
+            groups.setdefault(blend, []).append(job)
+    for blend, jobs in groups.items():
+        path = _registry_path(blend)
+        if not os.path.exists(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(jobs, f, indent=1)
+    os.replace(REGISTRY, REGISTRY + ".old")
+
+
+def _load_registry(blend=None):
+    """The jobs of this .blend from before a restart: on the farm they are fetched on, an upload that broke
+    off goes on, one not packed yet is packed again (if its copy of the file is still there)."""
+    blend = blend if blend is not None else bpy.data.filepath
+    if not blend:
+        return
+    try:
+        _migrate_registry()
+        with open(_registry_path(blend), encoding="utf-8") as f:
+            saved = json.load(f)
+    except (OSError, ValueError):
+        return
+    _loaded["seen"].add(blend)
+    for job in saved:
+        if any(j["job"] == job["job"] for j in _jobs):
+            continue
+        job.setdefault("blend", blend)
+        phase = job.get("phase")
+        packed = os.path.join(LOCAL, job["job"], job["job"] + ".blend")
+        if phase in {"copying", "retry", "packed"} and os.path.isfile(packed):
+            job.update(phase="retry" if phase != "packed" else "packed", retry_at=0.0, packed=packed,
+                       size=os.path.getsize(packed))
+        elif phase in {"queued", "packing", "packed"}:
+            if job.get("raw") and os.path.isfile(job["raw"]):
+                job["phase"] = "queued"
+            else:
+                job.update(phase="error", error="Its copy of the file is gone after the restart: send it again")
+        _jobs.append(job)
+
+
+_restart = {"state": "", "report": [], "halves": [], "adopt": None, "sent": [], "shown": False}
+
+
+@bpy.app.handlers.persistent
+def _on_load(_dummy=None):
+    """A .blend opened (also after a restart): its farm jobs come back and the share is compared in a thread."""
+    _save_registry()                              # the file before: its list is saved as it is
+    blend = bpy.data.filepath
+    _jobs[:] = [j for j in _jobs if j.get("blend") == blend or j["phase"] in {"packing", "copying"}]
+    _loaded["blend"] = blend
+    _restart.update(state="", report=[], halves=[], adopt=None, sent=[], shown=False)
+    if not blend:
+        return
+    _load_registry(blend)
+    if _jobs and not bpy.app.timers.is_registered(_pump):
+        bpy.app.timers.register(_pump, first_interval=2.0, persistent=True)
+    if not bpy.app.timers.is_registered(_after_load):
+        bpy.app.timers.register(_after_load, first_interval=4.0)
+
+
+def _file_prefix(blend):
+    return re.sub(r"[^A-Za-z0-9_\-]+", "_", os.path.splitext(os.path.basename(blend))[0]).strip("_") + "_"
+
+
+def _after_load():
+    """(Blender's thread, a few seconds after loading) What the share is compared with: the film's sections
+    and where their frames go. The comparing itself runs in a thread."""
+    from . import cut
+    try:
+        scene = cut.film_scene(bpy.context.scene)
+        sections = {name: (cut.frames_folder(name), cut.frame_stem(name))
+                    for name, _s, _e, _m in cut.sections_of(scene)}
+        archive = cut.archive_folder()
+    except Exception as ex:                        # no sections, no folder: nothing to compare
+        print("AI Studio farm restart:", ex)
+        return None
+    root = share_root()
+    _restart["state"] = "looking"
+    known = {j["job"] for j in _jobs}
+    host = socket.gethostname().split(".")[0]
+    threading.Thread(target=_adopt, args=(root, _file_prefix(bpy.data.filepath), host, sections, known, archive),
+                     daemon=True).start()
+    if not bpy.app.timers.is_registered(_pump):
+        bpy.app.timers.register(_pump, first_interval=2.0, persistent=True)
+    return None
+
+
+ADOPT_DAYS = 3
+
+
+def _adopt(root, prefix, host, sections, known, archive):
+    """(Thread) Jobs of this file and this Mac on the share that the list does not know (it was lost):
+    the newest job of each section, still rendering or done, comes back and its frames are fetched.
+    Half uploads (.blend.part) are found: one with its packed file here goes on, the others are listed."""
+    queue = os.path.join(root, "queue")
+    try:
+        names = os.listdir(queue)
+    except OSError:
+        _restart["state"] = "offline"             # tried again when the share is there (_tick)
+        return
+    present = set(names)
+    stamp = re.compile(re.escape(prefix) + r"(\d{8}-\d{6})_")
+    newest, halves = {}, []
+    for name in names:
+        hit = stamp.match(name)
+        if hit is None:
+            continue
+        if name.endswith(".blend.part"):
+            job = name[:-len(".blend.part")]
+            if job not in known:
+                try:
+                    halves.append((job, os.path.getsize(os.path.join(queue, name))))
+                except OSError:
+                    pass
+            continue
+        if not name.endswith(".json") or name[:-5] in known:
+            continue
+        try:
+            when = time.mktime(time.strptime(hit.group(1), "%Y%m%d-%H%M%S"))
+        except ValueError:
+            continue
+        if time.time() - when > ADOPT_DAYS * 86400:
+            continue
+        job = name[:-5]
+        try:
+            with open(os.path.join(queue, name), encoding="utf-8") as f:
+                cfg = json.load(f)
+            done = ""
+            if job + ".done" in present:
+                with open(os.path.join(queue, job + ".done"), encoding="utf-8", errors="replace") as f:
+                    done = f.read()
+        except (OSError, ValueError):
+            continue
+        if host.lower() not in str(cfg.get("sent_by", "")).lower() or "replaced" in done:
+            continue
+        note = cfg.get("note", "")
+        section = note.split(" · ")[0]
+        if section in sections and (note not in newest or job > newest[note][0]):
+            newest[note] = (job, cfg)
+    found = []
+    for note, (job, cfg) in newest.items():
+        section = note.split(" · ")[0]
+        folder, stem = sections[section]
+        fmt = cfg.get("format", "PNG")
+        found.append({"job": job, "scene": cfg.get("scene", ""), "kind": 'ANIM', "start": int(cfg.get("start", 0)),
+                      "end": int(cfg.get("end", 0)), "format": fmt, "ext": EXT.get(fmt, "png"), "note": note,
+                      "root": root, "phase": "sent", "progress": 1.0, "error": "", "size": 0, "have": 0,
+                      "folder": folder, "stem": stem, "section": section,
+                      "quality": 'HIGH' if note.endswith("HQ") else 'LOW', "skip": [], "added": time.time(),
+                      "sent_by": cfg.get("sent_by", ""), "adopted": True, "raw": "",
+                      "archive": os.path.join(archive, "%s %s" % (os.path.basename(folder),
+                                                                  time.strftime("%Y-%m-%d %H%M%S")))})
+    for job, _size in halves:                      # its packed file and job are still here: it goes on
+        meta = os.path.join(LOCAL, job, "job.json")
+        packed = os.path.join(LOCAL, job, job + ".blend")
+        if os.path.isfile(meta) and os.path.isfile(packed):
+            try:
+                with open(meta, encoding="utf-8") as f:
+                    back = json.load(f)
+                back.update(phase="retry", retry_at=0.0, packed=packed, tries=0, error="",
+                            size=os.path.getsize(packed))
+                found.append(back)
+            except (OSError, ValueError):
+                pass
+    resumed = {j["job"] for j in found}
+    _restart.update(adopt=found, halves=[h for h in halves if h[0] not in resumed], state="adopted")
+
+
+def _ranges(frames):
+    out = []
+    for f in sorted(frames):
+        if out and f == out[-1][1] + 1:
+            out[-1][1] = f
+        else:
+            out.append([f, f])
+    return [tuple(r) for r in out]
+
+
+def restart_report(scene):
+    """(Blender's thread) Per section: frames here, on the farm (on their way), missing (neither here nor on
+    the farm, as ranges) and whether the farm frames are older than the scene (OUTDATED_FARM). Only sections
+    with frames (a section never rendered is not missing anything)."""
+    from . import cut, film_tools
+    outdated = {p[0] for p in film_tools.problems(scene) if p[1] == 'OUTDATED_FARM'}
+    rows = []
+    for name, start, end, _m in cut.sections_of(scene):
+        st = cut.frame_status(name, start, end, fresh=True)
+        here = {f for f, code in zip(range(start, end + 1), st["codes"]) if code in {'HIGH', 'LOW'}}
+        if not here and not any(j.get("section") == name for j in _jobs):
+            continue
+        coming = set()
+        for job in _jobs:
+            if job.get("section") == name and job["phase"] in KEEP:
+                coming.update(range(job["start"], job["end"] + 1))
+        coming -= here
+        missing = set(range(start, end + 1)) - here - coming
+        rows.append({"section": name, "done": len(here), "total": end - start + 1, "farm": len(coming),
+                     "missing": _ranges(missing), "outdated": name in outdated, "quality": st.get("quality")})
+    return rows
+
+
+def resend_missing(scene, rows=None):
+    """Only the missing frames of each section again (frames a–b), from the film's scene, without stopping
+    what renders of it. Returns ["01 Hero 120–180", …]."""
+    from . import cut
+    scene = cut.film_scene(scene)
+    sent = []
+    for row in rows if rows is not None else restart_report(scene):
+        for a, b in row["missing"]:
+            result = bpy.ops.studio.add(mode='ANIM', section=row["section"], frames="%d-%d" % (a, b),
+                                        keep_running=True)
+            if 'FINISHED' in result:
+                sent.append("%s %d–%d" % (row["section"], a, b))
+    _restart["sent"] += sent
+    return sent
+
+
+def _took_over():
+    """(Blender's thread, from _pump) The jobs found on the share join the list; then the report and,
+    if wanted, the missing frames go again."""
+    found = _restart.get("adopt")
+    if found is None:
+        return
+    _restart["adopt"] = None
+    for job in found:
+        if not any(j["job"] == job["job"] for j in _jobs):
+            job.setdefault("blend", bpy.data.filepath)
+            _jobs.append(job)
+    if found:
+        _save_registry()
+    from . import cut, runner
+    try:
+        scene = cut.film_scene(bpy.context.scene)
+        rows = restart_report(scene)
+    except Exception as ex:
+        print("AI Studio farm restart:", ex)
+        return
+    _restart["report"] = rows
+    _restart["state"] = "done"
+    wanted = [r for r in rows if r["missing"]]
+    mode = getattr(scene.studio, "farm_resend", 'ASK')
+    if wanted and mode == 'AUTO' and scene.studio.farm_on:
+        sent = resend_missing(scene, wanted)
+        if sent:
+            runner.notify("Farm after the restart: sent again %s" % ", ".join(sent))
+    taken = sum(1 for j in found if j.get("adopted"))
+    if taken:
+        runner.log("farm: %d jobs from the share taken over after the restart" % taken)
 
 
 def _raw_copy(scene):
@@ -530,6 +805,13 @@ def submit(scene, start, end, fmt=None, note="", kind='MANUAL', overrides=None, 
            "sent_by": "%s@%s" % (getpass.getuser(), socket.gethostname().split(".")[0])}
     job.update(extra)
     _jobs.append(job)
+    try:                                          # found again after a restart (with its half upload)
+        os.makedirs(os.path.join(LOCAL, name), exist_ok=True)
+        with open(os.path.join(LOCAL, name, "job.json"), "w", encoding="utf-8") as f:
+            json.dump({k: v for k, v in job.items() if k not in TRANSIENT}, f, indent=1)
+    except OSError:
+        pass
+    _save_registry()
     if not bpy.app.timers.is_registered(_pump):
         bpy.app.timers.register(_pump, first_interval=0.5, persistent=True)
     return job
@@ -548,7 +830,7 @@ def submit_item(scene, item, job, animation, path, camera, quality):
         stem = cut.frame_stem(section)
         overrides = [o for o in overrides if o[0] != "camera"] + [["camera", {"object": camera.name}]]
         fmt = _format_of(overrides)
-        supersede(path)                              # sent again: the older job of this section stops
+        supersede(path, a, b)                        # sent again: the older job of these frames stops
         skip = []
         if not item.keep_frames and not getattr(item, "redo", False) and not getattr(item, "job_folder", ""):
             # Frames there in this quality (or better) stay: a longer intro renders only its new frames.
@@ -595,6 +877,7 @@ def _pump():
             nxt = next((j for j in _jobs if j["phase"] == "queued"), None)
             if nxt is not None:
                 _pack(nxt)
+        _took_over()
         _collect_all()
         _watch_workers()
         runner.tag_redraw()
@@ -602,7 +885,7 @@ def _pump():
         print("AI Studio farm:", ex)
     if sending():
         return 1.0
-    return 3.0 if active() else None
+    return 3.0 if active() or _restart["state"] == "looking" else None
 
 
 def _pack(job):
@@ -1177,13 +1460,15 @@ def _retire(root, name, start, end, ext):
         print("AI Studio farm: older job not stopped:", ex)
 
 
-def supersede(folder):
-    """A section is sent again: its older job is not wanted any more. Not sent yet: it is dropped here. On
-    the farm: every frame not rendered yet gets an empty file (the workers skip it, as their own
-    placeholders) and the job a .done, so no worker starts it again. Nothing is deleted on the share."""
+def supersede(folder, start=None, end=None):
+    """A section is sent again: its older job is not wanted any more (with start/end: only a job whose
+    frames overlap these). Not sent yet: it is dropped here. On the farm: every frame not rendered yet gets
+    an empty file (the workers skip it, as their own placeholders) and the job a .done, so no worker starts
+    it again. Nothing is deleted on the share."""
     folder = os.path.normcase(os.path.abspath(folder))
     for job in [j for j in _jobs if j.get("kind") == 'ANIM' and j["phase"] != "done"
-                and os.path.normcase(os.path.abspath(j.get("folder", ""))) == folder]:
+                and os.path.normcase(os.path.abspath(j.get("folder", ""))) == folder
+                and (start is None or (j["start"] <= end and start <= j["end"]))]:
         if job["phase"] == "sent":
             job["phase"] = "done"                     # the share is written in a thread (over VPN: slow)
             threading.Thread(target=_retire, args=(job["root"], job["job"], job["start"], job["end"], job["ext"]),
@@ -1471,18 +1756,17 @@ def last_frame_time():
 def _draw_reconnect(col):
     row = col.row(align=True)
     row.scale_y = 1.2
-    row.operator(STUDIO_OT_farm_refresh.bl_idname, icon='FILE_REFRESH')
-    row.operator(STUDIO_OT_farm_vpn.bl_idname, icon='WORLD')
-    row.operator(STUDIO_OT_farm_connect.bl_idname, text="", icon='FILEBROWSER')
+    row.operator(STUDIO_OT_farm_refresh.bl_idname, text="Connect Server", icon='LINKED')
 
 
 def draw_state(layout, context):
     """The farm in short: Macs and speed, the frames of the last hour, each Mac in one line; when something
     is wrong (share, VPN, no Mac, no frame for a while) the way back in one click."""
     rq = context.scene.studio
-    if not rq.farm_on and not active():
+    if not rq.farm_on and not active() and not _restart["report"]:
         return
     watch()
+    _draw_restart(layout, context.scene)
     box = layout.box()
     col = box.column(align=True)
     if not connected() and _conn["time"] < 0 and not stuck():    # the first look is on its way
@@ -1499,7 +1783,7 @@ def draw_state(layout, context):
         _draw_reconnect(col)
         hint = col.row()
         hint.active = False
-        hint.label(text="From home: VPN first, then Reconnect (it also tries by itself)", translate=False)
+        hint.label(text="From home: VPN on first (it also connects by itself)", translate=False)
         return
     view = _view["scan"]
     if stuck():                                      # the share hangs: VPN gone, Mac slept
@@ -1620,9 +1904,9 @@ class STUDIO_OT_farm_remove(Operator):
 
 class STUDIO_OT_farm_refresh(Operator):
     bl_idname = "studio.farm_refresh"
-    bl_label = "Reconnect"
-    bl_description = ("Connect to the render farm again: mounts the share if it is gone, gives up a hung "
-                      "look, then reads the Macs and fetches the finished frames")
+    bl_label = "Connect Server"
+    bl_description = ("Connect to the render farm's server: mounts the share if it is gone (the login from "
+                      "the keychain, else the Mac asks), gives up a hung look, reads the Macs, fetches the frames")
     bl_options = {'INTERNAL'}
 
     def execute(self, _context):
@@ -1632,6 +1916,86 @@ class STUDIO_OT_farm_refresh(Operator):
             bpy.app.timers.register(_pump, first_interval=0.1, persistent=True)
         watch()
         return {'FINISHED'}
+
+
+class STUDIO_OT_farm_restart(Operator):
+    bl_idname = "studio.farm_restart"
+    bl_label = "After the Restart"
+    bl_options = {'INTERNAL'}
+
+    action: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})      # SEND / HIDE / HALVES
+
+    @classmethod
+    def description(cls, _context, props):
+        return {"SEND": "Send only the missing frames of each section again (from the film's scene; what "
+                        "renders goes on)",
+                "HIDE": "Hide this summary",
+                "HALVES": "Remove the half uploads on the share (they never became jobs; nothing else is touched)"
+                }.get(props.action, "")
+
+    def invoke(self, context, event):
+        if self.action == 'HALVES':
+            return context.window_manager.invoke_confirm(self, event)
+        return self.execute(context)
+
+    def execute(self, context):
+        if self.action == 'SEND':
+            sent = resend_missing(context.scene, [r for r in _restart["report"] if r["missing"]])
+            for row in _restart["report"]:
+                row["missing"] = []
+            self.report({'INFO'}, "Sent again: %s" % (", ".join(sent) or "nothing"))
+        elif self.action == 'HIDE':
+            _restart["shown"] = True
+        elif self.action == 'HALVES':
+            root, halves = share_root(), list(_restart["halves"])
+            _restart["halves"] = []
+
+            def drop():
+                for job, _size in halves:
+                    try:
+                        os.remove(os.path.join(root, "queue", job + ".blend.part"))
+                    except OSError:
+                        pass
+            threading.Thread(target=drop, daemon=True).start()
+        return {'FINISHED'}
+
+
+def _draw_restart(col, scene):
+    """After a restart (or opening the file): per section here · on the farm · missing (and what was sent)."""
+    if _restart["shown"]:
+        return
+    rows = [r for r in _restart["report"] if r["missing"] or r["farm"] or r["outdated"]]
+    if not rows and not _restart["halves"] and not _restart["sent"]:
+        return
+    box = col.box()
+    head = box.row(align=True)
+    head.label(text="Since this file was opened", icon='RECOVER_LAST')
+    head.prop(scene.studio, "farm_resend", text="")
+    head.operator(STUDIO_OT_farm_restart.bl_idname, text="", icon='X', emboss=False).action = 'HIDE'
+    lines = box.column(align=True)
+    for row in rows:
+        bits = ["%d/%d here" % (row["done"], row["total"])]
+        if row["farm"]:
+            bits.append("%d on the farm" % row["farm"])
+        if row["missing"]:
+            bits.append("missing " + ", ".join("%d–%d" % r if r[0] != r[1] else "%d" % r[0]
+                                               for r in row["missing"][:3]) + (" …" if len(row["missing"]) > 3 else ""))
+        line = lines.row()
+        line.alert = bool(row["missing"]) or row["outdated"]
+        line.label(text="%s · %s%s" % (row["section"], " · ".join(bits), " · older than the scene"
+                                         if row["outdated"] else ""),
+                   icon='ERROR' if row["missing"] else ('CHECKMARK' if not row["farm"] else 'TIME'), translate=False)
+    if _restart["sent"]:
+        sent = box.row()
+        sent.active = False
+        sent.label(text="Sent again: " + ", ".join(_restart["sent"])[:90], icon='EXPORT', translate=False)
+    if any(r["missing"] for r in rows):
+        box.operator(STUDIO_OT_farm_restart.bl_idname, text="Send Missing Frames", icon='EXPORT').action = 'SEND'
+    if _restart["halves"]:
+        row = box.row(align=True)
+        row.label(text="%d half uploads on the share (%.1f GB)" % (
+            len(_restart["halves"]), sum(s for _j, s in _restart["halves"]) / 1e9), icon='ERROR', translate=False)
+        row.operator(STUDIO_OT_farm_restart.bl_idname, text="Remove", icon='TRASH').action = 'HALVES'
 
 
 class STUDIO_OT_farm_retry(Operator):
@@ -1653,49 +2017,27 @@ class STUDIO_OT_farm_retry(Operator):
         return {'FINISHED'}
 
 
-class STUDIO_OT_farm_vpn(Operator):
-    bl_idname = "studio.farm_vpn"
-    bl_label = "VPN"
-    bl_description = "Open the ZHdK VPN (Cisco Secure Client): connect there, then the share"
-    bl_options = {'INTERNAL'}
-
-    def execute(self, _context):
-        for app in ("Cisco Secure Client", "Cisco AnyConnect Secure Mobility Client"):
-            if subprocess.run(["open", "-a", app], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
-                return {'FINISHED'}
-        self.report({'WARNING'}, "No Cisco VPN app found")
-        return {'CANCELLED'}
-
-
-class STUDIO_OT_farm_connect(Operator):
-    bl_idname = "studio.farm_connect"
-    bl_label = "Connect Share"
-    bl_description = "Connect the DDE share (Finder asks for the ZHdK login); from home: VPN first"
-    bl_options = {'INTERNAL'}
-
-    def execute(self, _context):
-        subprocess.Popen(["open", "smb://fileredu.ad.zhdk.ch/DDE"], stdin=subprocess.DEVNULL,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        reconnect(mount=False)
-        watch()
-        return {'FINISHED'}
-
-
-classes = (STUDIO_OT_farm_move, STUDIO_OT_farm_remove, STUDIO_OT_farm_refresh, STUDIO_OT_farm_connect,
-           STUDIO_OT_farm_vpn, STUDIO_OT_farm_retry)
+classes = (STUDIO_OT_farm_move, STUDIO_OT_farm_remove, STUDIO_OT_farm_refresh, STUDIO_OT_farm_retry,
+           STUDIO_OT_farm_restart)
 
 
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
-    _load_registry()                             # jobs sent before a restart: their frames still come
-    if _jobs:                                    # on the share: in a thread (it may hang)
-        threading.Thread(target=_reconcile, daemon=True).start()
-    if active() and not bpy.app.timers.is_registered(_pump):
-        bpy.app.timers.register(_pump, first_interval=5.0, persistent=True)
+    if _on_load not in bpy.app.handlers.load_post:   # each .blend: its jobs back, the share compared
+        bpy.app.handlers.load_post.append(_on_load)
+    bpy.app.timers.register(_register_late, first_interval=1.0)   # the add-on (re)loaded with a file open
+
+
+def _register_late():
+    if bpy.data.filepath and _loaded["blend"] != bpy.data.filepath:
+        _on_load()
+    return None
 
 
 def unregister():
+    if _on_load in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_on_load)
     _keep_awake(False)
     for timer in (_tick, _pump):
         if bpy.app.timers.is_registered(timer):

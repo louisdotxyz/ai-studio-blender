@@ -315,7 +315,9 @@ def fade(scene, side, frames, color='BLACK', strip=None):
 # ------------------------------------------------------------------ the look
 
 _STRIP = getattr(bpy.types, "Strip", None) or getattr(bpy.types, "Sequence")
-LOOK_PROPS = ("studio_brightness", "studio_contrast", "studio_saturation", "studio_warmth")
+LOOK_PROPS = ("studio_brightness", "studio_contrast", "studio_saturation", "studio_warmth", "studio_exposure",
+              "studio_shadows", "studio_highlights", "studio_tint")
+NEUTRAL = {"studio_saturation": 1.0}
 
 
 def _modifier(strip, name, kind, create):
@@ -338,10 +340,15 @@ def _apply_look(strip):
         mod.bright, mod.contrast = b, c
     if hasattr(strip, "color_saturation"):
         strip.color_saturation = strip.studio_saturation
-    w = strip.studio_warmth
-    mod = _modifier(strip, COLOR_MOD, 'COLOR_BALANCE', bool(w))
+    w, t = strip.studio_warmth, strip.studio_tint                 # colour: warmer/cooler, magenta/green
+    e, lo, hi = strip.studio_exposure, strip.studio_shadows, strip.studio_highlights   # light
+    mod = _modifier(strip, COLOR_MOD, 'COLOR_BALANCE', bool(w or t or e or lo or hi))
     if mod is not None:
-        mod.color_balance.gain = (1.0 + 0.12 * w, 1.0 + 0.02 * w, 1.0 - 0.12 * w)
+        light = (2.0 ** e) * (1.0 + 0.5 * hi)                  # exposure in stops, highlights on top
+        mod.color_balance.gain = (light * (1.0 + 0.12 * w + 0.05 * t), light * (1.0 + 0.02 * w - 0.10 * t),
+                                  light * (1.0 - 0.12 * w + 0.05 * t))
+        lift = 1.0 + 0.25 * lo                                  # shadows up (+) or down (−)
+        mod.color_balance.lift = (lift, lift, lift)
 
 
 def _look_changed(strip, _context):
@@ -351,8 +358,10 @@ def _look_changed(strip, _context):
         print("AI Studio: look:", ex)
 
 
-def set_look(strip, brightness=None, contrast=None, saturation=None, warmth=None):
-    for prop, value in zip(LOOK_PROPS, (brightness, contrast, saturation, warmth)):
+def set_look(strip, brightness=None, contrast=None, saturation=None, warmth=None, exposure=None, shadows=None,
+             highlights=None, tint=None):
+    for prop, value in zip(LOOK_PROPS, (brightness, contrast, saturation, warmth, exposure, shadows, highlights,
+                                        tint)):
         if value is not None:
             setattr(strip, prop, value)
     return look_of(strip)
@@ -371,7 +380,8 @@ def copy_look(source, target):
 
 
 def reset_look(strip):
-    set_look(strip, 0.0, 0.0, 1.0, 0.0)
+    for prop in LOOK_PROPS:
+        setattr(strip, prop, NEUTRAL.get(prop, 0.0))
 
 
 def clips(scene):
@@ -505,6 +515,15 @@ def register():
                                              update=_look_changed)
     _STRIP.studio_warmth = FloatProperty(name="Warmth", description="Cooler (−) or warmer (+)", default=0.0,
                                          min=-1.0, max=1.0, update=_look_changed)
+    _STRIP.studio_tint = FloatProperty(name="Tint", description="Greener (−) or more magenta (+)", default=0.0,
+                                       min=-1.0, max=1.0, update=_look_changed)
+    _STRIP.studio_exposure = FloatProperty(name="Exposure", description="Brighter or darker in stops (+1: twice as "
+                                           "bright)", default=0.0, min=-4.0, max=4.0, soft_min=-2.0, soft_max=2.0,
+                                           update=_look_changed)
+    _STRIP.studio_shadows = FloatProperty(name="Shadows", description="The dark parts lighter (+) or deeper (−)",
+                                          default=0.0, min=-1.0, max=1.0, update=_look_changed)
+    _STRIP.studio_highlights = FloatProperty(name="Highlights", description="The bright parts brighter (+) or "
+                                             "softer (−)", default=0.0, min=-1.0, max=1.0, update=_look_changed)
 
 
 def unregister():

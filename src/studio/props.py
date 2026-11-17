@@ -554,6 +554,12 @@ class STUDIO_Settings(PropertyGroup):
     farm_on: BoolProperty(name="Render Farm", description="Every render (stills and sections) goes to the "
                           "ZHdK render farm over the DDE share and comes back by itself: stills into the "
                           "renders, a section's frames into the Video Editor", default=False, options=set())
+    farm_resend: EnumProperty(
+        name="After a Restart", options=set(), default='ASK',
+        description="Frames of a section that are neither here nor on the farm after Blender was closed",
+        items=[('ASK', "Ask", "Show what is missing and send it with one click", 'QUESTION', 0),
+               ('AUTO', "Send by Itself", "Send only the missing frames again, from the film's scene", 'PLAY', 1),
+               ('OFF', "Only Show", "Show what is missing, send nothing", 'HIDE_OFF', 2)])
     farm_mode: EnumProperty(
         name="Render Farm", options=set(),
         items=[('OFF', "This Mac", "Renders run on this Mac", 'DESKTOP', 0),

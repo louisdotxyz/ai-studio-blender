@@ -1207,9 +1207,11 @@ def cut_state():
     return film_edit.state(_cut_scene())
 
 
-def cut_look(target, brightness=None, contrast=None, saturation=None, warmth=None):
+def cut_look(target, brightness=None, contrast=None, saturation=None, warmth=None, exposure=None, shadows=None,
+             highlights=None, tint=None):
     """A clip's look; target = strip or section name, "all" (every clip) or "film" (an adjustment layer over
-    everything). brightness / contrast -100..100, saturation 0..2 (1 = as rendered), warmth -1..1."""
+    everything). Light: exposure -4..4 stops, shadows / highlights -1..1, brightness / contrast -100..100.
+    Colour: saturation 0..2 (1 = as rendered), warmth -1..1 (cooler/warmer), tint -1..1 (green/magenta)."""
     from . import film_edit
     scene = _cut_scene()
     if target == "film":
@@ -1219,7 +1221,7 @@ def cut_look(target, brightness=None, contrast=None, saturation=None, warmth=Non
     else:
         strips = [_clip(scene, target)]
     for strip in strips:
-        film_edit.set_look(strip, brightness, contrast, saturation, warmth)
+        film_edit.set_look(strip, brightness, contrast, saturation, warmth, exposure, shadows, highlights, tint)
     return {s.name: film_edit.look_of(s) for s in strips}
 
 
