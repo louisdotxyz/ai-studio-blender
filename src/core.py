@@ -838,6 +838,7 @@ def _start_run(outgoing, prefs, single=False):
     streaming_text = ""
     _started = time.monotonic()
     current_run.start()
+    autosave.write_marker()          # busy, with the task: after a crash it goes on (recovery.py)
 
 
 def _session_utilization():
@@ -1352,6 +1353,7 @@ def _handle_done(rc, stderr):
     elif rc == 0:
         _set_flag("local_down", False)
     save_current_chat()
+    autosave.write_marker()          # not busy any more
     prefs = get_prefs()
     if (rc == 0 and not was_compacting and not (run and run.cancelled) and prefs and prefs.auto_compact
             and context_fraction() >= prefs.compact_at / 100):

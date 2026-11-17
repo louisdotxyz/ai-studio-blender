@@ -703,6 +703,9 @@ def _marks_now():
                 mark(strip, frame_status(name, *found[name]), film)
 
 
+_proxied = [0.0]
+
+
 def _keep_window_scene():
     """The window always shows the 3D scene: the cut's scene is only ever in the Video Editor (Blender
     changed the window's scene to it at the top when the Video Editing workspace was opened)."""
@@ -716,6 +719,10 @@ def _keep_window_scene():
             if scene.get(FILM_KEY):
                 no_audio_clock(scene)
         _marks_now()
+        if time.monotonic() - _proxied[0] > 3.0:     # half-size previews for a smooth timeline
+            _proxied[0] = time.monotonic()
+            from . import cut_proxy
+            cut_proxy.tick()
         for space in bpy.data.workspaces:          # the Video Editor shows the cut, never the 3D scene
             shown = getattr(space, "sequencer_scene", None)
             if shown is None or shown.get(FILM_KEY) or not _is_cut_space(space):
@@ -1846,6 +1853,11 @@ def register():
                                      max=1200, options={'SKIP_SAVE'})
     wm.studio_cut_ratio = EnumProperty(name="Letterbox", items=film_edit.RATIOS, default='0', update=_ratio_changed,
                                        options={'SKIP_SAVE'})
+    from . import cut_proxy
+    wm.studio_cut_fast = BoolProperty(name="Fast Preview", default=True, update=cut_proxy.fast_changed,
+                                      description="The timeline plays half-size previews of the frames (made in "
+                                      "the background as they arrive): smooth playback. Off: the full frames. "
+                                      "Renders and the export always use the full frames", options={'SKIP_SAVE'})
     from . import cut_overlay, cut_panel, film_tools
     cut_panel.register()
     cut_overlay.register()
@@ -1869,7 +1881,7 @@ def unregister():
     cut_panel.unregister()
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
-    for prop in ("studio_cut_fade", "studio_cut_hold", "studio_cut_ratio"):
+    for prop in ("studio_cut_fade", "studio_cut_hold", "studio_cut_ratio", "studio_cut_fast"):
         if hasattr(bpy.types.WindowManager, prop):
             delattr(bpy.types.WindowManager, prop)
     from . import film_edit

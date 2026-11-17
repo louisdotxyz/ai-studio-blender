@@ -327,6 +327,25 @@ def backup_names():
 
 
 @section
+def crash_recovery():
+    recovery = mod("recovery")
+    report = os.path.join(tempfile.gettempdir(), "zz_recovery_test.crash.txt")
+    with open(report, "w", encoding="utf-8") as f:
+        f.write("bpy.ops.screen.animation_play()  # Operator\n\n# backtrace\n"
+                "9   Blender   0x0000000102 aud::CoreAudioDevice::stopSynchronizer() + 12\n")
+    crash = {"time": time.time() - 2, "file": "/x/zz_recovery_test.blend", "step": "21:30 code",
+             "busy": True, "task": "render the film again"}
+    try:
+        found = recovery.analyse(crash)
+        prompt = recovery.continue_prompt(crash, found)
+    finally:
+        os.remove(report)
+    check("after a crash: the cause from the report, the task goes on carefully",
+          found["where"] == "audio sync while playing back" and "render the film again" in prompt
+          and "FRAME_DROP" in prompt and "21:30 code" in prompt, (found, prompt[:200]))
+
+
+@section
 def configurable_names():
     autosave, studio = mod("autosave"), mod("studio")
     prefs = mod("preferences").get_prefs()
@@ -2568,6 +2587,34 @@ def motion_sections():
                   len(one) == 1 and not join and (one[0][1], one[0][2]) == cut.strip_range(scene)
                   and [r[0] for r in only] == ["02 Hero"] and [r[0] for r in each] == ["01 Intro", "02 Hero"]
                   and each[0][3] != each[1][3], (one, only, each))
+            cp, fe = mod("studio.cut_proxy"), mod("studio.film_edit")
+            hero = cut.section_strip(scene, "02 Hero")
+            folder = bpy.path.abspath(hero.directory)
+            name = hero.elements[0].filename
+            made = cp.make(os.path.join(folder, name), cp.target(folder, name)) if cp.available() else None
+            cp.tick(True)
+            px = getattr(hero, "proxy", None)
+            check("fast preview: a half-size JPEG with Blender's name, the strip uses 50 % previews from our folder",
+                  (made is None or cp.png_size(os.path.join(folder, name)) is None or (made and cp.target(folder, name).endswith(name + "_proxy.jpg")
+                                    and os.path.getsize(cp.target(folder, name)) > 0))
+                  and (not cp.available() or (hero.use_proxy and px is not None and px.build_50
+                                              and not px.build_25 and px.use_proxy_custom_directory)),
+                  (made, cp.available(), hero.use_proxy, px and px.directory))
+            cp.tick(False)
+            fe.apply_preset(hero, 'WARM')
+            warm = (round(hero.studio_warmth, 3), round(hero.studio_saturation, 3))
+            fe.copy_look_to_clipboard(hero)
+            intro_strip = cut.section_strip(scene, "01 Intro")
+            fe.paste_look([intro_strip])
+            fe.compare(scene, True)
+            muted = all(m.mute for m in hero.modifiers if m.name in (fe.LOOK_MOD, fe.COLOR_MOD))
+            fe.compare(scene, False)
+            fe.apply_preset(intro_strip, 'NEUTRAL')
+            check("look: preset, copy/paste, before/after mutes the look, neutral resets",
+                  warm == (0.35, 1.05) and abs(hero.studio_warmth - 0.35) < 1e-6 and muted
+                  and not any(m.mute for m in hero.modifiers) and intro_strip.studio_warmth == 0.0
+                  and intro_strip.studio_saturation == 1.0, (warm, muted))
+            fe.apply_preset(hero, 'NEUTRAL')
             aq = mod("studio.autoquality")
             key = aq.section_key("02 Hero")
             before = aq.next_quality(scene, key)

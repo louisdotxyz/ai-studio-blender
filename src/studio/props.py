@@ -347,8 +347,10 @@ class STUDIO_CutItem(PropertyGroup):
     section: StringProperty(name="Section", options=set())
     transition: EnumProperty(name="Transition", description="Into the next section", options=set(),
                              update=lambda s, _c: _cut_changed(s),
-                             items=(('CUT', "Cut", "A hard cut"), ('CROSS', "Cross", "Blend into the next section"),
-                                    ('BLACK', "Black", "Through black"), ('WHITE', "White", "Through white")))
+                             items=(('CUT', "Cut", "A hard cut", 'IPO_CONSTANT', 0),
+                                    ('CROSS', "Cross", "Blend into the next section", 'IPO_EASE_IN_OUT', 1),
+                                    ('BLACK', "Black", "Through black", 'RADIOBUT_ON', 2),
+                                    ('WHITE', "White", "Through white", 'RADIOBUT_OFF', 3)))
     frames: IntProperty(name="Frames", description="How long the transition lasts", default=12, min=1,
                         max=240, options=set(), update=lambda s, _c: _cut_changed(s))
     hold: IntProperty(name="Hold", description="Frames the last image stands still after the section "

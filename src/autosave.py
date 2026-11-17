@@ -42,6 +42,8 @@ import bpy
 
 CHECK_INTERVAL = 15.0     # seconds between timer checks
 RISKY_MIN_GAP = 120.0     # at most one "before risky" save per 2 minutes
+CAREFUL_GAP = 45.0        # after a crash (recovery.py): saved more often for a while
+careful_until = [0.0]
 CRITICAL_MIN_GAP = 300.0  # while memory stays critical: at most one save per 5 minutes
 BIG_FILE = 1 << 30        # a .blend from 1 GB on: saving takes long and needs memory, so …
 BIG_MIN_GAP = 900.0       # … automatic backups at most every 15 minutes …
@@ -166,16 +168,21 @@ def write_marker():
             filepath = ""
         if filepath:
             _marker["file"] = filepath
+        busy, task = False, ""
         try:
             from . import core
             if core.session_id:
                 _marker["chat"] = core.session_id
+            busy = core.current_run is not None       # Claude works on a task: it goes on after a crash
+            if busy:
+                task = next((m["text"] for m in reversed(core.messages) if m.get("role") == "user"), "")[:1500]
         except Exception:
             pass
         tmp = _marker_path() + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"time": time.time(), "file": _marker["file"], "chat": _marker["chat"],
-                       "step": state["step"], "backup": state["path"], "pid": os.getpid()}, f)
+                       "step": state["step"], "backup": state["path"], "pid": os.getpid(), "busy": busy,
+                       "task": task}, f)
         os.replace(tmp, _marker_path())
     except OSError:
         pass
@@ -215,6 +222,8 @@ def _check_marker():
     except (OSError, ValueError):
         info = {}
     pid = info.get("pid")
+    if pid == os.getpid():          # the add-on registered again in this Blender (an update): no crash
+        return
     alive = False
     if pid and pid != os.getpid():  # a second Blender may be running right now: not a crash
         try:
@@ -224,7 +233,8 @@ def _check_marker():
             alive = False
     if not alive:
         last_crash = {"time": info.get("time", 0), "file": info.get("file", ""), "chat": info.get("chat", ""),
-                      "step": info.get("step", ""), "backup": info.get("backup", "")}
+                      "step": info.get("step", ""), "backup": info.get("backup", ""),
+                      "busy": bool(info.get("busy")), "task": info.get("task", "")}
 
 
 def newest_copy(filepath):
@@ -595,7 +605,8 @@ def before_risky(reason):
     prefs = _prefs()
     if prefs is None or not prefs.autosave or not prefs.autosave_before_risky:
         return None
-    if time.time() - state["last"] < RISKY_MIN_GAP:
+    gap = CAREFUL_GAP if time.time() < careful_until[0] else RISKY_MIN_GAP
+    if time.time() - state["last"] < gap:
         return None
     return save_now(reason)
 

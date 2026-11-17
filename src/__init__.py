@@ -22,7 +22,8 @@ Architecture:
 - ``i18n``         : German translation of the UI.
 """
 
-from . import autosave, core, film_chat, i18n, live, migrate, preferences, settings, setup_flow, studio, ui, updates
+from . import (autosave, core, film_chat, i18n, live, migrate, preferences, recovery, settings, setup_flow, studio, ui,
+               updates)
 
 
 def register():
@@ -41,10 +42,12 @@ def register():
     studio.register()
     film_chat.register()
     settings.register()
+    recovery.register()             # after a crash: file, farm and the chat's task come back by themselves
     migrate.after_register(moved)
 
 
 def unregister():
+    recovery.unregister()
     settings.unregister()
     film_chat.unregister()
     studio.unregister()

@@ -353,6 +353,8 @@ def _apply_look(strip):
                                   light * (1.0 - 0.12 * w + 0.05 * t))
         lift = 1.0 + 0.25 * lo                                  # shadows up (+) or down (−)
         mod.color_balance.lift = (lift, lift, lift)
+    if _comparing[0]:                                           # "before" shown: the new look stays off
+        _mute_look(strip, True)
 
 
 def _look_changed(strip, _context):
@@ -386,6 +388,72 @@ def copy_look(source, target):
 def reset_look(strip):
     for prop in LOOK_PROPS:
         setattr(strip, prop, NEUTRAL.get(prop, 0.0))
+
+
+LOOK_PRESETS = (                     # (key, label, description, values on top of neutral)
+    ('NEUTRAL', "Neutral", "No look: as rendered", {}),
+    ('WARM', "Warm", "Warmer and a little richer", {"warmth": 0.35, "tint": 0.04, "saturation": 1.05, "contrast": 6}),
+    ('COOL', "Cool", "Cooler, a little calmer", {"warmth": -0.35, "tint": -0.03, "saturation": 0.95, "contrast": 4}),
+    ('PUNCHY', "Punchy", "More contrast and colour", {"contrast": 18, "saturation": 1.25, "shadows": -0.12,
+                                                       "highlights": 0.08}),
+    ('SOFT', "Soft", "Less contrast, open shadows, gentle highlights", {"contrast": -14, "shadows": 0.18,
+                                                                          "highlights": -0.18, "saturation": 0.9}),
+    ('BRIGHT', "Bright", "Brighter, open shadows", {"exposure": 0.35, "shadows": 0.1, "highlights": -0.05}),
+    ('MOODY', "Moody", "Darker, deeper, a little cool", {"exposure": -0.3, "contrast": 14, "shadows": -0.2,
+                                                          "saturation": 0.85, "warmth": -0.1}),
+    ('MONO', "Mono", "Black and white", {"saturation": 0.0, "contrast": 10}),
+)
+_clipboard = {}
+_comparing = [False]
+
+
+def apply_preset(strip, key):
+    values = next(p[3] for p in LOOK_PRESETS if p[0] == key)
+    for prop in LOOK_PROPS:
+        value = values.get(prop[len("studio_"):], NEUTRAL.get(prop, 0.0))
+        if abs(getattr(strip, prop) - value) > 1e-6:
+            setattr(strip, prop, value)
+
+
+def copy_look_to_clipboard(strip):
+    _clipboard.clear()
+    _clipboard.update({p: getattr(strip, p) for p in LOOK_PROPS})
+
+
+def paste_look(strips):
+    """The copied look on these strips. Returns how many."""
+    if not _clipboard:
+        return 0
+    for strip in strips:
+        for prop, value in _clipboard.items():
+            if abs(getattr(strip, prop) - value) > 1e-6:
+                setattr(strip, prop, value)
+    return len(strips)
+
+
+def _mute_look(strip, off):
+    for name in (LOOK_MOD, COLOR_MOD):
+        mod = _modifier(strip, name, None, False)
+        if mod is None:
+            continue
+        if hasattr(mod, "mute"):
+            if mod.mute != off:
+                mod.mute = off
+        elif hasattr(mod, "enable") and mod.enable == off:
+            mod.enable = not off
+    if hasattr(strip, "color_saturation"):
+        want = 1.0 if off else strip.studio_saturation
+        if abs(strip.color_saturation - want) > 1e-6:
+            strip.color_saturation = want
+
+
+def compare(scene, off):
+    """Before / after: every look of the film off (off=True: as rendered) or on again."""
+    _comparing[0] = bool(off)
+    found = film_look(scene, create=False)
+    for strip in clips(scene) + ([found] if found is not None else []):
+        cut.quiet(strip)
+        _mute_look(strip, off)
 
 
 def clips(scene):
