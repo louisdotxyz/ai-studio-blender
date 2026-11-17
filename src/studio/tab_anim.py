@@ -9,6 +9,7 @@ import bpy
 from bpy.props import StringProperty
 from bpy.types import Operator, Panel
 
+from . import anim_tracks
 from .ui_common import ANIM_TAB_ORDER, _SidebarPanel, _unpin, section
 
 HIDDEN_VALUES = {"uuid", "assets reported", "render_preset", "Explosion"}   # internal, or shown elsewhere
@@ -113,7 +114,6 @@ class STUDIO_OT_anim_track(Operator):
                 "SLOWER": "A quarter slower (longer)"}.get(props.action, cls.bl_description)
 
     def execute(self, context):
-        from . import anim_tracks
         scene = context.scene
         if self.action == 'BACK':
             anim_tracks.back_from_graph(context)
@@ -140,7 +140,7 @@ class STUDIO_OT_anim_track(Operator):
 def _draw_now(layout, scene, current):
     """What moves in the section at the playhead: one line per animated thing (camera, object, value …)
     with its frames; the chosen one below: start, length, faster/slower, curve preset, Graph Editor."""
-    from . import anim_tracks, motion
+    from . import motion
     start, end, _name = anim_tracks.section_range(scene)
     title = current[0].name if current else "Whole film"
     box = layout.box()
