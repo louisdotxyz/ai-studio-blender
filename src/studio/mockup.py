@@ -36,6 +36,7 @@ MOCK_KEY = "as_mockup"             # obj: made by the mockup (camera, ground, li
 HOLD_KEY = "as_mockup_front"       # obj in the studio scene: is in FRONT of the product in the photo (cuts it)
 OF_KEY = "studio_mockup_of"        # scene: the studio scene it was made from
 PRODUCT_COLL, FRONT_COLL = "Mockup Product", "Mockup In Front"
+REF_COLL = "Mockup Reference"        # e.g. the bike: seen over the photo to match the camera, never rendered
 GROUND, KEY_LIGHT, WORLD = "Mockup Ground", "Mockup Key", "Mockup Light"
 FORMATS = [('PHOTO', "Photo", "The photo's own format"),
            ('16:9', "16:9", "Wide; Krea fills what the photo does not cover"),
@@ -96,6 +97,10 @@ class StudioMockup(PropertyGroup):
     render: StringProperty(options={'HIDDEN'})          # the product's render the montage is made of
     result: StringProperty(options={'HIDDEN'})          # the montage
     waiting: FloatProperty(options={'HIDDEN'})          # time a render was asked for (0 = none)
+    free_camera: BoolProperty(
+        name="Matched Camera", default=False, update=_changed, options=set(),
+        description="The camera is placed by hand (Live View) or measured (e.g. from the bike's wheels): the "
+                    "sliders do not move it; your product stays where it is on the model")
     product_name: StringProperty(
         name="Product", default="product", options=set(),
         description="What the product is, in English, for Krea (\"small bike light\", \"wooden stool\")")
@@ -257,6 +262,189 @@ def solve(m, lo, hi, frame, rect, unit=1.0):
             "distance": depth * ray.length, "above_ground": above * unit, "pixels": f_px * longest / depth}
 
 
+def reference_objects(scene):
+    coll = next((c for c in scene.collection.children if c.name.startswith(REF_COLL)), None)
+    return list(coll.all_objects) if coll is not None else []
+
+
+def solve_free(m, scene, camera, bounds, unit=1.0):
+    """The camera as it is (matched by hand or measured): ground, light and world follow it. The ground is
+    under the lowest point of the reference (the bike's tyres) or of the product."""
+    lo, hi = bounds
+    pts = [o.matrix_world @ Vector(c) for o in reference_objects(scene) if o.type == 'MESH' for c in o.bound_box]
+    floor = min([p.z for p in pts] + [lo.z])
+    center = (lo + hi) / 2
+    world = camera.matrix_world
+    pos = world.translation.copy()
+    forward = -(world.to_3x3() @ Vector((0.0, 0.0, 1.0)))
+    heading = math.atan2(forward.y, forward.x) - math.pi / 2       # the photo's +Y = where the camera looks
+    to_world = Matrix.Translation((pos.x, pos.y, floor)) @ Matrix.Rotation(heading, 4, 'Z')
+    ground = Matrix.Translation((center.x, center.y, floor))
+    a, e = m.light_from, m.light_height
+    to_light = Vector((math.sin(a) * math.cos(e), -math.cos(a) * math.cos(e), math.sin(e)))
+    light = to_world.to_3x3() @ to_light.to_track_quat('Z', 'Y').to_matrix()
+    distance = (center - pos).length
+    size = hi - lo
+    f_px = camera.data.lens / 36.0 * scene.render.resolution_x
+    return {"camera": world.copy(), "lens": camera.data.lens, "ground": ground, "light": light, "to_world": to_world,
+            "distance": distance, "above_ground": (lo.z - floor) * unit,
+            "pixels": f_px * max(max(size), 1e-6) / max(1e-6, distance)}
+
+
+def set_reference(scene, objects):
+    """These objects (e.g. the bike model) are seen in the mockup over the photo, to match the camera to
+    the photo's bike; they are never rendered. An empty list takes them out again."""
+    coll = next((c for c in scene.collection.children if c.name.startswith(REF_COLL)), None)
+    if coll is None:
+        coll = bpy.data.collections.new(REF_COLL + _suffix(scene))
+        scene.collection.children.link(coll)
+        coll.hide_render = True
+    for obj in list(coll.objects):
+        coll.objects.unlink(obj)
+    from . import krea_scene
+    products = set(krea_scene.product_objects(scene))
+    for obj in objects:
+        if obj.name not in coll.objects and not obj.get(MOCK_KEY) and obj not in products:
+            coll.objects.link(obj)
+    return [o.name for o in coll.objects]
+
+
+def _rodrigues(v):
+    import numpy as np
+    angle = float(np.linalg.norm(v))
+    if angle < 1e-12:
+        return np.eye(3)
+    k = v / angle
+    K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    return np.eye(3) + math.sin(angle) * K + (1 - math.cos(angle)) * K @ K
+
+
+def _look_rotation(position, target):
+    """World → camera rotation (Blender camera: looks along -Z, Y up) for a camera at position looking at target."""
+    import numpy as np
+    forward = target - position
+    forward = forward / max(1e-9, np.linalg.norm(forward))
+    right = np.cross(forward, (0.0, 0.0, 1.0))
+    if np.linalg.norm(right) < 1e-6:
+        right = np.array((1.0, 0.0, 0.0))
+    right = right / np.linalg.norm(right)
+    up = np.cross(right, forward)
+    return np.array([right, up, -forward])          # rows: camera axes in world
+
+
+def match_points(pairs, width, height, lens=None, rect=None):
+    """The camera from points: pairs [((x, y, z) in the world, (u, v) in the photo, 0-1 from the TOP left)],
+    picture width × height, the photo at rect (x, y, w, h; y from the bottom) in it. lens: fixed (mm, 36 mm
+    sensor) or None = solved too (needs 6+ points). Returns {"matrix": camera world matrix, "lens", "rms_px",
+    "errors_px"}. Gauss-Newton from several starts around the points."""
+    import numpy as np
+    world = np.array([p[0] for p in pairs], dtype=float)
+    rx, ry, rw, rh = rect or (0, 0, width, height)
+    seen = np.array([(rx + u * rw, ry + (1.0 - v) * rh) for _p, (u, v) in pairs], dtype=float)
+    n = len(pairs)
+    if n < 4 or (lens is None and n < 6):
+        raise ValueError("At least 4 points (6 to find the lens too)")
+    center = world.mean(axis=0)
+    spread = max(0.2, float(np.linalg.norm(world - center, axis=1).max()))
+
+    def project(params):
+        R, t = _rodrigues(params[:3]), params[3:6]
+        f = (lens / 36.0 * width) if lens else math.exp(params[6])
+        cam = world @ R.T + t
+        z = np.maximum(-cam[:, 2], 1e-6)
+        return np.stack((f * cam[:, 0] / z + width / 2, f * cam[:, 1] / z + height / 2), axis=1), cam
+
+    def residual(params):
+        pts, cam = project(params)
+        r = (pts - seen).reshape(-1)
+        behind = np.maximum(0.0, cam[:, 2] + 1e-3) * 1e4            # points behind the camera: far off
+        return np.concatenate((r, behind))
+
+    best = None
+    k = 7 if lens is None else 6
+    for elevation in (0.15, 0.6):
+        for azimuth in np.linspace(0, 2 * math.pi, 8, endpoint=False):
+            for distance in (2.5 * spread, 6 * spread):
+                pos = center + distance * np.array((math.cos(azimuth) * math.cos(elevation),
+                                                    math.sin(azimuth) * math.cos(elevation), math.sin(elevation)))
+                R = _look_rotation(pos, center)
+                angle = math.acos(max(-1.0, min(1.0, (np.trace(R) - 1) / 2)))
+                axis = np.array((R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]))
+                vec = axis / (2 * math.sin(angle)) * angle if math.sin(angle) > 1e-6 else np.zeros(3)
+                params = np.concatenate((vec, -R @ pos, [math.log(35.0 / 36.0 * width)]))[:k]
+                damping = 1e-3
+                cost = float(residual(params) @ residual(params))
+                for _step in range(60):
+                    r = residual(params)
+                    J = np.empty((len(r), k))
+                    for i in range(k):
+                        d = np.zeros(k)
+                        d[i] = 1e-6 * max(1.0, abs(params[i]))
+                        J[:, i] = (residual(params + d) - r) / d[i]
+                    A = J.T @ J
+                    try:
+                        delta = np.linalg.solve(A + damping * np.diag(np.diag(A) + 1e-9), -J.T @ r)
+                    except np.linalg.LinAlgError:
+                        break
+                    trial = params + delta
+                    new_cost = float(residual(trial) @ residual(trial))
+                    if new_cost < cost:
+                        params, cost, damping = trial, new_cost, max(1e-7, damping / 3)
+                        if np.linalg.norm(delta) < 1e-9:
+                            break
+                    else:
+                        damping *= 4
+                        if damping > 1e6:
+                            break
+                pts, cam = project(params)
+                if (cam[:, 2] >= 0).any():
+                    continue
+                errors = np.linalg.norm(pts - seen, axis=1)
+                rms = float(np.sqrt((errors ** 2).mean()))
+                if best is None or rms < best[0]:
+                    best = (rms, params.copy(), errors)
+    if best is None:
+        raise ValueError("No camera found for these points")
+    rms, params, errors = best
+    R, t = _rodrigues(params[:3]), params[3:6]
+    rot = R.T
+    loc = -R.T @ t
+    matrix = [[rot[0][0], rot[0][1], rot[0][2], loc[0]], [rot[1][0], rot[1][1], rot[1][2], loc[1]],
+              [rot[2][0], rot[2][1], rot[2][2], loc[2]], [0.0, 0.0, 0.0, 1.0]]
+    f = (lens / 36.0 * width) if lens else math.exp(params[6])
+    return {"matrix": matrix, "lens": f * 36.0 / width, "rms_px": round(rms, 2),
+            "errors_px": [round(float(e), 1) for e in errors]}
+
+
+def match_camera(scene, pairs, lens=None):
+    """The mockup's camera from points of the reference (world) and where they are in the photo (0-1 from the
+    top left): see match_points. Sets it (Matched Camera) and returns its rms error in pixels with the state."""
+    m = scene.studio_mockup
+    frame, rect = frame_of(m)
+    found = match_points(pairs, frame[0], frame[1], lens, rect)
+    out = set_camera(scene, matrix=found["matrix"], lens=found["lens"])
+    out.update(match_rms_px=found["rms_px"], match_errors_px=found["errors_px"], lens_mm=round(found["lens"], 1))
+    return out
+
+
+def set_camera(scene, location=None, look_at=None, lens=None, roll=0.0, matrix=None):
+    """Places the mockup's camera directly (measured, e.g. from the bike's wheels): a world matrix, or a
+    location and the point it looks at (+ roll in degrees), and the lens (mm, 36 mm sensor). The sliders
+    do not move it any more (Matched Camera)."""
+    camera = scene.camera
+    if matrix is not None:
+        camera.matrix_world = Matrix(matrix)
+    elif location is not None and look_at is not None:
+        loc, at = Vector(location), Vector(look_at)
+        rot = (at - loc).to_track_quat('-Z', 'Y').to_matrix().to_4x4() @ Matrix.Rotation(math.radians(roll), 4, 'Z')
+        camera.matrix_world = Matrix.Translation(loc) @ rot
+    if lens:
+        camera.data.lens = float(lens)
+    scene.studio_mockup.free_camera = True
+    apply(scene)
+    return state(scene)
+
+
 def _kelvin(k):
     """A light colour (linear RGB) for a temperature, daylight = white."""
     t = max(1000.0, min(40000.0, k)) / 100.0
@@ -279,12 +467,17 @@ def apply(scene):
         return None
     frame, rect = frame_of(m)
     unit = _unit(scene)
-    found = solve(m, bounds[0], bounds[1], frame, rect, unit)
+    if m.free_camera:
+        found = solve_free(m, scene, camera, bounds, unit)
+    else:
+        found = solve(m, bounds[0], bounds[1], frame, rect, unit)
     r = scene.render
     r.resolution_x, r.resolution_y, r.resolution_percentage = frame[0], frame[1], 100
-    camera.matrix_world = found["camera"]
     cam = camera.data
-    cam.sensor_fit, cam.sensor_width, cam.lens = 'HORIZONTAL', 36.0, found["lens"]
+    if not m.free_camera:
+        camera.matrix_world = found["camera"]
+        cam.lens = found["lens"]
+    cam.sensor_fit, cam.sensor_width = 'HORIZONTAL', 36.0
     cam.clip_start = max(0.0005 / unit, found["distance"] / 200.0)
     cam.clip_end = max(cam.clip_end, found["distance"] * 50.0, 100.0 / unit)
     ground = scene.objects.get(GROUND + _suffix(scene))
@@ -487,6 +680,9 @@ def create(context, photo, source=None):
         m.light_strength = round(max(0.3, min(6.0, bright * 8.0)), 2)     # a dark photo: little light
         warm = colour[0] / max(1e-4, colour[2])
         m.light_warmth = max(2200.0, min(9000.0, 5500.0 / max(0.4, min(2.5, warm ** 0.8))))
+        bike = next(iter(reference_candidates(scene)), None)      # the bike the product is on: to match with
+        if bike is not None and any(k in bike.name.lower() for k in ("velo", "bike", "fahrrad")):
+            set_reference(scene, [o for o in bike.all_objects if o.type == 'MESH'])
     finally:
         _busy[0] = False
     apply(scene)
@@ -603,7 +799,7 @@ def _hidden_for_mask(scene):
     return [o for o in scene.objects if o not in products | front | instances and not o.hide_render], bool(front)
 
 
-def product_render(scene, longest=0):
+def product_render(scene, longest=0, only=None):
     """(h, w, 4): only the product through the mockup's camera, quickly (Workbench; with things in front of
     it EEVEE, which can cut them out). Its alpha is the product's coverage; its colours a plain shading."""
     from . import krea_scene
@@ -611,10 +807,16 @@ def product_render(scene, longest=0):
     keep = {key: getattr(r, key) for key in krea_scene.RENDER_KEYS if hasattr(r, key)}
     image_keep = (r.image_settings.file_format, r.image_settings.color_mode)
     hidden, has_front = _hidden_for_mask(scene)
+    refs = [c for c in scene.collection.children if c.name.startswith(REF_COLL)]
+    if only is not None:                                 # just these (the reference), nothing else
+        hidden = [o for o in scene.objects if o not in set(only) and not o.hide_render]
+        has_front = False
     target = os.path.join(_data_dir(), "product_%d.png" % os.getpid())
     try:
         for o in hidden:
             o.hide_render = True
+        for coll in refs:
+            coll.hide_render = only is None
         engine = 'BLENDER_WORKBENCH'
         if has_front:
             engines = {e.identifier for e in bpy.types.RenderSettings.bl_rna.properties["engine"].enum_items}
@@ -632,6 +834,8 @@ def product_render(scene, longest=0):
     finally:
         for o in hidden:
             o.hide_render = False
+        for coll in refs:
+            coll.hide_render = True
         for key, value in keep.items():
             setattr(r, key, value)
         try:
@@ -662,6 +866,12 @@ def placement_preview(scene, longest=1024):
     h, w = shaded.shape[:2]
     photo, _bars = _photo_on_frame(scene.studio_mockup, w, h)
     picture = mockup_image.compose(photo, shaded, shaded[..., 3])
+    refs = reference_objects(scene)
+    if refs:                                             # the bike model in cyan over the photo's bike
+        ghost = product_render(scene, longest, only=refs)
+        if ghost.shape[:2] == picture.shape[:2]:
+            a = (ghost[..., 3] * 0.45)[..., None]
+            picture[..., :3] = picture[..., :3] * (1.0 - a) + a * (0.0, 0.85, 1.0)
     path = os.path.join(_data_dir(), "placement_%s.jpg" % _key(scene.name))
     image = bpy.data.images.new("Mockup Placement", w, h, alpha=False)
     try:
@@ -1367,8 +1577,12 @@ class STUDIO_OT_mockup_make(Operator):
         lines = ["Mockup, all automatic – do every step yourself, without asking, and show me the result:",
                  "Mockup scene: %s" % scene.name, "Photo: %s" % bpy.path.abspath(m.photo),
                  "Where / what: %s" % (m.wish.strip() or "where the product naturally belongs in this photo"),
-                 "1. Measure the photo's camera (focal, horizon, roll, camera height) and place the product with "
-                 "api.mockup_set; check with api.mockup_look() and correct (at most 4 rounds).",
+                 ("1. The camera from the reference model (%s): MOCKUP MATCH – points of the model and the same "
+                  "points in the photo, api.mockup_match, check with api.mockup_look() (the model in cyan must lie "
+                  "on the photo's)." % ", ".join(o.name for o in reference_objects(scene)[:6])
+                  if reference_objects(scene) else
+                  "1. Measure the photo's camera (focal, horizon, roll, camera height) and place the product with "
+                  "api.mockup_set; check with api.mockup_look() and correct (at most 4 rounds)."),
                  "2. api.mockup_render(quality=\"%s\"); wait until mockup_state() has the montage." % m.quality,
                  "3. Krea, model %s (%s, ~%d credits): get_upload_url, api.mockup_krea_prepare(upload_url, wish, "
                  "model=\"%s\"), preflight, api.krea_quote; more than 100 credits: ask me first; then generate and "
@@ -1425,6 +1639,117 @@ class STUDIO_OT_mockup_refs(Operator):
                 if f.name and os.path.isfile(path) and path not in items:
                     items.append(path)
         m.refs = "\n".join(items[:4])
+        return {'FINISHED'}
+
+
+LIVE_KEY = "studio_mockup_live"        # on the screen: the area that shows the Live View (was a picture)
+
+
+def _live_area(screen):
+    want = screen.get(LIVE_KEY)
+    return next((a for a in screen.areas if a.type == 'VIEW_3D' and a.as_pointer() == want), None) if want else None
+
+
+def live_on(screen):
+    return _live_area(screen) is not None
+
+
+class STUDIO_OT_mockup_live(Operator):
+    bl_idname = "studio.mockup_live"
+    bl_label = "Live View"
+    bl_description = ("The photo with your model (and the bike as reference) in a 3D view through the mockup's "
+                      "camera: orbit, pan and zoom move the camera – you see the perspective live. Again: back "
+                      "to the picture")
+    bl_options = {'INTERNAL'}
+
+    @classmethod
+    def poll(cls, context):
+        return is_mockup(context.scene) and context.window is not None
+
+    def execute(self, context):
+        window, screen, scene = context.window, context.window.screen, context.scene
+        area = _live_area(screen)
+        if area is not None:                                       # back to the picture
+            del screen[LIVE_KEY]
+            with context.temp_override(window=window, area=area):
+                area.type = 'IMAGE_EDITOR'
+            return {'FINISHED'}
+        areas = [a for a in screen.areas if a.type in {'IMAGE_EDITOR', 'VIEW_3D'}]
+        if not areas:
+            return {'CANCELLED'}
+        area = max(areas, key=lambda a: a.width * a.height)
+        with context.temp_override(window=window, area=area):
+            area.type = 'VIEW_3D'
+        screen[LIVE_KEY] = area.as_pointer()
+        space = area.spaces.active
+        space.region_3d.view_perspective = 'CAMERA'
+        space.lock_camera = True                                    # moving the view moves the camera
+        space.show_region_ui = True
+        space.shading.type = 'SOLID'
+        space.shading.show_xray = True                              # the photo shows through the model
+        space.shading.xray_alpha = 0.45
+        space.overlay.show_floor = space.overlay.show_axis_x = space.overlay.show_axis_y = False
+        scene.studio_mockup.free_camera = True
+        region = next((r for r in area.regions if r.type == 'WINDOW'), None)
+        if region is not None:
+            with context.temp_override(window=window, area=area, region=region):
+                try:
+                    bpy.ops.view3d.view_center_camera()
+                except RuntimeError:
+                    pass
+        self.report({'INFO'}, "Move the view: the camera follows. Match the model to the photo, then Render")
+        return {'FINISHED'}
+
+
+def reference_candidates(scene):
+    """Collections of the studio scenes that hold meshes and could be the reference (the bike first)."""
+    found = []
+    for coll in bpy.data.collections:
+        name = coll.name.lower()
+        if coll.name.startswith(("Mockup", "ENV |")) or not any(o.type == 'MESH' for o in coll.all_objects):
+            continue
+        found.append(coll)
+    bike = ("velo", "bike", "fahrrad", "rad", "scan")
+    return sorted(found, key=lambda c: (not any(k in c.name.lower() for k in bike), c.name.lower()))
+
+
+class STUDIO_MT_mockup_reference(bpy.types.Menu):
+    bl_idname = "STUDIO_MT_mockup_reference"
+    bl_label = "Reference"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator(STUDIO_OT_mockup_reference.bl_idname, text="Selected Objects", icon='RESTRICT_SELECT_OFF')
+        layout.separator()
+        for coll in reference_candidates(context.scene)[:25]:
+            layout.operator(STUDIO_OT_mockup_reference.bl_idname, text=coll.name, icon='OUTLINER_COLLECTION',
+                            translate=False).collection = coll.name
+        layout.separator()
+        layout.operator(STUDIO_OT_mockup_reference.bl_idname, text="None", icon='X').clear = True
+
+
+class STUDIO_OT_mockup_reference(Operator):
+    bl_idname = "studio.mockup_reference"
+    bl_label = "Reference"
+    bl_description = ("A model to match the photo with (e.g. the bike): seen over the photo, never rendered. "
+                      "When it lines up with the photo's bike, your product sits exactly right")
+    bl_options = {'INTERNAL', 'UNDO'}
+
+    collection: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    clear: BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    def execute(self, context):
+        scene = context.scene
+        if self.clear:
+            objects = []
+        elif self.collection:
+            coll = bpy.data.collections.get(self.collection)
+            objects = [o for o in coll.all_objects if o.type == 'MESH'] if coll else []
+        else:
+            objects = [o for o in context.selected_objects if o.type == 'MESH']
+        names = set_reference(scene, objects)
+        apply(scene)
+        self.report({'INFO'}, "Reference: %d objects" % len(names))
         return {'FINISHED'}
 
 
@@ -1492,6 +1817,13 @@ def draw(layout, context, compact=False):
     except (OSError, ValueError):
         info = {}
         _info(layout, "The photo is missing", 'ERROR', True)
+    refs_model = reference_objects(scene)
+    row = layout.row(align=True)
+    row.scale_y = 1.2
+    row.menu(STUDIO_MT_mockup_reference.bl_idname, icon='MOD_WIREFRAME',
+             text="Match to: %s" % ("%d objects" % len(refs_model) if refs_model else "nothing (choose the bike)"))
+    row.operator(STUDIO_OT_mockup_live.bl_idname, text="Live View", icon='HIDE_OFF',
+                 depress=context.window is not None and live_on(context.window.screen))
     # the simple way: a sentence (optional), pictures, model, a few choices, go
     row = layout.row(align=True)
     row.scale_y = 1.3
@@ -1694,7 +2026,8 @@ class STUDIO_PT_mockup_on(Panel):
 
 classes = (StudioMockup, STUDIO_OT_mockup_new, STUDIO_OT_mockup_go, STUDIO_OT_mockup_place, STUDIO_OT_mockup_render,
            STUDIO_OT_mockup_fspy, STUDIO_OT_mockup_front, STUDIO_OT_mockup_krea, STUDIO_OT_mockup_ask,
-           STUDIO_OT_mockup_make, STUDIO_OT_mockup_refs, STUDIO_PT_mockup, STUDIO_PT_mockup_on)
+           STUDIO_OT_mockup_make, STUDIO_OT_mockup_refs, STUDIO_OT_mockup_live, STUDIO_OT_mockup_reference,
+           STUDIO_MT_mockup_reference, STUDIO_PT_mockup, STUDIO_PT_mockup_on)
 
 
 def register():

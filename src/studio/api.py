@@ -342,6 +342,42 @@ def mockup_look(scene=None, longest=1024):
     return mockup.placement_preview(_mockup_scene(scene), longest)
 
 
+def mockup_reference(names=None, collection=None, scene=None):
+    """A model to match the photo with, e.g. the bike (object names or a collection's name): seen in cyan over
+    the photo in mockup_look() and in the Live View, never rendered. names=[] takes it out. Returns the names."""
+    from . import mockup
+    found = _mockup_scene(scene)
+    if collection:
+        coll = bpy.data.collections.get(collection)
+        if coll is None:
+            raise ValueError("No collection %r" % collection)
+        objects = [o for o in coll.all_objects if o.type == 'MESH']
+    else:
+        objects = [bpy.data.objects[n] for n in (names or []) if n in bpy.data.objects]
+    out = mockup.set_reference(found, objects)
+    mockup.apply(found)
+    return out
+
+
+def mockup_camera(location=None, look_at=None, lens=None, roll=0.0, matrix=None, scene=None):
+    """Places the mockup's camera directly, in the studio scene's world (where the bike model is): location
+    and the point it looks at (metres, + roll in degrees) or a 4x4 world matrix, and the lens (mm, 36 mm sensor).
+    For a camera measured from the photo (e.g. the bike's wheel ellipses against the bike model). The sliders
+    do not move it any more. Returns mockup_state(); check with mockup_look()."""
+    from . import mockup
+    return mockup.set_camera(_mockup_scene(scene), location, look_at, lens, roll, matrix)
+
+
+def mockup_match(pairs, lens=None, scene=None):
+    """The camera measured from points: pairs [[[x, y, z], [u, v]], ...] – a point of the reference model in the
+    world (metres; e.g. the bike's axles, the top of each tyre, bottom bracket, saddle) and where the same point
+    is in the photo (u, v: 0-1 from the photo's TOP left). 4+ points with lens (mm) given, 6+ to find the lens
+    too. Sets the camera (Matched Camera) and returns mockup_state() with "match_rms_px" (good < 8 px at 2K)
+    and the error of each point (a large one: that point is wrong – correct or leave it out)."""
+    from . import mockup
+    return mockup.match_camera(_mockup_scene(scene), pairs, lens)
+
+
 def mockup_render(scene=None, quality="LOW"):
     """Renders the product in the background (quality LOW or HIGH); the montage with the photo follows by
     itself (…_mockup.png next to the render, mockup_state()["result"]). Check with api.render_status()."""

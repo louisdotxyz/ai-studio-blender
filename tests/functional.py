@@ -1080,6 +1080,21 @@ def photo_adjust_tools():
                           close_up_url="https://c", ref_urls=["https://r1", "https://r2"])
     check("mockup: pictures for Krea go with the montage (after the close-up)",
           body["image_urls"] == ["https://m", "https://c", "https://r1", "https://r2"], body["image_urls"])
+    # the camera measured from points of a model (the bike): back to where it was
+    import math as _m
+    W, H, f = 2000, 1500, 28 / 36 * 2000
+    pos, target = np.array([2.5, -1.2, 1.1]), np.array([0.0, -0.45, 0.4])
+    R = mock._look_rotation(pos, target)
+    pts = [(0, -0.927, 0.339), (0, 0.022, 0.344), (0, -0.927, 0.674), (0, 0.022, 0.679), (0, -0.927, 0.004),
+           (0, 0.022, 0.009), (0, -0.45, 0.3), (0.25, 0.1, 1.0), (-0.25, 0.1, 1.0)]
+    pairs = []
+    for p in pts:
+        c = R @ np.array(p) - R @ pos
+        pairs.append((p, ((f * c[0] / -c[2] + W / 2) / W, 1 - (f * c[1] / -c[2] + H / 2) / H)))
+    got = mock.match_points(pairs, W, H)
+    loc = [row[3] for row in got["matrix"][:3]]
+    check("mockup: the camera measured from the bike's points (position and lens)",
+          got["rms_px"] < 0.5 and abs(got["lens"] - 28) < 0.3 and _m.dist(loc, pos) < 0.01, (got["rms_px"], got["lens"], loc))
     # a set for a presentation: numbered pictures and an overview
     folder = os.path.join(TMP, "set_test")
     files = pv.export_set([src, res], folder, size=100)
