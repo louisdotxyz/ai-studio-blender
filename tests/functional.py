@@ -2602,6 +2602,22 @@ def motion_sections():
                   and (not cp.available() or (hero.use_proxy and px is not None and px.build_50
                                               and not px.build_25 and px.use_proxy_custom_directory)),
                   (px_made, cp.available(), hero.use_proxy, px and px.directory))
+            if cp.available():
+                px_real = [e.filename for e in hero.elements]
+                keep_ready = dict(cp._ready)
+                cp._want["on"] = True
+                cp._ready[os.path.normpath(px_folder)] = {px_real[0]}
+                px_shown = cut.fast_shown(px_folder, px_real)
+                cut.show(hero, px_real, px_real)
+                px_kept = json.loads(hero.get(cp.REAL_KEY, "[]"))
+                cp._ready.clear()
+                cp._ready.update(keep_ready)
+                check("Film tab: frames without a preview yet show the nearest preview, the real frames are kept "
+                      "for the export", px_shown == [px_real[0]] * len(px_real) and px_kept == px_real
+                      and all(e.filename == px_real[0] for e in hero.elements), (px_shown[:3], px_kept[:3]))
+                for e, n in zip(hero.elements, px_real):
+                    e.filename = n
+                del hero[cp.REAL_KEY]
             cp.tick(False)
             fe.apply_preset(hero, 'WARM')
             px_warm = (round(hero.studio_warmth, 3), round(hero.studio_saturation, 3))

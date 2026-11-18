@@ -13,6 +13,7 @@ playback stuttered and the read-ahead never caught up; a half-size JPEG is read 
 Blender is only touched in tick() (main thread); the files are checked and made in a thread."""
 
 import hashlib
+import json
 import os
 import shutil
 import struct
@@ -34,6 +35,9 @@ _changed = set()                            # folders whose previews went (Blend
 _status = {"left": 0, "made": 0, "error": ""}
 _thread = [None]
 _applied = {}                               # strip pointer → folder it was set up for
+_ready = {}                                 # folder → names whose preview is there and current
+_new_ready = set()                          # folders with new previews since the last tick
+REAL_KEY = "studio_real"                    # on a section strip: its real frame names (it shows previews)
 
 
 def available():
@@ -88,6 +92,7 @@ def _scan(folders):
     todo, gone = [], set()
     now = time.time()
     for folder, names in folders:
+        ready = set()
         for name in names:
             src = os.path.join(folder, name)
             try:
@@ -102,6 +107,7 @@ def _scan(folders):
             except OSError:
                 d = None
             if d is not None and d >= s:
+                ready.add(name)
                 continue
             if d is not None:                      # the frame was rendered again: no old preview meanwhile
                 try:
@@ -110,6 +116,10 @@ def _scan(folders):
                 except OSError:
                     pass
             todo.append((src, dst))
+        with _lock:
+            if _ready.get(folder) != ready:
+                _new_ready.add(folder)
+            _ready[folder] = ready
     return todo, gone
 
 
@@ -138,9 +148,14 @@ def _loop():
             if _wake.is_set():                     # new frames or another order: look again first
                 break
             batch = todo[start:start + WORKERS * 4]
-            for ok in pool.map(lambda pair: make(*pair), batch):
+            for (src, dst), ok in zip(batch, pool.map(lambda pair: make(*pair), batch)):
                 _status["made"] += 1 if ok else 0
                 _status["left"] = max(0, _status["left"] - 1)
+                if ok:
+                    folder = os.path.dirname(src)
+                    with _lock:
+                        _ready.setdefault(folder, set()).add(os.path.basename(src))
+                        _new_ready.add(folder)
         if time.time() - pruned > 6 * 3600:
             pruned = time.time()
             prune()
@@ -172,6 +187,18 @@ def _start():
     if _thread[0] is None or not _thread[0].is_alive():
         _thread[0] = threading.Thread(target=_loop, daemon=True, name="ai-studio-proxies")
         _thread[0].start()
+
+
+def active():
+    """The timeline shows previews (Fast Preview on, previews can be made here)."""
+    return bool(_want["on"]) and available()
+
+
+def ready_names(folder):
+    """The frames of a folder whose preview is there (None: not looked yet)."""
+    with _lock:
+        found = _ready.get(os.path.normpath(folder)) or _ready.get(folder)
+        return set(found) if found is not None else None
 
 
 def left():
@@ -237,9 +264,10 @@ def tick(on=None):
         strips.sort(key=lambda s: not (s.frame_final_start <= here < s.frame_final_end))
         for strip in strips:
             try:
-                directory = bpy.path.abspath(strip.directory)
-                names = tuple(dict.fromkeys(e.filename for e in strip.elements))
-            except (AttributeError, ReferenceError):
+                directory = os.path.normpath(bpy.path.abspath(strip.directory))
+                real = strip.get(REAL_KEY)              # the real frames (the strip may show previews held)
+                names = tuple(dict.fromkeys(json.loads(real) if real else (e.filename for e in strip.elements)))
+            except (AttributeError, ReferenceError, ValueError):
                 continue
             _setup(strip, directory, on)
             folders.append((directory, names))
@@ -265,6 +293,12 @@ def tick(on=None):
                     pass
     if on and folders:
         _start()
+    with _lock:
+        fresh = bool(_new_ready)
+        _new_ready.clear()
+    if fresh or _want.get("shown_on") != on:     # new previews (or switched): the strips show them
+        _want["shown_on"] = on
+        cut.show_previews()
 
 
 def fast_changed(wm, _context):

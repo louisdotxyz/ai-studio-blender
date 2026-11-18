@@ -980,11 +980,55 @@ def sync(scene):
                 if _get(strip, SECTION_KEY) == name and _get(strip, KIND_KEY) in {"SECTION", "HOLD", "FREEZE"}:
                     _fit(scene, strip, data["width"])
                     if _get(strip, KIND_KEY) == "SECTION" and data["shown"]:
-                        _point_to(strip, data["names"], data["shown"])
+                        show(strip, data["names"], data["shown"])
                         mark(strip, data, scene)
     repair(scene)
     _reload(scene)
     return "synced"
+
+
+def fast_shown(folder, shown):
+    """What the timeline shows: with Fast Preview each frame shows its preview (half size, fast); a frame
+    whose preview is not made yet shows the nearest one before it that is (never the 4K PNG – Louis: the
+    single frames are for the background, the Film tab needs a fast, editable preview). The export uses the
+    real frames (REAL_KEY)."""
+    from . import cut_proxy
+    if not cut_proxy.active():
+        return shown
+    ready = cut_proxy.ready_names(os.path.normpath(folder))
+    if not ready:
+        return shown                                # no preview yet at all: the frames themselves
+    return shown_names(shown, ready) or shown
+
+
+def show(strip, names, shown):
+    """The strip points at what the timeline shows (fast_shown) and keeps its real frames."""
+    from .cut_proxy import REAL_KEY
+    folder = bpy.path.abspath(strip.directory)
+    display = fast_shown(folder, shown)
+    _point_to(strip, names, display)
+    if display != shown:
+        real = json.dumps(list(shown))
+        if strip.get(REAL_KEY) != real:
+            strip[REAL_KEY] = real
+    elif REAL_KEY in strip:
+        del strip[REAL_KEY]
+
+
+def show_previews():
+    """(main thread, cut_proxy.tick) New previews made / Fast Preview switched: the section strips show
+    them."""
+    from .cut_proxy import REAL_KEY
+    for ed in [s for s in bpy.data.scenes if s.get(FILM_KEY)]:
+        for strip in ours(film_scene(ed)):
+            if strip.type != 'IMAGE' or _get(strip, KIND_KEY) != "SECTION":
+                continue
+            try:
+                real = strip.get(REAL_KEY)
+                shown = json.loads(real) if real else [e.filename for e in strip.elements]
+                show(strip, shown, shown)
+            except (ValueError, AttributeError, ReferenceError, RuntimeError) as ex:
+                print("AI Studio: previews:", ex)
 
 
 def _point_to(strip, names, shown):
@@ -1337,6 +1381,15 @@ def step(*a):
     n[0] += 1; put(state='rendering', done=n[0], per_frame=(time.time() - t0) / n[0])
 bpy.app.handlers.render_write.append(step)
 sc = bpy.context.scene
+for s in (sc.sequence_editor.strips_all if hasattr(sc.sequence_editor, "strips_all") else []):
+    real = s.get("studio_real")                # the timeline showed previews: the export takes the frames
+    if real:
+        real = json.loads(real)
+        if len(real) == len(s.elements):
+            for e, name in zip(s.elements, real):
+                e.filename = name
+    if getattr(s, "use_proxy", False):
+        s.use_proxy = False
 def named(P):                               # <P>0001-0108.mp4 -> <P>.mp4
     made = [f for f in glob.glob(glob.escape(P) + '*') if re.fullmatch(r'\d+-\d+\.(mp4|mov|webm|mkv)', f[len(P):])]
     if not made:
