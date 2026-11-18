@@ -2919,8 +2919,9 @@ def render_farm_folder():
     open(os.path.join(root, "queue", "a_job.done"), "w").close()
     check("farm off: the queue renders on this Mac", not farm.takes(bpy.context.scene, None))
     check("farm: .done → done; job names are safe", farm.scan(root)["jobs"][0]["state"] == 'done'
-          and farm.job_name("/x/VELO now.blend", "Szene 1", 0).startswith("VELO_now_19")
-          and farm.job_name("/x/VELO now.blend", "Szene 1", 0).endswith("_Szene_1"))
+          and farm.job_name("/x/VELO now.blend", "Szene 1", 0).startswith("2_19")
+          and farm.job_name("/x/VELO now.blend", "Szene 1", 0).endswith("_VELO_now_Szene_1")
+          and farm.job_name("/x/a.blend", "s", 0, 'LOW') < farm.job_name("/x/a.blend", "s", -999, 'HIGH'))
     packed = os.path.join(root, "packed.blend")             # an upload that broke off goes on where it stopped
     with open(packed, "wb") as f:
         f.write(os.urandom(3 * farm.CHUNK + 1234))

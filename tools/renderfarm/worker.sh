@@ -11,6 +11,8 @@
 #        Start, Jobs, Pakete mit Zeit, Server weg/zurueck, Ende mit Grund. Beim Start steht drin, wie die
 #        letzte Sitzung endete (sauber, Abmelden, Neustart, Ausschalten, Schlaf) und welche Regeln der Mac
 #        hat (automatisch abmelden nach, geplantes Ausschalten): so sieht AI Studio, warum Macs wegfallen.
+#        Low Quality vor High Quality: nach jedem Paket schaut der Mac, ob ein Job weiter vorne wartet
+#        (Namen 1_… = LQ vor 2_… = HQ) und wechselt dorthin; Pakete dauern hoechstens ~10 min.
 
 ROOT="${RF_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"   # vom Start gesetzt (lokale Kopie)
 VERSION=$(cat "$ROOT/_worker/VERSION" 2>/dev/null || echo "?")
@@ -58,6 +60,14 @@ control() {   # liest _worker/control.json: farm an/aus, ende standby/abmelden/h
   python3 -c "import json,sys;c=json.load(open(sys.argv[1]));print(c.get('farm','an'),c.get('ende','standby'),int(c.get('seit',0)),int(c.get('abmelden_nach',0)))" "$ROOT/_worker/control.json" 2>/dev/null || echo "an standby 0 0"
 }
 LAST_WORK=$(date +%s)
+first_open() { # der Job, der jetzt dran ist: der erste nach Namen mit Datei und ohne .done
+  local J JOB
+  for J in "$Q"/*.json; do
+    [ -e "$J" ] || continue
+    JOB=$(basename "$J" .json)
+    [ -f "$Q/$JOB.blend" ] && [ ! -f "$Q/$JOB.done" ] && { echo "$JOB"; return; }
+  done
+}
 frames_done() { find "$OUT/$1" -type f -size +0 2>/dev/null | wc -l | tr -d ' '; }
 bar() {       # [########............] fuer done/total
   local n=0 i s=""; [ "$2" -gt 0 ] && n=$((20 * $1 / $2)); [ $n -gt 20 ] && n=20
@@ -202,7 +212,7 @@ while true; do
     fi
     ARGS=(-b "$LB" --factory-startup); [ "$SCENE" != "-" ] && ARGS+=(-S "$SCENE")
     # in Paketen zu je CHUNK Frames rendern: so reagiert der Worker schnell auf "Farm aus"
-    CHUNK=20; STOPPED=0
+    CHUNK=20; STOPPED=0; PREEMPT=0
     for ((CS=START; CS<=END; CS+=CHUNK)); do
       CE=$((CS + CHUNK - 1)); [ $CE -gt $END ] && CE=$END
       FREE=0; for ((f=CS; f<=CE; f++)); do ls "$OUT/$JOB/${JOB}_$(printf %04d $f)".* >/dev/null 2>&1 || { FREE=1; break; }; done
@@ -221,10 +231,19 @@ while true; do
             esac
           done
       RC=${PIPESTATUS[0]}; D1=$(frames_done "$JOB")
-      log "PAKET $JOB $CS-$CE | $((D1 - D0)) neue Frames | $(( $(date +%s) - PK0 )) s | Blender-Code $RC"
+      SECS=$(( $(date +%s) - PK0 )); NEW=$((D1 - D0))
+      log "PAKET $JOB $CS-$CE | $NEW neue Frames | $SECS s | Blender-Code $RC"
       if [ $(( $(date +%s) - BEAT )) -ge 300 ]; then BEAT=$(date +%s); sync_log; fi
+      # Pakete von hoechstens ~10 min: so kommt ein neuer Low-Quality-Job bald dran
+      [ $NEW -gt 0 ] && { SPF=$(( SECS / NEW )); [ $SPF -lt 1 ] && SPF=1; CHUNK=$(( 600 / SPF ))
+                          [ $CHUNK -lt 1 ] && CHUNK=1; [ $CHUNK -gt 20 ] && CHUNK=20; }
+      NEXT=$(first_open)
+      if [ -n "$NEXT" ] && [ "$NEXT" != "$JOB" ] && [[ "$NEXT" < "$JOB" ]]; then
+        log "WECHSEL zu $NEXT (steht vor $JOB)"; PREEMPT=1; break
+      fi
     done
     LAST_WORK=$(date +%s)
+    [ $PREEMPT = 1 ] && continue 2                 # von vorne: der Job weiter vorne zuerst
     [ $STOPPED = 1 ] && { log "PAUSE Job $JOB (Farm aus)"; echo "$(date +%H:%M) Farm aus - Job $JOB pausiert"; continue; }
     DONE=$(frames_done "$JOB")
     if [ "$DONE" -ge "$TOTAL" ]; then

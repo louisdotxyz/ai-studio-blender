@@ -239,13 +239,24 @@ def connected(root=None):
     return _conn["ok"]
 
 
-def job_name(blend_path, scene_name, now=None):
-    """<file>_<YYYYmmdd-HHMMSS>_<scene>, only letters, digits, - and _. The time comes before the scene:
-    the workers take the job that sorts first, so jobs render in the order they were sent."""
+PRIORITY = {'LOW': 1, 'DRAFT': 1, 'POSTER': 1, 'STILL': 1, 'HIGH': 2}   # the workers take the job that sorts
+#                                                                     first: Low Quality before High Quality
+
+
+def job_name(blend_path, scene_name, now=None, quality='HIGH'):
+    """<priority>_<YYYYmmdd-HHMMSS>_<file>_<scene>, only letters, digits, - and _. The workers take the job
+    that sorts first (and look again after every package): Low Quality (1) before High Quality (2), each in
+    the order sent. Jobs of before (<file>_<time>_<scene>) sort after both."""
     stem = os.path.splitext(os.path.basename(blend_path or "untitled"))[0] or "untitled"
     stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now))
-    name = "%s_%s_%s" % (stem, stamp, scene_name)
+    name = "%d_%s_%s_%s" % (PRIORITY.get(quality, 2), stamp, stem, scene_name)
     return re.sub(r"[^A-Za-z0-9_\-]+", "_", name).strip("_")
+
+
+def age_key(name):
+    """For "which job is newer": the time in the name (old and new names compare right)."""
+    m = re.search(r"(\d{8}-\d{6})", name or "")
+    return (m.group(1) if m else "", name or "")
 
 
 def _done_files(folder, job):
@@ -400,12 +411,12 @@ def _retire_strays(root, view):
     newest = {}
     for job in list(_jobs):
         if job["phase"] in {"queued", "packing", "packed", "copying", "retry", "sent"} and job.get("note"):
-            newest[job["note"]] = max(newest.get(job["note"], ""), job["job"])
+            newest[job["note"]] = max(newest.get(job["note"], ""), job["job"], key=age_key)
     known = {j["job"] for j in _jobs}
     for seen in view.get("jobs", []):
         if seen["job"] in known or seen["state"] == 'done' or seen.get("sent_by") != me:
             continue
-        if seen.get("note") in newest and seen["job"] < newest[seen["note"]]:
+        if seen.get("note") in newest and age_key(seen["job"]) < age_key(newest[seen["note"]]):
             ext = EXTENSIONS.get(seen.get("format"), "png")
             renders = os.path.join(root, "renders", seen["job"])
             try:
@@ -578,7 +589,7 @@ def takes(scene, item):
         return False
     if where == 'FARM':
         return connected()
-    if item.mode != 'ANIM' or not enabled(scene) or not connected():
+    if not enabled(scene) or getattr(item, "mode", "") != 'ANIM' or not connected():
         return False
     return frames_of(item) == 0 or frames_of(item) > SHORT
 
@@ -783,7 +794,7 @@ def _adopt(root, prefix, host, sections, known, archive):
             continue
         note = cfg.get("note", "")
         section = note.split(" · ")[0]
-        if section in sections and (note not in newest or job > newest[note][0]):
+        if section in sections and (note not in newest or age_key(job) > age_key(newest[note][0])):
             newest[note] = (job, cfg)
     found = []
     for note, (job, cfg) in newest.items():
@@ -954,7 +965,8 @@ def submit(scene, start, end, fmt=None, note="", kind='MANUAL', overrides=None, 
         raise ValueError("The last frame is before the first")
     overrides = [[p, v] for p, v in (overrides or []) if p != "render.filepath"]
     fmt = fmt or _format_of(overrides)
-    name = job_name(bpy.data.filepath, extra.get("section") or scene.name)
+    name = job_name(bpy.data.filepath, extra.get("section") or scene.name,
+                    quality='STILL' if kind == 'STILL' else (extra.get("quality") or 'HIGH'))
     while any(j["job"] == name for j in _jobs):
         name += "x"
     job = {"job": name, "scene": scene.name, "kind": kind, "start": int(start), "end": int(end), "format": fmt,
@@ -965,7 +977,14 @@ def submit(scene, start, end, fmt=None, note="", kind='MANUAL', overrides=None, 
            "have": 0, "blend": bpy.data.filepath, "added": time.time(),
            "sent_by": "%s@%s" % (getpass.getuser(), socket.gethostname().split(".")[0])}
     job.update(extra)
-    _jobs.append(job)
+    if PRIORITY.get(job.get("quality"), 2) == 1 or kind == 'STILL':   # Low Quality goes before every High
+        at = next((n for n, j in enumerate(_jobs) if j["phase"] != "done"            # Quality job, also one
+                   and PRIORITY.get(j.get("quality"), 2) == 2                         # rendering now (the
+                   and j.get("kind") != 'STILL'), len(_jobs))                         # Macs switch after
+        #                                                                             their package)
+        _jobs.insert(at, job)
+    else:
+        _jobs.append(job)
     try:                                          # found again after a restart (with its half upload)
         os.makedirs(os.path.join(LOCAL, name), exist_ok=True)
         with open(os.path.join(LOCAL, name, "job.json"), "w", encoding="utf-8") as f:
