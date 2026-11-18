@@ -42,9 +42,9 @@ FORMATS = [('PHOTO', "Photo", "The photo's own format"),
            ('3:2', "3:2", ""), ('4:3', "4:3", ""), ('1:1', "1:1", ""), ('4:5', "4:5", ""), ('9:16', "9:16", "")]
 KREA_MODELS = [
     ('REGION', "Blend In", "Krea 3, only inside the product's box: light, shadow and grain are matched, the rest "
-                           "of the photo stays pixel for pixel (about 36 credits)"),
+                           "of the photo stays pixel for pixel (about 77 credits at 2K)"),
     ('NANO21', "Whole Picture", "Nano Banana 2.1 paints the whole picture anew from your montage: for night, "
-                                "another mood or filling a wider format (about 33 credits). People and things "
+                                "another mood or filling a wider format (about 44 credits at 2K). People and things "
                                 "can change a little; your product is put back afterwards"),
     ('PRECISE', "Around It", "Ideogram 4.5 Precise changes everything but the product (a mask keeps it as it "
                              "is): another environment, weather, time of day (about 163 credits)"),
@@ -922,7 +922,7 @@ def krea_plan(scene, wish=None, model=None):
 
 
 MODEL_PATHS = {'REGION': "krea/krea-3", 'NANO21': "google/nano-banana-2.1", 'PRECISE': "ideogram/ideogram-4.5-precise"}
-UNITS = {'REGION': 36, 'NANO21': 33, 'PRECISE': 163}
+UNITS = {'REGION': 77, 'NANO21': 44, 'PRECISE': 163}     # Krea's quotes at 2K, Nov 2026
 
 
 def krea_body(plan, image_url, mask_url="", close_up_url=""):
@@ -1396,7 +1396,7 @@ def draw(layout, context, compact=False):
 
     box = layout.box()
     head = box.row(align=True)
-    head.label(text="Product in the Photo", icon='OBJECT_ORIGIN')
+    head.label(text="Product", icon='OBJECT_ORIGIN')
     if context.area is not None and context.area.type == 'VIEW_3D':
         head.operator(STUDIO_OT_mockup_place.bl_idname, text="Place", icon='VIEW_PAN')
     col = box.column(align=True)
@@ -1413,9 +1413,9 @@ def draw(layout, context, compact=False):
     row.prop(m, "tilt", slider=True)
     row.prop(m, "lean", slider=True)
     if info.get("product_px") is not None:
-        _info(box, "%s cm · %d px · %.2f m away · %.2f m above the ground" % (
-            " × ".join("%g" % v for v in info["product_cm"]), info["product_px"], info["distance_m"],
-            info["above_ground_m"]))
+        _info(box, "%s cm · %d px in the picture" % (" × ".join("%g" % v for v in info["product_cm"]),
+                                                     info["product_px"]))
+        _info(box, "%.2f m away · %.2f m above the ground" % (info["distance_m"], info["above_ground_m"]))
     row = box.row(align=True)
     row.prop(m, "product_name", text="", icon='FONT_DATA')
     row.operator(STUDIO_OT_mockup_front.bl_idname, text="", icon='MOD_MASK')
