@@ -283,7 +283,7 @@ def photo_shot():
 
 def idle():
     """One tick for Blender to draw what the step before changed."""
-    for area in view()[0].screen.areas:
+    for area in bpy.context.window_manager.windows[0].screen.areas:
         area.tag_redraw()
 
 
