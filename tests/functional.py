@@ -2617,7 +2617,8 @@ def motion_sections():
                   and not any(m.mute for m in hero.modifiers) and px_intro_strip.studio_warmth == 0.0
                   and px_intro_strip.studio_saturation == 1.0, (px_warm, px_muted))
             fe.apply_preset(hero, 'NEUTRAL')
-            ca = mod("studio.cut_auto")
+            import importlib
+            ca = importlib.import_module(PKG + ".studio.cut_auto")
             px_any = ca.ready(scene, "01 Intro", 'ANY')
             px_high = ca.ready(scene, "01 Intro", 'HIGH')
             px_src = os.path.join(TMP, "auto_src.mp4")
