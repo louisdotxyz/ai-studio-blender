@@ -26,7 +26,7 @@ import os
 import time
 
 import bpy
-from bpy.props import BoolProperty, EnumProperty, FloatProperty, StringProperty
+from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, IntProperty, StringProperty
 from bpy.types import Operator, Panel, PropertyGroup
 from mathutils import Matrix, Vector
 
@@ -1402,10 +1402,10 @@ class STUDIO_OT_mockup_refs(Operator):
     bl_options = {'INTERNAL'}
 
     directory: StringProperty(subtype='DIR_PATH', options={'SKIP_SAVE'})
-    files: bpy.props.CollectionProperty(type=bpy.types.OperatorFileListElement, options={'SKIP_SAVE'})
+    files: CollectionProperty(type=bpy.types.OperatorFileListElement, options={'SKIP_SAVE'})
     filter_image: BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
     filter_folder: BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
-    remove: bpy.props.IntProperty(default=-1, options={'HIDDEN', 'SKIP_SAVE'})
+    remove: IntProperty(default=-1, options={'HIDDEN', 'SKIP_SAVE'})
 
     def invoke(self, context, _event):
         if self.remove >= 0:
