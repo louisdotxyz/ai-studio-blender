@@ -1525,8 +1525,12 @@ class STUDIO_PT_mockup(Panel):
 
 
 class STUDIO_PT_mockup_photo(STUDIO_PT_mockup):
-    """The same start in the Photo workspace's image editor (its Studio sidebar)."""
+    """The same start in the Photo workspace's image editor: from 4.32 its Mockup tab draws it (one place)."""
     bl_space_type = 'IMAGE_EDITOR'
+
+    @classmethod
+    def poll(cls, context):
+        return False
 
 
 class STUDIO_PT_mockup_on(Panel):

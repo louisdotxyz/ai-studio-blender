@@ -281,6 +281,77 @@ def photo_shot():
           opened and kinds == ['IMAGE_EDITOR', 'NODE_EDITOR'], kinds)
 
 
+def _photo():
+    win = bpy.context.window_manager.windows[0]
+    area = max((a for a in win.screen.areas if a.type == 'IMAGE_EDITOR'), key=lambda a: a.width * a.height)
+    return win, area
+
+
+def photo_fit():
+    """A 4K picture fills the editor (not shown at 100 %); the compositor goes away again."""
+    win = bpy.context.window_manager.windows[0]
+    pv = mod("studio.photo_view")
+    with bpy.context.temp_override(window=win, screen=win.screen):
+        if pv.compositor_open(win.screen):
+            pv.toggle_compositor(win)
+    big = os.path.join(OUT, "big_render.png")
+    img = bpy.data.images.new("gui big", 3840, 2160)
+    img.filepath_raw, img.file_format = big, 'PNG'
+    img.save()
+    bpy.data.images.remove(img)
+    state["big"] = big
+    pv._want["key"] = ("file", big)
+    pv._apply()
+
+
+def photo_fit_check():
+    _win, area = _photo()
+    space = area.spaces.active
+    zoom = space.zoom[0]
+    check("photo: a 4K render is fitted into the editor, not shown at 100 %",
+          space.image is not None and space.image.size[0] == 3840 and zoom < 0.6, round(zoom, 3))
+
+
+def _tab(name, picture):
+    def step():
+        bpy.context.window_manager.studio_photo_tab = name
+        for area in bpy.context.window_manager.windows[0].screen.areas:
+            area.tag_redraw()
+    def snap():
+        win, area = _photo()
+        with bpy.context.temp_override(window=win, screen=win.screen, area=area):
+            bpy.ops.screen.screenshot(filepath=os.path.join(OUT, picture))
+    step.__name__, snap.__name__ = "photo_tab_" + name.lower(), "photo_shot_" + name.lower()
+    return step, snap
+
+
+def photo_send():
+    """Adjust: a note goes to the chat with a screenshot of the picture, without the sidebar."""
+    win, area = _photo()
+    ui_menus = sys.modules[PKG + ".ui_menus"]
+    sent = state.setdefault("sent", [])
+    state["send_real"] = ui_menus._send_prompt
+    ui_menus._send_prompt = lambda wm: sent.append(wm.claude_prompt)
+    bpy.context.window_manager.studio_photo_note = "make the light warmer"
+    region = next(r for r in area.regions if r.type == 'WINDOW')
+    with bpy.context.temp_override(window=win, screen=win.screen, area=area, region=region):
+        bpy.ops.studio.photo_send(path=state["big"])
+
+
+def photo_sent():
+    win, area = _photo()
+    sys.modules[PKG + ".ui_menus"]._send_prompt = state["send_real"]
+    core = sys.modules[PKG + ".core"]
+    shots_ = [a["path"] for a in core.attachments if "_note_" in os.path.basename(a["path"])]
+    text = (state.get("sent") or [""])[-1]
+    check("photo: Adjust sends the note and the picture (a screenshot without the sidebar) to Claude",
+          "make the light warmer" in text and "big_render" in text and shots_ and os.path.isfile(shots_[0])
+          and area.spaces.active.show_region_ui and not bpy.context.window_manager.studio_photo_note,
+          (text[:80], shots_))
+    for path in shots_:
+        core.attachments[:] = [a for a in core.attachments if a["path"] != path]
+
+
 def idle():
     """One tick for Blender to draw what the step before changed."""
     for area in bpy.context.window_manager.windows[0].screen.areas:
@@ -290,7 +361,12 @@ def idle():
 STEPS = [splash_away, splash_gone, setup, tool_on, tool_hover, click_press, click_release, placed, ctrl_press,
          ctrl_release, new_light, studio_tab, studio_tab_press, studio_tab_release, idle, panel, idle, camera_tab,
          idle, idle, camera_shot, idle, idle, material_shot, idle, idle, mockup_make, idle, idle, idle, mockup_shot, idle, photo_open, idle,
-         photo_tidy, idle, idle, photo_shot, finish]
+         photo_tidy, idle, idle, photo_shot, idle, photo_fit, idle, photo_fit_check]
+for _name, _pic in (('ADJUST', "11_adjust.png"), ('LOOK', "12_look.png"), ('MOCKUP', "13_mockup.png"),
+                    ('SORT', "14_sort.png")):
+    _step, _snap = _tab(_name, _pic)
+    STEPS += [_step, idle, _snap]
+STEPS += [photo_send, idle, idle, idle, photo_sent, finish]
 
 
 def tick():
@@ -312,4 +388,4 @@ def watchdog():
 
 log("START")
 bpy.app.timers.register(tick, first_interval=2.0)
-bpy.app.timers.register(watchdog, first_interval=90.0)
+bpy.app.timers.register(watchdog, first_interval=120.0)

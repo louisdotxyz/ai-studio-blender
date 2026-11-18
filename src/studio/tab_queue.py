@@ -1192,8 +1192,9 @@ def _draw_pick(layout, context, images, path):
 
 class STUDIO_PT_review(Panel):
     """The Photo workspace's one sidebar (Image Editor › Studio); the picked picture is big next to it.
-    Top to bottom, in the order of the work: pick and compare · adjust (look, light, colour) · Krea ·
-    mockup · export · all renders."""
+    Four tabs, the steps of the work: Sort (rate, sort, compare, export) · Adjust (draw on the picture,
+    a note, send it to Claude) · Look (all settings of the look and of this picture) · Mockup (Krea and
+    the product in a photo). The picked picture stays on top in all of them."""
     bl_space_type = 'IMAGE_EDITOR'
     bl_region_type = 'UI'
     bl_category = "Studio"
@@ -1206,35 +1207,45 @@ class STUDIO_PT_review(Panel):
         from .ui_common import section
         photo_view.check_layout(context)
         scene = context.scene
-        head = layout.row(align=True)
-        head.scale_y = 1.2
-        sort = next(label for key, label, _i in render_review.SORTS if key == render_review.state["sort"])
-        head.menu(STUDIO_MT_render_arrange.bl_idname, text=sort, icon='FILTER')
-        op = head.operator(photo_view.STUDIO_OT_photo_layout.bl_idname, text="", icon='NODE_COMPOSITING',
-                           depress=photo_view.compositor_open(context.screen))
+        wm = context.window_manager
+        tab = wm.studio_photo_tab
+        head = layout.row(align=True)                    # the four steps, and the view's buttons
+        head.scale_y = 1.3
+        head.prop(wm, "studio_photo_tab", expand=True)
+        tools = head.row(align=True)
+        tools.operator(photo_view.STUDIO_OT_photo_fit.bl_idname, text="", icon='ZOOM_ALL')
+        op = tools.operator(photo_view.STUDIO_OT_photo_layout.bl_idname, text="", icon='NODE_COMPOSITING',
+                            depress=photo_view.compositor_open(context.screen))
         op.action = 'LOOK'
-        head.operator(photo_view.STUDIO_OT_photo_layout.bl_idname, text="", icon='FULLSCREEN_ENTER').action = 'TIDY'
-        head.popover(STUDIO_PT_output.__name__, text="", icon='PREFERENCES')
-        draw_queue(layout, context)
+        tools.popover(STUDIO_PT_output.__name__, text="", icon='PREFERENCES')
+        # no queue here: its bars came and went while rendering and moved everything below (Render tab)
         images = runner.queue_images(scene)
         path = _selected_image(images)
         a, b = (_ab[k] if _ab[k] and os.path.isfile(_ab[k]) else "" for k in ("A", "B"))
         photo_view.want(context, image_edit.preview_file(scene, path) if path else "", a, b)
         _draw_pick(layout, context, images, path)
-        box, _head, is_open = section(layout, "photo_compare", "Compare", 'IMAGE_REFERENCE')
-        if is_open:
-            photo_view.draw_compare(box, context, a, b)
-        tab_finish.draw_look(layout, context)                # the look (compositor: the next renders)
-        tab_finish._draw_adjust(layout, context, path)       # light and colour of this picture
-        tab_finish._draw_krea(layout, context, path)
-        box, _head, is_open = section(layout, "mockup", "Mockup: Product in a Photo", 'IMAGE_REFERENCE',
-                                      default_open=mockup.is_mockup(scene))
-        if is_open:
-            mockup.draw(box, context)
-        box, _head, is_open = section(layout, "photo_export", "Export", 'EXPORT', default_open=False)
-        if is_open:
-            photo_view.draw_export(box, context, path)
-        _draw_overview(layout, context, images, path)
+        if tab == 'SORT':
+            box, _head, is_open = section(layout, "photo_compare", "Compare", 'IMAGE_REFERENCE')
+            if is_open:
+                photo_view.draw_compare(box, context, a, b)
+            row = layout.row(align=True)
+            sort = next(label for key, label, _i in render_review.SORTS if key == render_review.state["sort"])
+            row.menu(STUDIO_MT_render_arrange.bl_idname, text=sort, icon='FILTER')
+            _draw_overview(layout, context, images, path)
+            box, _head, is_open = section(layout, "photo_export", "Export", 'EXPORT', default_open=False)
+            if is_open:
+                photo_view.draw_export(box, context, path)
+        elif tab == 'ADJUST':
+            photo_view.draw_notes(layout, context, path)
+        elif tab == 'LOOK':
+            tab_finish.draw_look(layout, context)            # the look (compositor: the next renders)
+            tab_finish._draw_adjust(layout, context, path)   # light and colour of this picture
+        else:
+            tab_finish._draw_krea(layout, context, path)
+            box, _head, is_open = section(layout, "mockup", "Mockup: Product in a Photo", 'IMAGE_REFERENCE',
+                                          default_open=True)
+            if is_open:
+                mockup.draw(box, context)
 
 
 class STUDIO_PT_render_queue(_SidebarPanel, Panel):

@@ -110,6 +110,7 @@ def _apply():
         for area, space in _editors(window):
             if space.image != image:
                 space.image = image
+            fit(window, area)                        # the whole picture, as big as the editor allows
             area.tag_redraw()
     old = bpy.data.images.get(_shown.get("temp") or "")
     _shown["temp"] = image.name if os.sep + "finish" + os.sep in image.filepath else ""
@@ -117,6 +118,28 @@ def _apply():
         old.user_clear()
         bpy.data.images.remove(old)
     return None
+
+
+def fit(window, area):
+    """The picture fills the editor (Blender would show it at 100 %: a 4K render far too big)."""
+    try:
+        with _override(window, area):
+            if bpy.ops.image.view_all.poll():
+                bpy.ops.image.view_all(fit_view=True)
+    except (RuntimeError, TypeError) as ex:
+        print("AI Studio: Photo view fit:", ex)
+
+
+class STUDIO_OT_photo_fit(Operator):
+    bl_idname = "studio.photo_fit"
+    bl_label = "Fit"
+    bl_description = "Show the whole picture, as big as it fits"
+    bl_options = {'INTERNAL'}
+
+    def execute(self, context):
+        for area, _space in _editors(context.window):
+            fit(context.window, area)
+        return {'FINISHED'}
 
 
 def _split_changed(_self, _context):
@@ -299,6 +322,223 @@ def draw_compare(layout, context, a, b):
     names.label(text="B  %s" % tab_queue._title(b), translate=False)
 
 
+# ------------------------------------------------------------------ notes: draw, write, send to Claude
+
+ANNOTATE = "builtin.annotate"
+_send = {"step": 0, "path": "", "shot": "", "note": "", "area": 0, "keep": None}
+
+
+def _picture_area(window):
+    areas = [a for a in window.screen.areas if a.type == 'IMAGE_EDITOR']
+    return max(areas, key=lambda a: a.width * a.height) if areas else None
+
+
+def drawing(context):
+    """Is the annotate pen the active tool of the picture?"""
+    try:
+        tool = context.workspace.tools.from_space_image_mode('VIEW', create=False)
+        return tool is not None and tool.idname == ANNOTATE
+    except (AttributeError, TypeError):
+        return False
+
+
+def marks(window):
+    """The annotation of the picture (or None) and how many strokes it has."""
+    area = _picture_area(window)
+    data = getattr(area.spaces.active, "annotation", None) if area else None
+    count = 0
+    if data is not None:
+        for layer in data.layers:
+            for frame in layer.frames:
+                count += len(frame.strokes)
+    return data, count
+
+
+def clear_marks(window):
+    data, _count = marks(window)
+    if data is not None:
+        bpy.data.annotations.remove(data)
+
+
+class STUDIO_OT_photo_draw(Operator):
+    bl_idname = "studio.photo_draw"
+    bl_label = "Draw"
+    bl_description = "Draw on the picture (marks for Claude); again to stop drawing"
+    bl_options = {'INTERNAL'}
+
+    action: EnumProperty(items=[('PEN', "Pen", ""), ('UNDO', "Undo", ""), ('CLEAR', "Clear", "")])
+
+    def execute(self, context):
+        window = context.window
+        area = _picture_area(window)
+        if area is None:
+            return {'CANCELLED'}
+        if self.action == 'CLEAR':
+            clear_marks(window)
+        elif self.action == 'UNDO':
+            data, _count = marks(window)
+            for layer in reversed(list(data.layers) if data else []):
+                frame = layer.active_frame or (layer.frames[-1] if len(layer.frames) else None)
+                if frame is not None and len(frame.strokes):
+                    frame.strokes.remove(frame.strokes[-1])
+                    break
+        else:
+            space = area.spaces.active
+            if space.ui_mode != 'VIEW':
+                space.ui_mode = 'VIEW'
+            with _override(window, area):
+                bpy.ops.wm.tool_set_by_id(name="builtin.select_box" if drawing(context) else ANNOTATE,
+                                          space_type='IMAGE_EDITOR')
+        area.tag_redraw()
+        return {'FINISHED'}
+
+
+def _restore(window, area):
+    keep = _send.get("keep")
+    if keep and area is not None:
+        space = area.spaces.active
+        space.show_region_ui = keep[0]
+        if hasattr(space, "show_gizmo"):
+            space.show_gizmo = keep[1]
+        fit(window, area)
+    _send["keep"] = None
+
+
+def _find_area(pointer):
+    wm = bpy.context.window_manager
+    for window in (wm.windows if wm else ()):
+        for area in window.screen.areas:
+            if area.as_pointer() == pointer:
+                return window, area
+    return None, None
+
+
+def send_text(path, note, marked):
+    """The message for Claude: which picture, the note, and that the marks are in the attached picture."""
+    from . import tab_queue
+    name = tab_queue._title(path) if path else "the picture"
+    parts = ["Feedback on the render %s (%s)." % (name, path) if path else "Feedback on the picture."]
+    if marked:
+        parts.append("The attached picture shows it with my marks drawn on it.")
+    if note.strip():
+        parts.append("My note: " + note.strip())
+    parts.append("Change the scene accordingly (only what I marked or wrote), then render it again with the "
+                 "same camera and show me the result.")
+    return " ".join(parts)
+
+
+def _send_step():
+    """1: fit the picture without the sidebar · 2: the screenshot (picture with the marks) · 3: to the chat."""
+    window, area = _find_area(_send["area"])
+    if area is None:
+        _send["step"] = 0
+        return None
+    if _send["step"] == 1:
+        fit(window, area)
+        area.tag_redraw()
+        _send["step"] = 2
+        return 0.3
+    shot = ""
+    try:
+        os.makedirs(os.path.dirname(_send["shot"]), exist_ok=True)
+        with _override(window, area):
+            bpy.ops.screen.screenshot_area(filepath=_send["shot"])
+        shot = _send["shot"] if os.path.isfile(_send["shot"]) else ""
+    except (RuntimeError, TypeError) as ex:
+        print("AI Studio: screenshot of the picture:", ex)
+    _restore(window, area)
+    _data, count = marks(window)
+    try:
+        from .. import core, ui_menus
+        attach = shot or (_send["path"] if os.path.isfile(_send["path"]) else "")
+        if attach:
+            core.add_attachment(attach)
+        wm = bpy.context.window_manager
+        wm.claude_prompt = send_text(_send["path"], _send["note"], bool(shot and count))
+        ui_menus._send_prompt(wm)
+        wm.studio_photo_note = ""
+        clear_marks(window)
+    except Exception as ex:
+        print("AI Studio: send to Claude:", ex)
+    _send["step"] = 0
+    return None
+
+
+class STUDIO_OT_photo_send(Operator):
+    bl_idname = "studio.photo_send"
+    bl_label = "Send to Claude"
+    bl_description = ("The picture with your marks and your note go to the chat: Claude changes the scene and "
+                      "renders it again")
+    bl_options = {'INTERNAL'}
+
+    path: bpy.props.StringProperty(options={'SKIP_SAVE'})
+
+    def execute(self, context):
+        window = context.window
+        area = _picture_area(window)
+        _data, count = marks(window)
+        note = context.window_manager.studio_photo_note
+        if not count and not note.strip():
+            self.report({'WARNING'}, "Draw on the picture or write a note first")
+            return {'CANCELLED'}
+        if _send["step"]:
+            return {'CANCELLED'}
+        import time
+        folder = os.path.join(os.path.dirname(self.path), "Notes") if self.path else bpy.app.tempdir
+        stem = os.path.splitext(os.path.basename(self.path))[0] if self.path else "picture"
+        _send.update(step=1, path=self.path, note=note, area=area.as_pointer() if area else 0,
+                     shot=os.path.join(folder, "%s_note_%s.png" % (stem, time.strftime("%H%M%S"))))
+        if area is None:
+            _send["step"] = 2
+        else:
+            space = area.spaces.active
+            _send["keep"] = (space.show_region_ui, getattr(space, "show_gizmo", True))
+            space.show_region_ui = False                 # only the picture in the screenshot
+            if hasattr(space, "show_gizmo"):
+                space.show_gizmo = False
+            if drawing(context):
+                with _override(window, area):
+                    bpy.ops.wm.tool_set_by_id(name="builtin.select_box", space_type='IMAGE_EDITOR')
+        bpy.app.timers.register(_send_step, first_interval=0.25)
+        self.report({'INFO'}, "Sent to Claude (see the Claude tab)")
+        return {'FINISHED'}
+
+
+def draw_notes(layout, context, path):
+    """Adjust: draw on the picture, write a note, send both to Claude."""
+    wm = context.window_manager
+    _data, count = marks(context.window)
+    box = layout.box()
+    col = box.column(align=True)
+    row = col.row(align=True)
+    row.scale_y = 1.4
+    on = drawing(context)
+    row.operator(STUDIO_OT_photo_draw.bl_idname, text="Stop Drawing" if on else "Draw on the Picture",
+                 icon='GREASEPENCIL', depress=on).action = 'PEN'
+    sub = row.row(align=True)
+    sub.enabled = count > 0
+    sub.operator(STUDIO_OT_photo_draw.bl_idname, text="", icon='LOOP_BACK').action = 'UNDO'
+    sub.operator(STUDIO_OT_photo_draw.bl_idname, text="", icon='TRASH').action = 'CLEAR'
+    data, _c = marks(context.window)
+    layer = data.layers.active if data is not None and len(data.layers) else None
+    if layer is not None:
+        row = col.row(align=True)
+        row.prop(layer, "color", text="")
+        row.prop(layer, "thickness", text="Line")
+    hint = box.row()
+    hint.active = False
+    hint.label(text="%d marks · drag on the picture" % count if count else "Circle what should change",
+               icon='INFO')
+    try:
+        box.prop(wm, "studio_photo_note", text="", icon='TEXT', placeholder="What should change?")
+    except TypeError:
+        box.prop(wm, "studio_photo_note", text="", icon='TEXT')
+    row = box.row(align=True)
+    row.scale_y = 1.5
+    row.enabled = bool(count or wm.studio_photo_note.strip()) and not _send["step"]
+    row.operator(STUDIO_OT_photo_send.bl_idname, icon='EXPORT').path = path or ""
+
+
 # ------------------------------------------------------------------ export
 
 SIZES = [('ORIGINAL', "Original", "As it is"), ('3840', "4K", "Longest side 3840 px"),
@@ -375,7 +615,8 @@ def draw_export(layout, context, path):
     row.prop(wm, "studio_export_stars", text="")
 
 
-classes = (STUDIO_OT_photo_layout, STUDIO_OT_photo_compare, STUDIO_OT_photo_export)
+classes = (STUDIO_OT_photo_layout, STUDIO_OT_photo_compare, STUDIO_OT_photo_export, STUDIO_OT_photo_fit,
+           STUDIO_OT_photo_draw, STUDIO_OT_photo_send)
 
 
 def register():
@@ -388,6 +629,15 @@ def register():
     wm.studio_compare_split = FloatProperty(
         name="Line", description="Where the line between A and B is", default=0.5, min=0.0, max=1.0,
         subtype='FACTOR', options={'SKIP_SAVE'}, update=_split_changed)
+    wm.studio_photo_tab = EnumProperty(
+        name="Tab", options={'SKIP_SAVE'}, default='SORT',
+        items=[('SORT', "Sort", "Rate, sort and compare the renders", 'SORTSIZE', 0),
+               ('ADJUST', "Adjust", "Draw on the picture and write a note: Claude changes the scene", 'GREASEPENCIL', 1),
+               ('LOOK', "Look", "All settings of the look: exposure, colour, glow, effects", 'COLOR', 2),
+               ('MOCKUP', "Mockup", "Krea and the product in a photo", 'IMAGE_REFERENCE', 3)])
+    wm.studio_photo_note = bpy.props.StringProperty(
+        name="Note", description="What should change (Claude gets it with the picture and your marks)",
+        options={'SKIP_SAVE'})
     wm.studio_export_format = EnumProperty(
         name="Format", options={'SKIP_SAVE'}, default='JPEG',
         items=[('JPEG', "JPG", "Small files, for slides, the web and e-mail"), ('PNG', "PNG", "Lossless, with alpha")])
@@ -400,12 +650,13 @@ def register():
 
 
 def unregister():
-    for timer in (_apply, _auto_tidy):
+    for timer in (_apply, _auto_tidy, _send_step):
         if bpy.app.timers.is_registered(timer):
             bpy.app.timers.unregister(timer)
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
     wm = bpy.types.WindowManager
-    for name in ("studio_compare", "studio_compare_split", "studio_export_format", "studio_export_size",
+    for name in ("studio_compare", "studio_compare_split", "studio_photo_tab", "studio_photo_note",
+                 "studio_export_format", "studio_export_size",
                  "studio_export_stars"):
         delattr(wm, name)

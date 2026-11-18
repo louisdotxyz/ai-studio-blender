@@ -264,6 +264,25 @@ def _queue_busy():
     return RUN.preparing
 
 
+_last_camera = {}
+
+
+def _lights_may_change(scene, depsgraph):
+    """Light sets only follow when objects, collections or the camera changed – not on every update of the
+    scene alone (Exposure, the look, the compositor): switching layer collections between those many
+    updates of a dragged slider crashed Blender (deg_check_base_in_depsgraph)."""
+    cam = scene.camera.name if scene.camera else ""
+    if _last_camera.get(scene.name) != cam:
+        _last_camera[scene.name] = cam
+        return True
+    if depsgraph is None:
+        return True
+    try:
+        return depsgraph.id_type_updated('OBJECT') or depsgraph.id_type_updated('COLLECTION')
+    except (AttributeError, TypeError):
+        return True
+
+
 @bpy.app.handlers.persistent
 def on_depsgraph_update(scene, _depsgraph=None):
     if _queue_busy():
@@ -271,9 +290,10 @@ def on_depsgraph_update(scene, _depsgraph=None):
     try:
         sync_scene(scene)
         check_view_changed(scene)
-        from . import lightsets
-        lightsets.guard_lights(scene)     # before Light Wrangler's timer looks at the active light
-        lightsets.schedule_follow(scene)  # only the lights of the camera you look through
+        if _lights_may_change(scene, _depsgraph):
+            from . import lightsets
+            lightsets.guard_lights(scene)     # before Light Wrangler's timer looks at the active light
+            lightsets.schedule_follow(scene)  # only the lights of the camera you look through
         from . import background
         background.sync(scene)   # e.g. another World or view transform: update the color
     except Exception as ex:  # nie den Depsgraph-Update blockieren
