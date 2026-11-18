@@ -1055,7 +1055,7 @@ def mockup_photo():
         cy, cx = int(ys.mean()), int(xs.mean())
         check("mockup: a quick look and the montage (photo behind, product on it) at the picture's size",
               os.path.isfile(look) and got.shape == (400, 600, 4) and abs(cx / 600 - 0.25) < 0.03
-              and abs(float(got[2, 2, 2]) - 0.5) < 0.03 and abs(float(got[cy, cx, 2]) - 0.5) > 0.05
+              and abs(float(got[2, 2, 0]) - 0.2) < 0.03 and abs(float(got[cy, cx, 0]) - 0.2) > 0.05
               and float(got[..., 3].min()) == 1.0, (got.shape, cx, cy, got[2, 2], got[cy, cx]))
         before = float(got[cy, cx, :3].mean())
         api.mockup_set(scene=scene.name, exposure=-2.0)
@@ -1086,6 +1086,15 @@ def mockup_photo():
               mock.krea_body(wide_plan, "u")["thinking_level"] == "minimal"
               and wide_plan["prompt"].startswith("Turn image 1 into one realistic photograph")
               and "Keep exactly the same" in wide_plan["prompt"], wide_plan["prompt"])
+        scene.cycles.samples = 8
+        api.mockup_render(scene=scene.name, quality='LOW')     # the queue (it renders at once without a window)
+        mock._after_render()
+        st = api.mockup_state(scene=scene.name)
+        queued = mock._read(st["result"]) if st["result"] and os.path.isfile(st["result"]) else None
+        check("mockup: Render goes through the queue (transparent, in the background), the montage follows",
+              queued is not None and st["render"] != raw and float(queued[..., 3].min()) == 1.0
+              and abs(queued.shape[1] / queued.shape[0] - 1.5) < 0.02 and abs(float(queued[2, 2, 0]) - 0.2) < 0.03,
+              (st["render"], st["result"], None if queued is None else queued.shape))
         skill = open(os.path.join(os.path.dirname(mod("core").__file__), "skills_default", "mockup.md"),
                      encoding="utf-8").read()
         check("mockup: its skill checks its own look and asks Krea's price first", "mockup_look" in skill

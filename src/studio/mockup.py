@@ -23,7 +23,6 @@ import hashlib
 import json
 import math
 import os
-import re
 import time
 
 import bpy
@@ -667,64 +666,70 @@ def placement_preview(scene, longest=1024):
     return path
 
 
-RAW = re.compile(r"_(mockup|krea_\d+|edit_\d+)(_|\.)")
-
-
-def _newest_render(scene):
-    from . import runner
-    runner._images_cache["time"] = 0.0
-    from . import core, krea_scene
-    key = krea_scene._plain(core.safe_name(scene.camera.name)) if scene.camera else ""
-    for path in runner.queue_images(scene):
-        name = os.path.basename(path)
-        if not RAW.search(name) and (not key or key in krea_scene._plain(name)):
-            return path
-    return ""
-
-
 def render(scene, quality='LOW'):
     """Renders the product (transparent, in the background through the render queue). The montage follows
     by itself when it is done."""
+    from . import runner
     m = scene.studio_mockup
     apply(scene)
+    try:
+        scene.studio.still_format = 'PNG'
+        scene.studio.background_mode = 'TRANSPARENT'
+    except (AttributeError, TypeError):
+        pass
     with bpy.context.temp_override(scene=scene):
         result = bpy.ops.studio.add(quality=quality)
     if 'FINISHED' not in result:
         raise RuntimeError("The render could not be started")
     m.waiting = time.time()
-    if not bpy.app.timers.is_registered(_watch):
-        bpy.app.timers.register(_watch, first_interval=1.0)
+    if not runner.RUN.busy:
+        runner.RUN.start(scene)
+    elif runner.RUN.scene_name != scene.name and not bpy.app.timers.is_registered(_watch):
+        bpy.app.timers.register(_watch, first_interval=2.0)   # another scene renders: this one after it
     return "rendering"
 
 
 def _watch():
-    """Timer: a mockup's render is done → its montage."""
+    """Timer: the queue was busy with another scene; a waiting mockup starts when it is free."""
     from . import runner
-    waiting = [s for s in mockups() if s.studio_mockup.waiting]
+    waiting = [s for s in mockups() if s.studio_mockup.waiting and len(s.studio.items)]
     if not waiting:
         return None
-    for scene in waiting:
-        m = scene.studio_mockup
-        if time.time() - m.waiting > 3600:
-            m.waiting = 0.0
-            continue
-        if runner.RUN.busy and runner.RUN.scene_name == scene.name:
-            continue
-        path = _newest_render(scene)
+    if not runner.RUN.busy:
         try:
-            fresh = path and os.path.getmtime(path) >= m.waiting - 2 and path.lower().endswith(".png")
-        except OSError:
-            fresh = False
-        if not fresh:
-            if time.time() - m.waiting > 20 and not runner.RUN.busy:
-                m.waiting = 0.0                           # nothing came (cancelled or failed)
+            runner.RUN.start(waiting[0])
+        except RuntimeError as ex:
+            print("AI Studio mockup:", ex)
+            waiting[0].studio_mockup.waiting = 0.0
+    return 2.0
+
+
+_pending = []
+
+
+def on_saved(path, _camera, _quality, animation):
+    """(runner.on_render_saved) A mockup scene's render is saved: its montage, a moment later."""
+    from . import runner
+    scene = bpy.data.scenes.get(runner.RUN.scene_name)
+    if animation or scene is None or not is_mockup(scene) or not str(path).lower().endswith(".png"):
+        return
+    _pending.append((scene.name, path))
+    if not bpy.app.timers.is_registered(_after_render):
+        bpy.app.timers.register(_after_render, first_interval=0.3)
+
+
+def _after_render():
+    while _pending:
+        name, path = _pending.pop(0)
+        scene = bpy.data.scenes.get(name)
+        if scene is None:
             continue
-        m.waiting = 0.0
+        scene.studio_mockup.waiting = 0.0
         try:
             use_render(scene, path)
         except Exception as ex:
             print("AI Studio mockup: montage:", ex)
-    return 1.0
+    return None
 
 
 def _alpha_file(render_path):
@@ -887,7 +892,7 @@ def krea_plan(scene, wish=None, model=None):
     _write(padded, send)
     plan = {"key": key, "send": send, "size": [W, H], "crop": [x0, y0, w, h], "montage": m.result, "ratio": ratio,
             "mask": "", "close_up": "", "box": None, "fidelity": m.fidelity, "exact": m.exact}
-    padded_cover = np.pad(np.maximum(cover, whole * 0.999), ((y0, H - h - y0), (x0, W - w - x0)))
+    padded_cover = np.pad(np.maximum(cover, (whole > 0.25) * 1.0), ((y0, H - h - y0), (x0, W - w - x0)))
     if key == 'REGION':
         plan["box"] = mockup_image.box_of(padded_cover)
         if plan["box"] is None:
@@ -1445,7 +1450,7 @@ def draw(layout, context, compact=False):
     row.operator(STUDIO_OT_mockup_render.bl_idname, text="Look", icon='HIDE_OFF').look = True
     row.operator(STUDIO_OT_mockup_render.bl_idname, text="Render", icon='RENDER_STILL').quality = 'LOW'
     row.operator(STUDIO_OT_mockup_render.bl_idname, text="HQ", icon='RENDER_RESULT').quality = 'HIGH'
-    if m.waiting or (runner.RUN.busy and runner.RUN.scene_name == scene.name):
+    if runner.RUN.busy and (runner.RUN.scene_name == scene.name or m.waiting):
         _info(layout, "Rendering the product… the montage follows", 'TIME')
 
     box = layout.box()
@@ -1513,10 +1518,16 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.Scene.studio_mockup = bpy.props.PointerProperty(type=StudioMockup)
+    from . import runner
+    if on_saved not in runner.on_render_saved:
+        runner.on_render_saved.append(on_saved)
 
 
 def unregister():
-    for timer in (_watch, _montage_timer):
+    from . import runner
+    if on_saved in runner.on_render_saved:
+        runner.on_render_saved.remove(on_saved)
+    for timer in (_watch, _montage_timer, _after_render):
         if bpy.app.timers.is_registered(timer):
             bpy.app.timers.unregister(timer)
     del bpy.types.Scene.studio_mockup

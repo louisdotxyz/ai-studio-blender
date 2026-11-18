@@ -147,9 +147,13 @@ def compose(photo, render, product, values=None, seed=1):
     if v["glow"] > 0:                                  # what shines on the product spills over the photo
         lin = to_linear(rgb) * cover[..., None]
         bright = np.maximum(lin - 0.6, 0.0)
-        r = max(w, h) / 40.0
-        halo = blur(bright, r) * 1.2 + blur(bright, r / 4.0) * 0.8
-        out = to_srgb(to_linear(out) + halo * float(v["glow"]) * 2.0).astype(np.float32)
+        peak = float(bright.max())
+        if peak > 1e-4:                                # a halo as bright as its source, however small that is
+            halo = 0.0
+            for r, weight in ((max(w, h) / 30.0, 0.6), (max(w, h) / 120.0, 0.8)):
+                soft = blur(bright, r)
+                halo = halo + soft * (weight * peak / max(float(soft.max()), 1e-6))
+            out = to_srgb(to_linear(out) + halo * float(v["glow"])).astype(np.float32)
     if v["grain"] > 0:                                 # the photo has its grain, the render gets the same
         rng = np.random.default_rng(seed)
         noise = rng.normal(0.0, 1.0, (h, w, 1)).astype(np.float32)

@@ -49,6 +49,7 @@ r.filepath, r.image_settings.file_format, r.image_settings.color_mode = raw, 'PN
 m_scene.cycles.samples = 48
 bpy.ops.render.render(write_still=True, scene=m_scene.name)
 print("MONTAGE", mock.use_render(m_scene, raw))
+shutil.copy(mock.montage_path(raw), os.path.join(out, "2_montage.png"))
 mock.set_values(m_scene, glow=0.5, grain=0.4, night=0.6, soften=0.4)
 shutil.copy(mock.montage_path(raw), os.path.join(out, "3_night.png"))
 plan = mock.krea_plan(m_scene, "at night", 'REGION')
