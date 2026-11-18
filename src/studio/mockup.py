@@ -349,7 +349,8 @@ def match_points(pairs, width, height, lens=None, rect=None):
 
     def project(params):
         R, t = _rodrigues(params[:3]), params[3:6]
-        f = (lens / 36.0 * width) if lens else math.exp(params[6])
+        f = (lens / 36.0 * width) if lens else math.exp(min(max(params[6], math.log(0.1 * width)),
+                                                                 math.log(40.0 * width)))   # 4-1400 mm
         cam = world @ R.T + t
         z = np.maximum(-cam[:, 2], 1e-6)
         return np.stack((f * cam[:, 0] / z + width / 2, f * cam[:, 1] / z + height / 2), axis=1), cam
@@ -411,7 +412,7 @@ def match_points(pairs, width, height, lens=None, rect=None):
     loc = -R.T @ t
     matrix = [[rot[0][0], rot[0][1], rot[0][2], loc[0]], [rot[1][0], rot[1][1], rot[1][2], loc[1]],
               [rot[2][0], rot[2][1], rot[2][2], loc[2]], [0.0, 0.0, 0.0, 1.0]]
-    f = (lens / 36.0 * width) if lens else math.exp(params[6])
+    f = (lens / 36.0 * width) if lens else math.exp(min(max(params[6], math.log(0.1 * width)), math.log(40.0 * width)))
     return {"matrix": matrix, "lens": f * 36.0 / width, "rms_px": round(rms, 2),
             "errors_px": [round(float(e), 1) for e in errors]}
 
