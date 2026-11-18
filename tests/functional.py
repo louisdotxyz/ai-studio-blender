@@ -2981,6 +2981,14 @@ def render_farm_folder():
     check("farm: a hung look shows, Reconnect gives it up and looks again", hung and farm._view["gen"] > keep_view["gen"],
           farm._view)
     farm._view.update(keep_view)
+    keep_conn = dict(farm._conn)
+    farm._conn.update(root=root, busy=True, since=time.monotonic() - 60, hung=0, time=time.monotonic())
+    away = farm.gone_for()
+    farm.connected(root)                              # no panel open: the hung look is given up here
+    check("farm: a look hanging on a dead mount is given up without the panel", away >= 59
+          and farm._conn["hung"] == 1, (away, farm._conn))
+    farm._conn.clear()
+    farm._conn.update(keep_conn)
     jobs = [{"job": "a_2_x", "phase": "sent", "root": root, "kind": 'ANIM', "start": 1, "end": 3, "ext": "png"},
             {"job": "a_1_y", "phase": "sent", "root": root, "kind": 'ANIM', "start": 1, "end": 3, "ext": "png"}]
     for job in jobs:

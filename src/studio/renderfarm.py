@@ -188,17 +188,38 @@ def _server_url():
     return _mount["url"] or "smb://%s/DDE" % SERVER
 
 
-_conn = {"root": None, "ok": False, "time": -1e9, "busy": False}
+_conn = {"root": None, "ok": False, "time": -1e9, "busy": False, "hung": 0, "bad_since": 0.0}
 CONN_AGE = 10.0           # seconds a look at the share counts (a network folder can take seconds to answer)
+LOOK_HANGS = 20.0         # a look taking longer hangs (dead mount): a new one may go (at most MAX_HUNG at once)
+MAX_HUNG = 4
+DEAD_AFTER = 90.0         # the share gone this long while the server answers: the mount is dead, mounted anew
 
 
 def _look(root):
     if root.startswith("/Volumes/"):
         _read_mounts()                       # the share may be mounted somewhere else now (DDE-1)
         root = share_root()
-    ok = os.path.isdir(root)
-    _conn.update(root=root, ok=ok, time=time.monotonic(), busy=False)
+    started = time.monotonic()
+    try:
+        ok = os.path.isdir(root)
+    finally:
+        if time.monotonic() - started > LOOK_HANGS:
+            _conn["hung"] = max(0, _conn.get("hung", 0) - 1)
+    now = time.monotonic()
+    if ok:
+        _conn["bad_since"] = 0.0
+    elif not _conn.get("bad_since"):
+        _conn["bad_since"] = now
+    _conn.update(root=root, ok=ok, time=now, busy=False)
     return ok
+
+
+def gone_for():
+    """Seconds the share has been unreachable (a failed look or a hanging one), 0 when it answers."""
+    now = time.monotonic()
+    hanging = now - _conn.get("since", now) if _conn["busy"] else 0.0
+    failed = now - _conn["bad_since"] if _conn.get("bad_since") else 0.0
+    return max(hanging, failed)
 
 
 def connected(root=None):
@@ -209,6 +230,10 @@ def connected(root=None):
         if not root.startswith("/Volumes/"):            # a local folder answers at once
             return _look(root)
         _conn.update(root=root, ok=False, time=-1e9, busy=False)   # a network one: in a thread, from the start
+    if _conn["busy"] and time.monotonic() - _conn.get("since", 0.0) > LOOK_HANGS \
+            and _conn.get("hung", 0) < MAX_HUNG:
+        _conn["hung"] = _conn.get("hung", 0) + 1     # that look hangs on a dead mount: a new one goes (also
+        _conn["busy"] = False                        # when no panel is open: this was in the panel's timer)
     if time.monotonic() - _conn["time"] > CONN_AGE:
         _look_later(root)
     return _conn["ok"]
@@ -1103,12 +1128,23 @@ def _reconnect(force=False):
         _conn["busy_mount"] = True
         try:
             _read_mounts()
-            if _mount["point"]:
-                return                             # mounted: the look decides
             try:
                 socket.create_connection((SERVER, 445), timeout=3).close()
             except OSError:
                 return                             # no VPN / network: nothing to mount
+            if _mount["point"]:
+                if gone_for() < DEAD_AFTER:
+                    return                         # mounted: the look decides
+                # listed as mounted, the server answers, but the share has not for minutes: a dead mount
+                # (VPN dropped and came back). It is let go and mounted anew (only this share).
+                try:
+                    from . import runner
+                    runner.log("render farm: the share at %s is dead, mounted anew" % _mount["point"])
+                except Exception:
+                    pass
+                subprocess.run(["/sbin/umount", "-f", _mount["point"]], stdin=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+                _conn.update(bad_since=0.0, busy=False, hung=0)
             subprocess.run(["osascript", "-e", 'mount volume "%s"' % _server_url()], stdin=subprocess.DEVNULL,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=90)
             _read_mounts()
@@ -1120,6 +1156,21 @@ def _reconnect(force=False):
     threading.Thread(target=mount, daemon=True).start()
 
 
+def heal():
+    """(Blender's thread, every few seconds while jobs run, with or without a panel open) A hanging look
+    is given up, a share that went away is mounted again, a dead mount is let go and mounted anew: the
+    farm comes back by itself after the VPN or the Wi-Fi dropped (before: only "reconnect" did that)."""
+    now = time.monotonic()
+    if now - _alarm.get("healed", 0.0) < 30:
+        return
+    if stuck():
+        _alarm["healed"] = now
+        reconnect(mount=False)                       # the hung threads are given up, frames fetched anew
+    if not connected():
+        _alarm["healed"] = now
+        _reconnect()
+
+
 def _watch_workers():
     """While jobs of ours are on the farm: the share's worker lines are read every minute (also with the
     panel closed), a Mac going offline or no new frame for 10 minutes is reported once, the share is
@@ -1127,11 +1178,11 @@ def _watch_workers():
     from . import runner
     busy = any(j["phase"] in {"queued", "packing", "packed", "copying", "retry", "sent"} for j in _jobs)
     _keep_awake(busy)
+    if busy:
+        heal()
     if not any(j["phase"] == "sent" for j in _jobs):
         return
     if not connected():
-        if _alarm.get("had_share"):
-            _reconnect()
         return
     _alarm["had_share"] = True
     last = last_frame_time()
