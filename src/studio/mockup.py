@@ -190,7 +190,13 @@ class StudioMockup(PropertyGroup):
                         description="After Krea the product is put back exactly as rendered (Krea changes only "
                                     "what is around it)")
     wish: StringProperty(name="Wish", options={'SKIP_SAVE'},
-                         description="What Krea should do besides blending the product in (\"night, wet street\")")
+                         description="Where the product goes and what Krea should do besides blending it in "
+                                     "(\"on the fork, at night, wet street\") – empty: where it belongs")
+    refs: StringProperty(name="Pictures", options=set(),
+                         description="Pictures for Krea besides the montage (a close-up, a mood), one path per line")
+    quality: EnumProperty(name="Quality", default='LOW', options=set(),
+                          items=[('LOW', "Preview", "The product rendered fast (enough for most photos)"),
+                                 ('HIGH', "HQ", "The product rendered in High Quality (slower)")])
 
 
 # ------------------------------------------------------------------ geometry
@@ -819,7 +825,7 @@ BLEND = ("so it looks photographed in place: match the scene's light direction, 
 _sent = {}       # the file sent to Krea → what is needed to finish its result
 
 
-def krea_prompt(key, name, wish="", bars=False, close_up=False, scale=""):
+def krea_prompt(key, name, wish="", bars=False, close_up=False, scale="", refs=False):
     """The prompt for a mockup, after the models' own guides: the change first, each picture's role named,
     what must stay in one sentence at the end, said as what is wanted (not what is not)."""
     wish = wish.strip().rstrip(".")
@@ -835,6 +841,8 @@ def krea_prompt(key, name, wish="", bars=False, close_up=False, scale=""):
             "the correct position, size and perspective. " % name)
     if close_up:
         text += "Image 2 shows the same %s up close, for its details only. " % name
+    if refs:
+        text += ("The other images are references for mood, light and colour only; do not copy their content. ")
     text += wish + "Blend the %s into the scene %s. " % (name, BLEND)
     if bars:
         text += "Fill the black bars at the edges by continuing the scene naturally. "
@@ -914,7 +922,8 @@ def krea_plan(scene, wish=None, model=None):
             x, y, z = info["size_cm"]
             scale = "True scale: the %s is about %s × %s × %s cm." % (
                 m.product_name, krea_scene._num(x), krea_scene._num(y), krea_scene._num(z))
-    plan["prompt"] = krea_prompt(key, m.product_name.strip() or "product", wish, bars, bool(plan["close_up"]), scale)
+    plan["prompt"] = krea_prompt(key, m.product_name.strip() or "product", wish, bars, bool(plan["close_up"]), scale,
+                                 bool(refs_of(m)) and key != 'PRECISE')
     _sent[os.path.normpath(send)] = plan
     try:
         with open(base + "_plan.json", "w", encoding="utf-8") as f:
@@ -928,13 +937,17 @@ MODEL_PATHS = {'REGION': "krea/krea-3", 'NANO21': "google/nano-banana-2.1", 'PRE
 UNITS = {'REGION': 77, 'NANO21': 44, 'PRECISE': 163}     # Krea's quotes at 2K, Nov 2026
 
 
-def krea_body(plan, image_url, mask_url="", close_up_url=""):
+def refs_of(m):
+    return [p for p in (line.strip() for line in (m.refs or "").split("\n")) if p and os.path.isfile(bpy.path.abspath(p))]
+
+
+def krea_body(plan, image_url, mask_url="", close_up_url="", ref_urls=()):
     """Krea's request for a plan (after its pictures were uploaded)."""
     W, H = plan["size"]
     resolution = "2K" if max(W, H) > 1100 else "1K"
     if plan["key"] == 'REGION':
         x, y, w, h = plan["box"]
-        return {"prompt": plan["prompt"], "image_urls": [image_url], "thinking_mode": "fast",
+        return {"prompt": plan["prompt"], "image_urls": [image_url] + list(ref_urls)[:4], "thinking_mode": "fast",
                 "resolution": resolution, "aspect_ratio": plan["ratio"], "regional_edit": True,
                 "regions": [{"label": "product", "x": x, "y": y, "width": w, "height": h, "image_idx": 0,
                              "note": "The composited product: only its light, shadow and grain may change."}]}
@@ -943,7 +956,8 @@ def krea_body(plan, image_url, mask_url="", close_up_url=""):
         if mask_url:
             body["mask_url"] = mask_url
         return body
-    return {"prompt": plan["prompt"], "image_urls": [image_url] + ([close_up_url] if close_up_url else []),
+    return {"prompt": plan["prompt"], "image_urls": [image_url] + ([close_up_url] if close_up_url else []) +
+            list(ref_urls)[:4],
             "aspect_ratio": plan["ratio"], "resolution": resolution, "thinking_level": "minimal"}
 
 
@@ -1029,11 +1043,13 @@ def krea_prepare(scene, upload_url, wish=None, model=None):
     image_url = krea.upload_to(upload_url, plan["send"])
     mask_url = krea.upload_to(upload_url, plan["mask"]) if plan["mask"] else ""
     close_url = krea.upload_to(upload_url, plan["close_up"]) if plan["close_up"] else ""
+    ref_urls = [krea.upload_to(upload_url, bpy.path.abspath(p)) for p in refs_of(scene.studio_mockup)[:4]] \
+        if plan["key"] != 'PRECISE' else []
     tab_finish._plan.clear()
     tab_finish._plan.update(source=plan["send"], model=plan["key"], size=plan["size"])
     krea.job.update(state="", text="", quote=None)
     return {"model": MODEL_PATHS[plan["key"]], "key": plan["key"], "input": krea_body(plan, image_url, mask_url,
-                                                                                    close_url),
+                                                                                    close_url, ref_urls),
             "credits_about": UNITS[plan["key"]], "prompt": plan["prompt"], "size": plan["size"]}
 
 
@@ -1060,7 +1076,7 @@ class STUDIO_OT_mockup_new(Operator):
         except (ValueError, OSError, RuntimeError) as ex:
             self.report({'ERROR'}, str(ex))
             return {'CANCELLED'}
-        self.report({'INFO'}, "%s: move the product with Place, then Render" % scene.name)
+        self.report({'INFO'}, "%s: choose the model, then Make it" % scene.name)
         return {'FINISHED'}
 
 
@@ -1326,6 +1342,92 @@ class STUDIO_OT_mockup_krea(Operator):
         return {'FINISHED'}
 
 
+class STUDIO_OT_mockup_make(Operator):
+    bl_idname = "studio.mockup_make"
+    bl_label = "Make it"
+    bl_description = ("All by itself: Claude measures the photo's camera, puts your product where it belongs (or "
+                      "where you wrote), checks it, renders it, shows Krea's price and blends it in with the chosen "
+                      "model (Krea connector of your Claude account)")
+    bl_options = {'INTERNAL'}
+
+    @classmethod
+    def poll(cls, context):
+        from . import krea
+        return is_mockup(context.scene) and not krea.busy()
+
+    def execute(self, context):
+        from .. import core
+        scene = context.scene
+        m = scene.studio_mockup
+        if core.is_local():
+            self.report({'ERROR'}, "Needs Claude (not a local model)")
+            return {'CANCELLED'}
+        name = dict((k, n) for k, n, _d in KREA_MODELS)[m.krea_model]
+        refs = refs_of(m)
+        lines = ["Mockup, all automatic – do every step yourself, without asking, and show me the result:",
+                 "Mockup scene: %s" % scene.name, "Photo: %s" % bpy.path.abspath(m.photo),
+                 "Where / what: %s" % (m.wish.strip() or "where the product naturally belongs in this photo"),
+                 "1. Measure the photo's camera (focal, horizon, roll, camera height) and place the product with "
+                 "api.mockup_set; check with api.mockup_look() and correct (at most 4 rounds).",
+                 "2. api.mockup_render(quality=\"%s\"); wait until mockup_state() has the montage." % m.quality,
+                 "3. Krea, model %s (%s, ~%d credits): get_upload_url, api.mockup_krea_prepare(upload_url, wish, "
+                 "model=\"%s\"), preflight, api.krea_quote; more than 100 credits: ask me first; then generate and "
+                 "api.krea_save(url)." % (m.krea_model, name, UNITS[m.krea_model], m.krea_model),
+                 "Format: %s." % m.format]
+        if refs:
+            lines.append("Pictures for Krea (sent with the montage by mockup_krea_prepare): %s" % ", ".join(refs))
+        try:
+            core.add_attachment(bpy.path.abspath(m.photo))
+            for path in refs:
+                core.add_attachment(bpy.path.abspath(path))
+        except Exception as ex:
+            print("AI Studio mockup: attachment:", ex)
+        text = "\n".join(lines)
+        if core.is_busy():
+            names = [s["name"] for s in core.skills.list_skills(core.workdir()) if s.get("studio_tab") == 'MOCKUP']
+            core.queue_chat(text, names, connectors=("Krea",))
+            self.report({'INFO'}, "Claude is busy: the mockup comes as the next chat")
+            return {'FINISHED'}
+        core.request_connector("Krea")
+        if not core.studio_prompt('MOCKUP', text):
+            core.connectors_next.discard("Krea")
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
+class STUDIO_OT_mockup_refs(Operator):
+    bl_idname = "studio.mockup_refs"
+    bl_label = "Pictures for Krea"
+    bl_description = "Add pictures for Krea: a close-up of the product, a mood or light to match"
+    bl_options = {'INTERNAL'}
+
+    directory: StringProperty(subtype='DIR_PATH', options={'SKIP_SAVE'})
+    files: bpy.props.CollectionProperty(type=bpy.types.OperatorFileListElement, options={'SKIP_SAVE'})
+    filter_image: BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
+    filter_folder: BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
+    remove: bpy.props.IntProperty(default=-1, options={'HIDDEN', 'SKIP_SAVE'})
+
+    def invoke(self, context, _event):
+        if self.remove >= 0:
+            return self.execute(context)
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        m = context.scene.studio_mockup
+        items = refs_of(m)
+        if self.remove >= 0:
+            if self.remove < len(items):
+                items.pop(self.remove)
+        else:
+            for f in self.files:
+                path = os.path.join(self.directory, f.name)
+                if f.name and os.path.isfile(path) and path not in items:
+                    items.append(path)
+        m.refs = "\n".join(items[:4])
+        return {'FINISHED'}
+
+
 class STUDIO_OT_mockup_ask(Operator):
     bl_idname = "studio.mockup_ask"
     bl_label = "Ask Claude"
@@ -1369,7 +1471,9 @@ def draw(layout, context, compact=False):
     if not is_mockup(scene):
         col = layout.column(align=True)
         col.scale_y = 1.2
-        col.operator(STUDIO_OT_mockup_new.bl_idname, text="Product into a Photo…", icon='IMAGE_REFERENCE')
+        col.scale_y = 1.6
+        col.operator(STUDIO_OT_mockup_new.bl_idname, text="Load a Photo…", icon='IMAGE_REFERENCE')
+        _info(layout, "Then choose the model and Make it: Claude fits your product into it and Krea blends it in")
         for other in mockups():
             row = layout.row(align=True)
             row.operator(STUDIO_OT_mockup_go.bl_idname, text=other.name, icon='SCENE_DATA').scene = other.name
@@ -1380,22 +1484,58 @@ def draw(layout, context, compact=False):
     back = source_scene(scene)
     row = layout.row(align=True)
     row.label(text=os.path.basename(m.photo), icon='IMAGE_REFERENCE', translate=False)
+    row.operator(STUDIO_OT_mockup_new.bl_idname, text="", icon='FILE_FOLDER')
     if back is not None:
-        row.operator(STUDIO_OT_mockup_go.bl_idname, text=back.name, icon='LOOP_BACK').scene = back.name
+        row.operator(STUDIO_OT_mockup_go.bl_idname, text="", icon='LOOP_BACK').scene = back.name
     try:
         info = state(scene)
     except (OSError, ValueError):
         info = {}
         _info(layout, "The photo is missing", 'ERROR', True)
-    # one sentence
+    # the simple way: a sentence (optional), pictures, model, a few choices, go
     row = layout.row(align=True)
     row.scale_y = 1.3
-    row.prop(m, "wish", text="", placeholder="What do you want? (Claude does it)")
-    row.operator(STUDIO_OT_mockup_ask.bl_idname, text="", icon='EVENT_RETURN')
+    try:
+        row.prop(m, "wish", text="", placeholder="Where, and what else? (optional: \"on the fork, at night\")")
+    except TypeError:
+        row.prop(m, "wish", text="")
+    refs = refs_of(m)
+    row = layout.row(align=True)
+    row.operator(STUDIO_OT_mockup_refs.bl_idname, text="Pictures for Krea" if not refs else
+                 "Pictures (%d)" % len(refs), icon='ADD')
+    for index, path in enumerate(refs):
+        line = layout.row(align=True)
+        line.label(text=os.path.basename(path), icon='IMAGE_DATA', translate=False)
+        line.operator(STUDIO_OT_mockup_refs.bl_idname, text="", icon='X', emboss=False).remove = index
+    col = layout.column(align=True)
+    col.row(align=True).prop(m, "krea_model", expand=True)
+    row = col.row(align=True)
+    row.prop(m, "format", text="")
+    row.prop(m, "quality", expand=True)
+    from . import krea as _krea
+    balance = _krea.last_balance()
+    _info(layout, "~%d credits%s" % (UNITS[m.krea_model], " · %g left" % round(balance) if balance is not None else ""))
+    row = layout.row(align=True)
+    row.scale_y = 1.6
+    row.operator(STUDIO_OT_mockup_make.bl_idname, text="Make it", icon='PLAY')
     from .. import core
     status, reply = core.studio_reply('MOCKUP')
     if status:
         _info(layout, reply[:90], 'TIME' if status == "working" else 'OUTLINER_DATA_GP_LAYER')
+    job_state = _krea.job["state"]
+    if _krea.busy():
+        words = {"upload": "Uploading…", "working": "Krea is working…", "download": "Downloading…"}
+        _info(layout, "%s %d s" % (words[job_state], time.monotonic() - _krea.job["started"]), 'TIME')
+    elif job_state == "error":
+        _info(layout, _krea.job["text"][:90], 'ERROR', True)
+    elif last.get("path") and job_state == "done":
+        _info(layout, "Your product was put back (Krea had changed it)" if last.get("restored") else
+              "Done · your product secured", 'CHECKMARK')
+    if runner.RUN.busy and (runner.RUN.scene_name == scene.name or m.waiting):
+        _info(layout, "Rendering the product… the montage follows", 'TIME')
+    from .ui_common import subsection
+    if not subsection(layout, "mockup_finetune", "Fine-tune by hand", default_open=False):
+        return
 
     box = layout.box()
     head = box.row(align=True)
@@ -1554,7 +1694,7 @@ class STUDIO_PT_mockup_on(Panel):
 
 classes = (StudioMockup, STUDIO_OT_mockup_new, STUDIO_OT_mockup_go, STUDIO_OT_mockup_place, STUDIO_OT_mockup_render,
            STUDIO_OT_mockup_fspy, STUDIO_OT_mockup_front, STUDIO_OT_mockup_krea, STUDIO_OT_mockup_ask,
-           STUDIO_PT_mockup, STUDIO_PT_mockup_on)
+           STUDIO_OT_mockup_make, STUDIO_OT_mockup_refs, STUDIO_PT_mockup, STUDIO_PT_mockup_on)
 
 
 def register():

@@ -1076,6 +1076,10 @@ def photo_adjust_tools():
     got = mock._read(res)
     check("krea: after Nano the product is yours again, Krea's change around it stays",
           got[60, 80, 0] > 0.8 and got[60, 80, 1] < 0.35 and got[10, 10, 0] > 0.15 and note, (note, got[60, 80, :3]))
+    body = mock.krea_body({"key": "NANO21", "prompt": "x", "size": (1200, 900), "ratio": "4:3"}, "https://m",
+                          close_up_url="https://c", ref_urls=["https://r1", "https://r2"])
+    check("mockup: pictures for Krea go with the montage (after the close-up)",
+          body["image_urls"] == ["https://m", "https://c", "https://r1", "https://r2"], body["image_urls"])
     # a set for a presentation: numbered pictures and an overview
     folder = os.path.join(TMP, "set_test")
     files = pv.export_set([src, res], folder, size=100)
