@@ -610,6 +610,8 @@ def _draw_labels():
         import blf
         v2d = context.region.view2d
         sections = {n: (s, e) for n, s, e, _m in cut.sections_of(scene)}
+        from . import cut_proxy
+        proxies_on = cut_proxy.active()
         ui = context.preferences.system.ui_scale
         font = 0
         blf.size(font, 11 * ui)
@@ -623,7 +625,9 @@ def _draw_labels():
             st = cut.frame_status(section, span[0], span[1])
             state = cut.section_state(scene, section, st)
             text = {'FRESH': "up to date", 'RENDERING': "renders %d/%d" % (st["done"], st["total"]),
-                    'PENDING': "waits", 'OPEN': "%d/%d" % (st["done"], st["total"])}[state]
+                    'PENDING': "waits", 'STALE': "outdated", 'OPEN': "%d/%d" % (st["done"], st["total"])}[state]
+            if strip.type == 'IMAGE' and proxies_on and not getattr(strip, "use_proxy", False):
+                text += " · full frames"           # plays the full-size frames, not its previews
             left = v2d.view_to_region(strip.frame_final_start, strip.channel + 0.9, clip=False)
             right = v2d.view_to_region(strip.frame_final_end, strip.channel + 0.9, clip=False)
             w, h = blf.dimensions(font, text)

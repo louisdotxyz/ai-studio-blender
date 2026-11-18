@@ -4,7 +4,7 @@
 Two sources:
 - This Mac (renderfarm._watch_workers, every minute while jobs are out): the share reachable or not, each
   Mac's state (rendering / waiting / offline), the frames there → ~/.cache/ai_studio_farm/history.jsonl.
-- Each studio Mac's log book (worker 0.8.0: _worker/logs/<Mac>.log on the share): start, jobs, packages
+- Each studio Mac's log book (worker 0.8.0+, 0.9 also FREI / FEHLER / WARTET: _worker/logs/<Mac>.log on the share): start, jobs, packages
   with their time, server gone/back, and how a session ended (Ctrl+C, logout, shutdown, update, no clean
   end) with the Mac's rules (log out automatically after …, scheduled shutdown, sleep).
 
@@ -206,9 +206,12 @@ def report(hours=24, root=None, now=None):
     logs = read_logs(root) if root else {}
     macs = {}
     for name, entries in logs.items():
+        recent = [(t, k, d) for t, k, d in entries if since <= t <= now]
         macs[name] = {"ends": [(time.strftime("%d.%m %H:%M", time.localtime(s)), r)
                                for s, r in end_reason(entries, since, now)],
-                      "rules": rules(entries)}
+                      "rules": rules(entries),
+                      "freed": sum(1 for _t, k, _d in recent if k == "FREI"),      # worker 0.9: hung frames freed
+                      "errors": [d for _t, k, d in recent if k == "FEHLER"][-3:]}
     learned = learn(events, macs)
     text = _text(hours, hours_out, events, macs, learned, bool(lines), bool(logs))
     return {"text": text, "hours": hours_out, "events": [(time.strftime("%d.%m %H:%M", time.localtime(t)), e)
@@ -294,7 +297,12 @@ def _text(hours, hours_out, events, macs, learned, have_history, have_logs):
     if not have_logs:
         out.append("- The studio Macs' log books are not there yet (worker 0.8.0 writes them after its next "
                    "start) or the share does not answer.")
+    freed = sum(info.get("freed", 0) for info in macs.values())
+    if freed:
+        out.append("Frames freed again (left empty by a Mac that dropped out): %d" % freed)
     for name, info in sorted(macs.items()):
+        for err in info.get("errors", []):
+            out.append("%s: %s" % (name, err))
         if info["ends"]:
             out.append("%s: " % name + "; ".join("%s %s" % (w, r) for w, r in info["ends"][-4:]))
     if learned:

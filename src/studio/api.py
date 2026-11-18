@@ -1196,13 +1196,16 @@ def section_draft(section=None):
 
 
 def film_check():
-    """What would go wrong in a render, and the estimate: {"problems": [[section, code, text]] (code
+    """What would go wrong in a render, and the estimate (per section also "timeline": its colour state,
+    STALE = all frames there but the scene changed since, and "plays": previews or full frames):
+    {"problems": [[section, code, text]] (code
     NO_CAMERA blocks that section's render; CAMERA: its frames are from another camera than the section's,
     render it again with force=True; SHARED; OUTDATED; EXPOSURE: a fade keyed into the render; SAMPLES), "sections": [{"section", "camera", "locked",
     "state", "next", "seconds"}], "total_seconds"}."""
-    from . import cut, film_tools
+    from . import cut, cut_proxy, film_tools
     scene = bpy.context.scene
     items = {c.section: c for c in scene.studio.cut_items}
+    previews = {r["strip"]: r for r in cut_proxy.check(repair=False)}
     sections = []
     for name, start, end, marker in cut.sections_of(scene):
         st = cut.frame_status(name, start, end, fresh=True)
@@ -1212,7 +1215,13 @@ def film_check():
         sections.append({"section": name, "camera": cam.name if cam else None,
                          "locked": bool(getattr(items.get(name), "camera_lock", False)),
                          "state": film_tools.label_of(st) or "nothing", "next": quality,
+                         "timeline": cut.section_state(scene, name, st),     # FRESH RENDERING PENDING STALE OPEN
                          "seconds": round(secs) if secs else None})
+        strip = cut.section_strip(scene, name)
+        row = previews.get(strip.name) if strip is not None else None
+        if row is not None:                          # plays from its previews (smooth) or the full frames
+            sections[-1]["plays"] = ("previews %s/%d" % (row["ready"], row["total"])) if row["previews"] \
+                else "full frames (Fast Preview off or its preview size switched off: studio.cut_proxy_check)"
     total = film_tools.total_estimate(scene)
     return {"problems": [list(p) for p in film_tools.problems(scene)], "sections": sections,
             "total_seconds": round(total) if total else None}

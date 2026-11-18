@@ -270,6 +270,8 @@ def tick(on=None):
         _applied.clear()
     folders = []
     for ed in [s for s in bpy.data.scenes if s.get(cut.FILM_KEY)]:
+        if on:
+            _read_ahead(ed)
         film = cut.film_scene(ed)
         here = ed.frame_current
         strips = [s for s in cut.ours(film) if s.type == 'IMAGE']
@@ -311,6 +313,71 @@ def tick(on=None):
     if fresh or _want.get("shown_on") != on:     # new previews (or switched): the strips show them
         _want["shown_on"] = on
         cut.show_previews()
+
+
+def _read_ahead(ed):
+    """The cut scene reads ahead (prefetch) and keeps the read frames (raw and final cache, where Blender
+    has these switches): with half- or quarter-size previews 30 fps keep up."""
+    sed = ed.sequence_editor
+    if sed is None:
+        return
+    for attr in ("use_prefetch", "use_cache_raw", "use_cache_final"):
+        if hasattr(sed, attr):
+            _set(sed, attr, True)
+
+
+def frame_bytes(ed):
+    """Bytes one preview frame takes in the cache (RGBA, the preview size)."""
+    r = ed.render
+    pct = _want["size"] / 100.0
+    return int(r.resolution_x * r.resolution_y * pct * pct * 4)
+
+
+def check(repair=True):
+    """Per section strip: does it play from its previews? [{"strip", "previews": True/False, "ready",
+    "total", "fixed"}]. repair: a strip that does not (preview size off, other folder) is set up again.
+    Also says whether the cache holds 10 s of the cut."""
+    from . import cut
+    rows = []
+    on = active()
+    for ed in [s for s in bpy.data.scenes if s.get(cut.FILM_KEY)]:
+        for strip in [s for s in cut.ours(cut.film_scene(ed)) if s.type == 'IMAGE']:
+            try:
+                directory = os.path.normpath(bpy.path.abspath(strip.directory))
+                real = strip.get(REAL_KEY)
+                names = list(dict.fromkeys(json.loads(real) if real else (e.filename for e in strip.elements)))
+            except (AttributeError, ReferenceError, ValueError):
+                continue
+            proxy = getattr(strip, "proxy", None)
+            folder = folder_for(directory) + os.sep
+            good = bool(on and getattr(strip, "use_proxy", False) and proxy is not None
+                        and getattr(proxy, "build_%d" % _want["size"], False)
+                        and getattr(proxy, "directory", "") == folder)
+            fixed = False
+            if on and not good and repair:
+                _applied.pop(strip.as_pointer(), None)
+                _setup(strip, directory, True)
+                fixed = True
+            ready = ready_names(directory)
+            rows.append({"strip": strip.name, "previews": good or fixed, "fixed": fixed,
+                         "ready": len(ready & set(names)) if ready is not None else None, "total": len(names)})
+        if repair:
+            _read_ahead(ed)
+    if repair:
+        _wake.set()
+    return rows
+
+
+def cache_note():
+    """'' or a hint that the cache holds less than 10 s of the cut at its preview size."""
+    from . import cut
+    eds = [s for s in bpy.data.scenes if s.get(cut.FILM_KEY)]
+    if not eds or not active():
+        return ""
+    ed = eds[0]
+    need = frame_bytes(ed) * 2 * max(1, int(ed.render.fps * 10)) / 1e6      # raw + final, 10 s
+    have = getattr(bpy.context.preferences.system, "memory_cache_limit", 0)
+    return "Cache holds less than 10 s (needs ~%d MB)" % need if have and have < need else ""
 
 
 def fast_changed(wm, _context):

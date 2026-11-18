@@ -634,7 +634,7 @@ class Runner:
                 self._prepare(scene, item)
                 renderfarm.submit_item(scene, item, self._farm_job, self.animation, self._farm_path, item.camera,
                                        self.quality)
-                log("render farm: %s" % label)
+                log("render farm: %s (sent by %s)" % (label, getattr(item, "origin", "") or "you"))
                 animation = self.animation
                 self.processed.add(item.uid)
                 remove_item(scene, item.uid)
@@ -754,7 +754,7 @@ class Runner:
                 log("not sent to the render farm: %s" % ex)
                 self._job_failed(scene, item.uid, label)
                 return
-            log("render farm: %s" % label)
+            log("render farm: %s (sent by %s)" % (label, getattr(item, "origin", "") or "you"))
             self.current = None
             self.phase = 'START'
             self.processed.add(item.uid)

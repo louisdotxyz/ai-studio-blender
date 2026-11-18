@@ -287,6 +287,28 @@ def _boundaries(scene):
     return out
 
 
+class STUDIO_OT_cut_proxy_check(Operator):
+    bl_idname = "studio.cut_proxy_check"
+    bl_label = "Check Previews"
+    bl_description = ("Does every clip play from its half-size previews? A clip that plays the full frames "
+                      "(its preview size switched off, another folder) is set up again; missing previews "
+                      "are made next")
+    bl_options = {'INTERNAL'}
+
+    def execute(self, _context):
+        from . import cut_proxy
+        if not cut_proxy.active():
+            self.report({'WARNING'}, "Fast Preview is off (or macOS sips is missing): the clips play the full frames")
+            return {'CANCELLED'}
+        rows = cut_proxy.check(repair=True)
+        fixed = [r["strip"] for r in rows if r["fixed"]]
+        missing = sum(r["total"] - (r["ready"] or 0) for r in rows)
+        self.report({'INFO'}, "Previews: %d clips%s%s" % (
+            len(rows), " · set up again: %s" % ", ".join(fixed) if fixed else " · all play from previews",
+            " · %d previews still to make" % missing if missing else ""))
+        return {'FINISHED'}
+
+
 class STUDIO_OT_cut_orphans(Operator):
     bl_idname = "studio.cut_orphans"
     bl_label = "Remove Old Cut"
@@ -422,6 +444,10 @@ def _draw_clips(layout, scene, context, strip):
         state = row.row(align=True)
         state.active = here
         state.label(text=_section_text(name, start, end), icon=_state_icon(st), translate=False)
+        if cut.stale(scene, name) and st["done"] == st["total"]:
+            old = row.row(align=True)                # all there, the scene changed since: plays and exports
+            old.active = False                       # as it is, renders again when you want
+            old.label(text="outdated", icon='TIME', translate=False)
         if cut.outdated(scene, name, start, end):
             _strip_op(row, 'UPDATE', name, 'ERROR', text="")
         clean = st["done"] == st["total"] and film_tools.next_quality(scene, name, st) is None
@@ -468,8 +494,22 @@ def _draw_clips(layout, scene, context, strip):
     cache = row.row(align=True)
     cache.ui_units_x = 5
     cache.prop(bpy.context.preferences.system, "memory_cache_limit", text="Cache")
-    if cut_proxy.left():
-        _hint(layout, "Fast preview: %d frames still to prepare" % cut_proxy.left(), 'MOD_TIME')
+    row = layout.row(align=True)
+    rows = cut_proxy.check(repair=False) if cut_proxy.active() else []
+    ready = sum(r["ready"] or 0 for r in rows)
+    total = sum(r["total"] for r in rows)
+    off = [r["strip"] for r in rows if not r["previews"]]
+    sub = row.row(align=True)
+    sub.active = False
+    sub.alert = bool(off)
+    sub.label(text=("Plays full frames: %s" % ", ".join(off)[:40]) if off else
+              ("Previews %d/%d" % (ready, total) + (" · %d to make" % cut_proxy.left() if cut_proxy.left() else ""))
+              if rows else "Fast Preview off: plays the full frames", icon='ERROR' if off else 'IMAGE_DATA',
+              translate=False)
+    row.operator(STUDIO_OT_cut_proxy_check.bl_idname, text="Check", icon='FILE_REFRESH')
+    note = cut_proxy.cache_note()
+    if note:
+        _hint(layout, note, 'INFO')
 
 
 def _short(name, others=()):
@@ -758,7 +798,7 @@ class STUDIO_PT_cut(Panel):
 
 
 classes = (STUDIO_OT_cut_export_pick, STUDIO_OT_cut_import, STUDIO_OT_cut_clip, STUDIO_OT_cut_look,
-           STUDIO_OT_cut_transition, STUDIO_OT_cut_auto, STUDIO_OT_cut_orphans, STUDIO_PT_cut_queue,
+           STUDIO_OT_cut_transition, STUDIO_OT_cut_auto, STUDIO_OT_cut_orphans, STUDIO_OT_cut_proxy_check, STUDIO_PT_cut_queue,
            STUDIO_PT_cut_renders, STUDIO_PT_cut)
 
 

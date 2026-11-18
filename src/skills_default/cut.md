@@ -42,7 +42,17 @@ Sections render as frames (animation/Frames/<section>/); every section is an ima
 - High Quality always after a video preview: quality="HIGH" without an up-to-date preview renders the Low
   Quality preview first and High Quality follows by itself; preview=False only when he asks for HQ at once.
 - The render farm slow, Macs gone, frames not coming: api.farm_report(hours=24) first – good and poor
-  hours, why each Mac ended (from its log book) and what was learned.
-- Strip colours: green = all High Quality, orange = rendered (Low Quality or not all), grey = draft only;
-  the band under a strip shows it per frame (red = not rendered yet). api.film_check() for problems.
+  hours, why each Mac ended (from its log book), frames freed after a Mac dropped out, what was learned.
+- Farm order: Low Quality before High Quality, then the job with the fewest frames left ("Shortest First",
+  scene.studio.farm_sort = 'SHORT', or 'ORDER' = as sent). A job by hand: bpy.ops.studio.farm_move(job=…,
+  where='NEXT' / 'LAST' / 'AUTO'). Free Macs take the next job with free frames; frames left empty by a Mac
+  that dropped out are rendered again after 30 min (worker 0.9).
+- Sending a section again never throws away a farm job of the same scene state: its frames are not sent
+  twice. A few frames again (frames="a-b") hand only these over, the older job finishes the rest. Each job
+  shows who sent it (you, the chat, HQ after the preview, after a restart) – say so when you send one.
+- Strip colours: green = up to date, violet = renders, orange = waits / wants HQ, yellow = outdated (all
+  frames there, the scene changed since: plays and exports as it is), grey = not all rendered. The band
+  under a strip shows it per frame. api.film_check() for problems; per section "timeline" (the colour state)
+  and "plays" (previews or full frames). Playback stutters: bpy.ops.studio.cut_proxy_check() sets every clip
+  up to play its previews again.
 - Everything is one undo step each; the user can also change it by hand in the Video Editor.

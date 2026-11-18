@@ -2620,8 +2620,21 @@ def motion_sections():
             if cp.available() and px is not None:
                 px.build_50 = False                    # a rebuild or sync switched it off: the next tick again
                 cp.tick(True)
-                check("fast preview: a strip whose 50 % preview was switched off gets it back", px.build_50,
-                      px.build_50)
+                hero.use_proxy = False                 # Check: a clip that plays the full frames is set up again
+                px_rows = {r["strip"]: r for r in cp.check(repair=True)}
+                check("fast preview: a strip whose 50 % preview was switched off gets it back; Check finds and "
+                      "repairs a clip playing the full frames", px.build_50 and hero.use_proxy
+                      and px_rows.get(hero.name, {}).get("fixed"), (px.build_50, hero.use_proxy, px_rows.get(hero.name)))
+                aq = mod("studio.autoquality")
+                aq_key = (cut.film_scene(scene).name, aq.section_key("02 Hero"))
+                aq_keep = aq._lq.get(aq_key)
+                aq._lq[aq_key] = aq._edits[0] - 1     # sent, then the scene changed
+                px_stale = cut.stale(scene, "02 Hero")
+                aq._lq.pop(aq_key)
+                if aq_keep is not None:
+                    aq._lq[aq_key] = aq_keep
+                check("a section sent before the last change is outdated (yellow), one never sent here is not",
+                      px_stale and not cut.stale(scene, "02 Hero"), px_stale)
             if cp.available():
                 px_real = [e.filename for e in hero.elements]
                 keep_ready = dict(cp._ready)
@@ -3065,18 +3078,83 @@ def render_farm_folder():
             {"job": "a_1_y", "phase": "sent", "root": root, "kind": 'ANIM', "start": 1, "end": 3, "ext": "png"}]
     for job in jobs:
         open(os.path.join(root, "queue", job["job"] + ".json"), "w").close()
+    open(os.path.join(root, "queue", "a_1_y.json.hold"), "w").close()    # held by a version before 4.28
+    os.remove(os.path.join(root, "queue", "a_1_y.json"))
     keep, farm._jobs[:] = list(farm._jobs), jobs
     try:
-        farm._reconcile()                      # a_1_y is to render after a_2_x but sorts before it: it waits
-        held = os.path.exists(os.path.join(root, "queue", "a_1_y.json.hold"))
+        farm.move("a_1_y", 'NEXT')             # no job held any more (free Macs waited); by hand: a rank file
+        ranked = open(os.path.join(root, "queue", "a_1_y.rang")).read().strip()
+        farm.move("a_1_y", 'AUTO')
         os.makedirs(os.path.join(root, "renders", "a_2_x"))
         farm.remove_from_share(root, "a_2_x", 1, 3, "png")
-        farm._jobs[:] = jobs[1:]
-        farm._reconcile()
-        check("farm: order kept by holding a job; removing one frees the next and lets workers skip its frames",
-              held and os.path.exists(os.path.join(root, "queue", "a_1_y.json"))
+        check("farm: no job held back, Next writes its rank (Auto removes it); removing one lets workers skip "
+              "its frames", os.path.exists(os.path.join(root, "queue", "a_1_y.json")) and ranked == "10"
+              and not os.path.exists(os.path.join(root, "queue", "a_1_y.rang"))
               and not os.path.exists(os.path.join(root, "queue", "a_2_x.json"))
-              and len(os.listdir(os.path.join(root, "renders", "a_2_x"))) == 3)
+              and len(os.listdir(os.path.join(root, "renders", "a_2_x"))) == 3, ranked)
+    finally:
+        farm._jobs[:] = keep
+    with open(os.path.join(root, "_worker", "control.json"), "w") as f:
+        json.dump({"farm": "aus", "ende": "abmelden", "seit": 123}, f)
+    farm.set_sort("reihe", root=root)
+    for _wait in range(40):
+        ctl = json.load(open(os.path.join(root, "_worker", "control.json")))
+        if ctl.get("sortierung") == "reihe":
+            break
+        time.sleep(0.05)
+    check("farm order setting: only 'sortierung' changes (a new 'seit' would log out Macs again)",
+          ctl == {"farm": "aus", "ende": "abmelden", "seit": 123, "sortierung": "reihe"}, ctl)
+    farm._control["sort"] = None
+    worker = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools", "renderfarm", "worker.sh")
+    if os.path.exists(worker):                   # the worker's job choice (its Python part)
+        import subprocess
+        helper = os.path.join(TMP, "rf_help.py")
+        with open(worker, encoding="utf-8") as f:
+            with open(helper, "w", encoding="utf-8") as h:
+                h.write(f.read().split("cat > \"$HELP\" <<'PYEOF'\n")[1].split("PYEOF")[0])
+        wq, wo = os.path.join(TMP, "wq"), os.path.join(TMP, "wo")
+        for name, a, b in (("2_20261118-091214_V_05", 1, 10), ("2_20261118-102522_V_04", 1, 40)):
+            os.makedirs(os.path.join(wo, name), exist_ok=True)
+            os.makedirs(wq, exist_ok=True)
+            with open(os.path.join(wq, name + ".json"), "w") as f:
+                json.dump({"start": a, "end": b, "skip": ["1-2"] if "04" in name else []}, f)
+            open(os.path.join(wq, name + ".blend"), "w").close()
+            os.utime(os.path.join(wq, name + ".json"), (time.time() - 7200,) * 2)
+        five = "2_20261118-091214_V_05"
+        for frame in range(1, 11):                # 1–4 rendered, 5–10 left empty by Macs that dropped out
+            path = os.path.join(wo, five, "%s_%04d.png" % (five, frame))
+            with open(path, "wb") as f:
+                f.write(b"x" if frame < 5 else b"")
+            if frame >= 5:
+                os.utime(path, (time.time() - 3600,) * 2)
+        run = lambda *a: subprocess.run([sys.executable, "-I", helper] + list(a), capture_output=True,
+                                        text=True).stdout.split("\n")
+        order = [ln.split()[0] for ln in run("order", wq, wo, "kurz") if ln and not ln.startswith("#")]
+        freed = [ln for ln in run("order", wq, wo, "kurz") if ln.startswith("# FREI")]
+        chunk = run("chunk", wq, wo, "2_20261118-102522_V_04", "5")[0]
+        check("worker: frames a dropped-out Mac left empty are free again; the job with fewest frames left "
+              "first; frames handed over (skip) are never rendered", order == [five, "2_20261118-102522_V_04"]
+              and not freed and chunk == "3 7", (order, freed, chunk))
+    old = {"job": "part_job", "phase": "sent", "root": root, "kind": 'ANIM', "start": 1, "end": 10, "ext": "png",
+           "folder": os.path.join(root, "Frames", "S2"), "note": "S2"}
+    same = {"job": "same_job", "phase": "sent", "root": root, "kind": 'ANIM', "start": 1, "end": 10, "ext": "png",
+            "folder": os.path.join(root, "Frames", "S3"), "note": "S3", "quality": 'HIGH',
+            "sent_session": farm._SESSION, "sent_changes": farm._edits()}
+    open(os.path.join(root, "queue", "part_job.json"), "w").close()
+    keep, farm._jobs[:] = list(farm._jobs), [old, same]
+    try:
+        coming = farm.supersede(same["folder"], 1, 10, quality='HIGH')
+        farm.supersede(old["folder"], 4, 6)
+        for _wait in range(40):
+            if os.path.exists(os.path.join(root, "queue", "part_job.skip")):
+                break
+            time.sleep(0.05)
+        skip_text = open(os.path.join(root, "queue", "part_job.skip")).read().strip()
+        check("sent again: the scene unchanged, the farm job goes on and its frames are not sent twice; "
+              "a few frames again: only these are handed over, the older job finishes the rest",
+              coming == set(range(1, 11)) and same["phase"] == "sent" and old["phase"] == "sent"
+              and skip_text == "4-6" and old["skip"] == [4, 5, 6]
+              and not os.path.exists(os.path.join(root, "queue", "part_job.done")), (coming, skip_text, old))
     finally:
         farm._jobs[:] = keep
     old = {"job": "old_job", "phase": "sent", "root": root, "kind": 'ANIM', "start": 1, "end": 3, "ext": "png",

@@ -578,9 +578,8 @@ def context_line(scene):
                 shown, section, shown, shown)
         if section in sections:
             st = cut.frame_status(section, *sections[section])
-            text += ", %d/%d frames rendered, %s" % (st["done"], st["total"], {
-                'FRESH': "up to date", 'RENDERING': "renders now", 'PENDING': "waits / changed since",
-                'OPEN': "not all rendered"}[cut.section_state(scene, section, st)])
+            text += ", %d/%d frames rendered, %s" % (st["done"], st["total"],
+                                                      cut.STATE_TEXT[cut.section_state(scene, section, st)])
         parts.append(text)
     picked = [s for s in _top_level(scene) if s.select and s.type in {'IMAGE', 'MOVIE'}]
     if active is not None and active not in picked:

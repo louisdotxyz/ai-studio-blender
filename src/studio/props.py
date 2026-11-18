@@ -191,6 +191,11 @@ def _material_pick_update(settings, context):
 
 
 
+def _farm_sort(self, context):
+    from . import renderfarm
+    renderfarm.sort_changed(self, context)
+
+
 def _floor_changed(self, context):
     from . import environment
     environment.on_floor(self, context)
@@ -259,6 +264,7 @@ class STUDIO_Item(PropertyGroup):
     # where it renders: AUTO = stills and short previews on this Mac, longer films on the farm (when on);
     # LOCAL / FARM only when asked for
     where: StringProperty(default='AUTO', options={'HIDDEN'})
+    origin: StringProperty(options={'HIDDEN'})     # who sent it: you, the chat, HQ after the preview …
 
 
 def _pin_changed(self, context):
@@ -561,6 +567,12 @@ class STUDIO_Settings(PropertyGroup):
     farm_on: BoolProperty(name="Render Farm", description="Every render (stills and sections) goes to the "
                           "ZHdK render farm over the DDE share and comes back by itself: stills into the "
                           "renders, a section's frames into the Video Editor", default=False, options=set())
+    farm_sort: EnumProperty(
+        name="Farm Order", options=set(), default='SHORT', update=lambda self, ctx: _farm_sort(self, ctx),
+        description="Which job the render Macs take next (Low Quality always before High Quality)",
+        items=[('SHORT', "Shortest First", "The job with the fewest frames left first: an almost finished job "
+                                           "or a short one is done soon", 'SORTSIZE', 0),
+               ('ORDER', "As Sent", "In the order the jobs were sent", 'SORTTIME', 1)])
     farm_resend: EnumProperty(
         name="After a Restart", options=set(), default='ASK',
         description="Frames of a section that are neither here nor on the farm after Blender was closed",

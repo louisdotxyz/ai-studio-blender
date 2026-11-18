@@ -634,13 +634,25 @@ def _image(strips, name, paths, channel, start, fit='FIT'):
 
 
 MARKS = {'HIGH': 'COLOR_04', 'LOW': 'COLOR_02', 'DRAFT': 'COLOR_09'}   # older names, kept for callers
-STATE_MARKS = {'FRESH': 'COLOR_04', 'RENDERING': 'COLOR_06', 'PENDING': 'COLOR_02', 'OPEN': 'COLOR_09'}
+STATE_MARKS = {'FRESH': 'COLOR_04', 'RENDERING': 'COLOR_06', 'PENDING': 'COLOR_02', 'STALE': 'COLOR_03',
+               'OPEN': 'COLOR_09'}
 #               green: all frames there and up to date · violet: renders now · orange: waits in the queue /
-#               on the farm, or changed since (it renders again) · grey: not (all) rendered, nothing on its way
+#               on the farm, or wants its High Quality · yellow: all frames there, the scene changed since they
+#               were rendered (plays and exports as it is) · grey: not (all) rendered, nothing on its way
+STATE_TEXT = {'FRESH': "up to date", 'RENDERING': "renders now", 'PENDING': "waits / wants HQ",
+              'STALE': "outdated (scene changed since, plays and exports as it is)", 'OPEN': "not all rendered"}
+
+
+def stale(scene, section):
+    """All frames there, but the scene changed since this section was sent (known in this Blender only)."""
+    from . import autoquality
+    key = autoquality.section_key(section)
+    film = film_scene(scene)
+    return (film.name, key) in autoquality._lq and not autoquality.clean(film, key)
 
 
 def section_state(scene, section, st):
-    """'FRESH' 'RENDERING' 'PENDING' or 'OPEN' of a section (its strip's colour)."""
+    """'FRESH' 'RENDERING' 'PENDING' 'STALE' or 'OPEN' of a section (its strip's colour)."""
     from . import film_tools, renderfarm
     folder = os.path.normcase(frames_folder(section))
     for job in renderfarm.active():
@@ -657,6 +669,8 @@ def section_state(scene, section, st):
             changed = film_tools.next_quality(film, section, st) is not None
         except Exception:
             changed = False
+        if changed and stale(scene, section):
+            return 'STALE'
         return 'PENDING' if changed else 'FRESH'
     return 'OPEN'
 

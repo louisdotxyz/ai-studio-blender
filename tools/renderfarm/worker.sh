@@ -13,6 +13,12 @@
 #        hat (automatisch abmelden nach, geplantes Ausschalten): so sieht AI Studio, warum Macs wegfallen.
 #        Low Quality vor High Quality: nach jedem Paket schaut der Mac, ob ein Job weiter vorne wartet
 #        (Namen 1_… = LQ vor 2_… = HQ) und wechselt dorthin; Pakete dauern hoechstens ~10 min.
+# 0.9.0: Haengende Frames: ein leerer Platzhalter eines Macs, der weggefallen ist (aelter als 30 min),
+#        wird wieder frei (vorher wartete die ganze Farm darauf, eine Stunde 0 Frames). Freie Macs nehmen
+#        den naechsten Job mit freien Frames statt zu warten. Reihenfolge: Rang (<job>.rang: als naechstes /
+#        als letztes), LQ vor HQ, dann der Job mit den wenigsten offenen Frames zuerst (control.json
+#        "sortierung": "kurz", sonst "reihe" = Sendereihenfolge). Frames, die ein neuerer Job uebernommen hat
+#        (<job>.skip oder "skip" in der .json), rendert kein Mac mehr. Beim Warten steht der Grund im Status.
 
 ROOT="${RF_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"   # vom Start gesetzt (lokale Kopie)
 VERSION=$(cat "$ROOT/_worker/VERSION" 2>/dev/null || echo "?")
@@ -56,18 +62,10 @@ remount() {   # Server-Verbindung pruefen und bei Bedarf neu verbinden (Login au
   [ -s "$SRVF" ] && osascript -e "mount volume \"$(cat "$SRVF")\"" >/dev/null 2>&1
   t 10 ls "$Q" >/dev/null 2>&1
 }
-control() {   # liest _worker/control.json: farm an/aus, ende standby/abmelden/herunterfahren, abmelden_nach (min)
-  python3 -c "import json,sys;c=json.load(open(sys.argv[1]));print(c.get('farm','an'),c.get('ende','standby'),int(c.get('seit',0)),int(c.get('abmelden_nach',0)))" "$ROOT/_worker/control.json" 2>/dev/null || echo "an standby 0 0"
+control() {   # liest _worker/control.json: farm an/aus, ende standby/abmelden/herunterfahren, abmelden_nach (min), sortierung
+  python3 -c "import json,sys;c=json.load(open(sys.argv[1]));print(c.get('farm','an'),c.get('ende','standby'),int(c.get('seit',0)),int(c.get('abmelden_nach',0)),c.get('sortierung','kurz'))" "$ROOT/_worker/control.json" 2>/dev/null || echo "an standby 0 0 kurz"
 }
 LAST_WORK=$(date +%s)
-first_open() { # der Job, der jetzt dran ist: der erste nach Namen mit Datei und ohne .done
-  local J JOB
-  for J in "$Q"/*.json; do
-    [ -e "$J" ] || continue
-    JOB=$(basename "$J" .json)
-    [ -f "$Q/$JOB.blend" ] && [ ! -f "$Q/$JOB.done" ] && { echo "$JOB"; return; }
-  done
-}
 frames_done() { find "$OUT/$1" -type f -size +0 2>/dev/null | wc -l | tr -d ' '; }
 bar() {       # [########............] fuer done/total
   local n=0 i s=""; [ "$2" -gt 0 ] && n=$((20 * $1 / $2)); [ $n -gt 20 ] && n=20
@@ -105,7 +103,7 @@ board() {     # die Uebersicht: offene Jobs mit Frames, die Macs mit ihrem Zusta
     line=$(head -1 "$f" | cut -d'|' -f1-2 | tr -s ' ')
     echo "  $line"
   done
-  read -r _ _ _ IDLE_MIN < <(control)
+  read -r _ _ _ IDLE_MIN _ < <(control)
   if [ "${IDLE_MIN:-0}" -gt 0 ]; then
     echo "Ohne Jobs meldet sich dieser Mac in $(( IDLE_MIN - ($(date +%s) - LAST_WORK) / 60 )) min ab (Autostart danach)."
   fi
@@ -145,6 +143,138 @@ except Exception as e:
 print("RF: Szene", sc.name, "|", r.engine)
 PYEOF
 
+HELP="$(mktemp -t renderfarm-help).py"   # welcher Job, welche Frames (ein Python-Aufruf statt vieler ls)
+cat > "$HELP" <<'PYEOF'
+import json, os, re, sys, time
+STALE = 1800          # ein leerer Platzhalter, so alt: sein Mac ist weggefallen, der Frame ist wieder frei
+
+
+def frames_of(spec):
+    out = set()
+    for part in spec:
+        if isinstance(part, int):
+            out.add(part)
+            continue
+        a, _, b = str(part).partition("-")
+        try:
+            out.update(range(int(a), int(b or a) + 1))
+        except ValueError:
+            pass
+    return out
+
+
+def load(q, job):
+    with open(os.path.join(q, job + ".json")) as f:
+        c = json.load(f)
+    skip = frames_of(c.get("skip", []))
+    try:
+        with open(os.path.join(q, job + ".skip")) as f:
+            skip |= frames_of(f.read().split())
+    except OSError:
+        pass
+    return c, int(c.get("start", 0)), int(c.get("end", 0)), skip
+
+
+def taken(q, out, job, start, end, skip):
+    """Frames, die vergeben sind (Bild da, frischer Platzhalter, uebernommen); alte Platzhalter gehen."""
+    now = time.time()
+    try:
+        since = os.path.getmtime(os.path.join(q, job + ".json"))
+    except OSError:
+        since = now
+    have = {f for f in skip if start <= f <= end}
+    freed = []
+    try:
+        entries = list(os.scandir(os.path.join(out, job)))
+    except OSError:
+        entries = []
+    pre = job + "_"
+    for e in entries:
+        if not e.name.startswith(pre) or e.name.endswith(".part"):
+            continue
+        m = re.match(r"(\d+)\.", e.name[len(pre):])
+        if not m:
+            continue
+        frame = int(m.group(1))
+        try:
+            st = e.stat()
+        except OSError:
+            continue
+        if st.st_size == 0 and frame not in skip and st.st_mtime > since + 60 and now - st.st_mtime > STALE:
+            try:
+                os.remove(e.path)
+                freed.append(frame)
+                continue
+            except OSError:
+                pass
+        have.add(frame)
+    return have, freed
+
+
+def order(q, out, mode):
+    rows, full = [], 0
+    for name in sorted(os.listdir(q)):
+        if not name.endswith(".json"):
+            continue
+        job = name[:-5]
+        if not os.path.exists(os.path.join(q, job + ".blend")) or os.path.exists(os.path.join(q, job + ".done")):
+            continue
+        try:
+            _c, s, e, skip = load(q, job)
+        except (OSError, ValueError):
+            continue
+        have, freed = taken(q, out, job, s, e, skip)
+        for f in freed:
+            print("# FREI %s %d" % (job, f))
+        left = (e - s + 1) - len(have)
+        if left <= 0:
+            full += 1
+            continue
+        m = re.match(r"^(\d)_", job)
+        prio = int(m.group(1)) if m else 2
+        try:
+            with open(os.path.join(q, job + ".rang")) as f:
+                rank = int(f.read().split()[0])
+        except (OSError, ValueError, IndexError):
+            rank = 50
+        stamp = re.search(r"(\d{8}-\d{6})", job)
+        key = (rank, prio, left if mode == "kurz" else 0, stamp.group(1) if stamp else job)
+        rows.append((key, job, left, rank, prio))
+    rows.sort()
+    for _key, job, left, rank, prio in rows:
+        print(job, left, rank, prio)
+    if not rows:
+        print("# WARTET", full)
+
+
+def chunk(q, out, job, n):
+    _c, s, e, skip = load(q, job)
+    have, _freed = taken(q, out, job, s, e, skip)
+    free = [f for f in range(s, e + 1) if f not in have]
+    if free:
+        a = b = free[0]
+        while b + 1 <= e and b + 1 not in have and b - a + 1 < n:
+            b += 1
+        print(a, b)
+
+
+def info(q, job):
+    c, s, e, skip = load(q, job)
+    print(c.get("scene", "-") or "-", s, e, c.get("blender", "-") or "-", (e - s + 1) - len({f for f in skip if s <= f <= e}))
+
+
+try:
+    cmd = sys.argv[1]
+    if cmd == "order":
+        order(sys.argv[2], sys.argv[3], sys.argv[4])
+    elif cmd == "chunk":
+        chunk(sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5]))
+    elif cmd == "info":
+        info(sys.argv[2], sys.argv[3])
+except Exception as ex:                       # der Server haengt oder eine Datei ist halb: naechstes Mal
+    print("# FEHLER", ex)
+PYEOF
+
 status() { echo "$NAME | $1 | $(date '+%Y-%m-%d %H:%M') | Blender $BV | v$VERSION" > "$ST/$NAME-render.txt" 2>/dev/null; }
 ended() {     # Ende mit Grund ins Logbuch (INT: Ctrl+C, TERM: Abmelden/Ausschalten/kill, HUP: Fenster zu)
   log "ENDE $1"; status beendet; sync_log; echo; echo "Beendet."; exit 0
@@ -168,7 +298,7 @@ while true; do
   fi
   [ "${SERVER_GONE:-0}" = 1 ] && { log "SERVER wieder da"; SERVER_GONE=0; }
   if [ $(( $(date +%s) - BEAT )) -ge 300 ]; then BEAT=$(date +%s); log "LEBT"; sync_log; fi
-  read -r FARM ENDE SEIT IDLE_MIN < <(control)
+  read -r FARM ENDE SEIT IDLE_MIN SORT < <(control)
   if [ "$FARM" = "aus" ]; then
     if [ "$SEIT" -ge "$STARTED" ] && [ "$ENDE" = "abmelden" ]; then
       status abgemeldet; log "ENDE abgemeldet auf Befehl (Farm aus, abmelden)"; sync_log
@@ -183,16 +313,28 @@ while true; do
     status "pausiert (Farm aus)"; sleep 60; continue
   fi
   [ "${PAUSED:-0}" = 1 ] && { log "PAUSE vorbei (Farm an)"; PAUSED=0; }
-  for J in "$Q"/*.json; do
-    [ -e "$J" ] || continue
-    if [ -n "$RF_ROOT" ] && [ "$ROOT/_worker/worker.sh" -nt "${BASH_SOURCE[0]}" ]; then
-      log "ENDE Update: neue Worker-Version auf dem Server"; sync_log
-      echo "$(date +%H:%M) neue Worker-Version auf dem Server -> startet neu"; exit 3   # der Start holt sie
-    fi
-    JOB=$(basename "$J" .json); B="$Q/$JOB.blend"
-    [ -f "$B" ] && [ ! -f "$Q/$JOB.done" ] || continue
-    read -r SCENE START END JBV < <(python3 -c "import json,sys;c=json.load(open(sys.argv[1]));print(c.get('scene','-') or '-',c.get('start',0),c.get('end',0),c.get('blender','-'))" "$J" 2>/dev/null)
-    TOTAL=$((END - START + 1))
+  if [ -n "$RF_ROOT" ] && [ "$ROOT/_worker/worker.sh" -nt "${BASH_SOURCE[0]}" ]; then
+    log "ENDE Update: neue Worker-Version auf dem Server"; sync_log
+    echo "$(date +%H:%M) neue Worker-Version auf dem Server -> startet neu"; exit 3   # der Start holt sie
+  fi
+  # der Job, der jetzt dran ist: Rang, LQ vor HQ, wenige offene Frames zuerst; nur Jobs mit freien Frames
+  WHY="keine offenen Jobs"; JOB=""
+  while read -r A B C D; do
+    case "$A" in
+      "#") case "$B" in
+             FREI) log "FREI $C Frame $D (Platzhalter eines weggefallenen Macs, wieder frei)" ;;
+             WARTET) [ "${C:-0}" -gt 0 ] && WHY="alle Frames vergeben ($C Jobs laufen auf anderen Macs)" ;;
+             FEHLER) WHY="Server antwortet nicht richtig" ;;
+           esac ;;
+      *) [ -n "$JOB" ] && continue
+         [ "$A" = "$BAD_JOB" ] && [ "$(date +%s)" -lt "${BAD_UNTIL:-0}" ] && { WHY="$A schlug 3x fehl, Pause"; continue; }
+         JOB="$A" ;;
+    esac
+  done < <(t 60 python3 "$HELP" order "$Q" "$OUT" "$SORT" 2>/dev/null)
+  if [ -n "$JOB" ]; then
+    J="$Q/$JOB.json"; B="$Q/$JOB.blend"
+    read -r SCENE START END JBV TOTAL < <(python3 "$HELP" info "$Q" "$JOB" 2>/dev/null)
+    [ -n "$END" ] || { sleep 5; continue; }
     if [ "$JBV" != "-" ] && [ "${JBV%.*}" != "${BV%.*}" ]; then
       echo "$(date +%H:%M) WARNUNG: $JOB wurde mit Blender $JBV gesendet, hier laeuft $BV."
     fi
@@ -211,17 +353,17 @@ while true; do
       cp -f "$B" "$LB.part" 2>/dev/null && mv -f "$LB.part" "$LB" || LB="$B"
     fi
     ARGS=(-b "$LB" --factory-startup); [ "$SCENE" != "-" ] && ARGS+=(-S "$SCENE")
-    # in Paketen zu je CHUNK Frames rendern: so reagiert der Worker schnell auf "Farm aus"
-    CHUNK=20; STOPPED=0; PREEMPT=0
-    for ((CS=START; CS<=END; CS+=CHUNK)); do
-      CE=$((CS + CHUNK - 1)); [ $CE -gt $END ] && CE=$END
-      FREE=0; for ((f=CS; f<=CE; f++)); do ls "$OUT/$JOB/${JOB}_$(printf %04d $f)".* >/dev/null 2>&1 || { FREE=1; break; }; done
-      [ $FREE = 1 ] || continue
-      read -r FARM _ _ _ < <(control); [ "$FARM" = "aus" ] && { STOPPED=1; break; }
+    # in Paketen rendern (hoechstens ~10 min): so reagiert der Mac schnell auf "Farm aus" und LQ-Jobs
+    [ "$JOB" = "${LAST_JOB:-}" ] || CHUNK=20; LAST_JOB="$JOB"; STOPPED=0; FAILS=0
+    PLOG="$LDIR/paket.log"
+    while true; do
+      read -r CS CE < <(t 60 python3 "$HELP" chunk "$Q" "$OUT" "$JOB" "$CHUNK" 2>/dev/null)
+      [ -n "$CE" ] && [ "$CS" != "#" ] || break         # nichts mehr frei: fertig oder die anderen Macs haben den Rest
+      read -r FARM _ _ _ _ < <(control); [ "$FARM" = "aus" ] && { STOPPED=1; break; }
       echo "$(date +%H:%M:%S) Frames $CS-$CE ..."
-      T0=$(date +%s); PK0=$T0; D0=$(frames_done "$JOB")
+      T0=$(date +%s); PK0=$T0
       RF_JOB="$JOB" RF_OUT="$OUT" RF_JSON="$J" "$BLENDER" "${ARGS[@]}" --python "$PY" -s $CS -e $CE -a 2>&1 \
-        | while IFS= read -r line; do
+        | tee "$PLOG" | while IFS= read -r line; do
             case "$line" in
               *Saved:*)
                 FR=${line##*_}; FR=${FR%%.*}; NOW=$(date +%s)
@@ -230,28 +372,42 @@ while true; do
               *RF:*|*rror*) echo "$line" ;;
             esac
           done
-      RC=${PIPESTATUS[0]}; D1=$(frames_done "$JOB")
-      SECS=$(( $(date +%s) - PK0 )); NEW=$((D1 - D0))
+      RC=${PIPESTATUS[0]}
+      SECS=$(( $(date +%s) - PK0 )); NEW=$(grep -c "Saved:" "$PLOG" 2>/dev/null); NEW=${NEW:-0}
       log "PAKET $JOB $CS-$CE | $NEW neue Frames | $SECS s | Blender-Code $RC"
       if [ $(( $(date +%s) - BEAT )) -ge 300 ]; then BEAT=$(date +%s); sync_log; fi
-      # Pakete von hoechstens ~10 min: so kommt ein neuer Low-Quality-Job bald dran
-      [ $NEW -gt 0 ] && { SPF=$(( SECS / NEW )); [ $SPF -lt 1 ] && SPF=1; CHUNK=$(( 600 / SPF ))
-                          [ $CHUNK -lt 1 ] && CHUNK=1; [ $CHUNK -gt 20 ] && CHUNK=20; }
-      NEXT=$(first_open)
-      if [ -n "$NEXT" ] && [ "$NEXT" != "$JOB" ] && [[ "$NEXT" < "$JOB" ]]; then
-        log "WECHSEL zu $NEXT (steht vor $JOB)"; PREEMPT=1; break
+      if [ "$NEW" -gt 0 ]; then
+        FAILS=0; SPF=$(( SECS / NEW )); [ $SPF -lt 1 ] && SPF=1; CHUNK=$(( 600 / SPF ))
+        [ $CHUNK -lt 1 ] && CHUNK=1; [ $CHUNK -gt 20 ] && CHUNK=20
+      elif [ "$RC" != 0 ]; then
+        FAILS=$((FAILS + 1))
+        if [ $FAILS -ge 3 ]; then             # Blender bricht bei diesem Job immer ab: 30 min die anderen
+          log "FEHLER $JOB: 3 Pakete ohne Frame (Blender-Code $RC), 30 min Pause fuer diesen Job"
+          BAD_JOB="$JOB"; BAD_UNTIL=$(( $(date +%s) + 1800 )); break
+        fi
+      fi
+      # ein Job, der jetzt vorgeht (Rang, LQ, deutlich weniger offene Frames): dorthin wechseln
+      read -r TOP TLEFT TRANK TPRIO < <(t 60 python3 "$HELP" order "$Q" "$OUT" "$SORT" 2>/dev/null | grep -v '^#' | head -1)
+      if [ -n "$TOP" ] && [ "$TOP" != "$JOB" ]; then
+        read -r MLEFT MRANK MPRIO < <(t 60 python3 "$HELP" order "$Q" "$OUT" "$SORT" 2>/dev/null | awk -v j="$JOB" '$1==j{print $2,$3,$4}')
+        if [ -z "$MLEFT" ] || [ "$TRANK" -lt "${MRANK:-50}" ] || [ "$TPRIO" -lt "${MPRIO:-2}" ] \
+           || { [ "$SORT" = "kurz" ] && [ "$TRANK" -eq "${MRANK:-50}" ] && [ "$TPRIO" -eq "${MPRIO:-2}" ] \
+                && [ $(( TLEFT + CHUNK )) -lt "${MLEFT:-0}" ]; }; then
+          log "WECHSEL zu $TOP (geht vor $JOB)"; break
+        fi
       fi
     done
     LAST_WORK=$(date +%s)
-    [ $PREEMPT = 1 ] && continue 2                 # von vorne: der Job weiter vorne zuerst
     [ $STOPPED = 1 ] && { log "PAUSE Job $JOB (Farm aus)"; echo "$(date +%H:%M) Farm aus - Job $JOB pausiert"; continue; }
     DONE=$(frames_done "$JOB")
-    if [ "$DONE" -ge "$TOTAL" ]; then
+    if [ "$DONE" -ge "$TOTAL" ] && [ ! -f "$Q/$JOB.done" ]; then
       date > "$Q/$JOB.done"; echo "$(date +%H:%M) FERTIG: $JOB ($DONE/$TOTAL Frames)"
       log "FERTIG $JOB ($DONE/$TOTAL)"
     fi
-  done
-  status wartet
+    continue
+  fi
+  [ "$WHY" != "${LAST_WHY:-}" ] && { log "WARTET $WHY"; LAST_WHY="$WHY"; }
+  status "wartet ($WHY)"
   if [ "${IDLE_MIN:-0}" -gt 0 ] && [ $(( $(date +%s) - LAST_WORK )) -ge $(( IDLE_MIN * 60 )) ]; then
     status abgemeldet; log "ENDE abgemeldet nach $IDLE_MIN min ohne Job"; sync_log
     echo "$(date +%H:%M) $IDLE_MIN min ohne Job -> melde ab"; sleep 5

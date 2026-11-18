@@ -46,7 +46,7 @@ UPGRADES = {"sort": {"b35e76dbacdeb8cbbbf0f5eb0167c16a63492077"},
                      "734a01c2e9c5f01d604a057772962ebd7c9c123d",
                      "45f7f14e8f37d7b206cacab4cf35eab678c6c9d5"},
             "cut": {"428f06972d363deecc2326b9254e3ad47c843a72", "e611cbf7a99c7047c4fc188e99025411d8089812", "3ecd86857bce1a50c41f5481d86f50088964389a", "d6c9efad8c1d901562ae27e8900d3b3ae269013f", "6ae68ae9968b512cdaf837799388561fbc1243bf", "ee49b0c3eae03c514b6d6d3d64038e49014144e7", "811c1f2d106f7e45330f733ea3f4e5b96aff6bce",
-                    "ac87ce4754241ab4af4197e7bbaa7044794c7314"},
+                    "ac87ce4754241ab4af4197e7bbaa7044794c7314", "f56d6e8728c9a250d0d92badad17b5f539951dec"},
             "light": {"836f400f42ede6f5a887089f90528bf1e29da481", "dd0b9b9a2a01ef17ccf380bfc53708180e61224e",
                       "f0af9312a69eafd23e268221be706be8fffab3ba", "b5d877c4c7bf2035cd52552db1f4d371071a4ca5", "aca7b2ea8e34e2ff04bae9046de24b9aff6ed4ef"}}
 _FRONT = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.S)

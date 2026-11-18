@@ -10,6 +10,16 @@ from bpy.props import (BoolProperty, EnumProperty, FloatProperty, IntProperty, S
 from bpy.types import Menu, Operator, Panel
 
 from . import core, runner, shots
+
+ORIGIN = [""]            # set around an add that is not the user's own (HQ after the preview, after a restart)
+
+
+def _chat_busy():
+    try:
+        from .. import core as chat
+        return chat.is_busy()
+    except Exception:
+        return False
 from .ui_common import (QUEUE_TAB_ORDER, SCALE_PRESETS, _SidebarPanel, _item_progress_text, _look_through,
                         _queue_progress_text, _unpin, _user_resolution, active_camera, ensure_uids,
                         studio_tab)
@@ -169,6 +179,7 @@ class STUDIO_OT_add(Operator):
         item.frame_start, item.frame_end = scene.frame_start, scene.frame_end
         item.parts = 1
         item.where = self.where
+        item.origin = ORIGIN[0] or ("the chat" if _chat_busy() else "you")
         return item
 
     def _start(self, context, scene=None):
@@ -206,8 +217,11 @@ class STUDIO_OT_add(Operator):
                 if not self.section:
                     skipped.append(name)
                     continue
-                from . import film_tools          # this section sent again: its older render stops
-                film_tools.supersede(scene, name)
+                from . import film_tools, renderfarm   # this section sent again: its older render stops,
+                if self.force or not any(              # unless it renders on the farm from the same scene
+                        j.get("section") == name and j["phase"] == "sent" and renderfarm.unchanged(j)
+                        for j in renderfarm._jobs):    # (then only what it does not render goes)
+                    film_tools.supersede(scene, name)
             a, b, keep = start, end, False
             if self.frames:
                 try:
@@ -1115,6 +1129,8 @@ def draw_queue(layout, context, buttons=True):
         _queue_row(col, scene, i, item, item.uid == current, buttons)
     if mine or other or farm_items:
         _queue_head(col, "Render Farm", 'NETWORK_DRIVE')
+        if buttons and (mine or other):
+            col.row(align=True).prop(rq, "farm_sort", expand=True)
     for i, item in farm_items:
         _queue_row(col, scene, i, item, False, buttons, "goes to the farm")
     renderfarm.draw_rows(col, buttons)

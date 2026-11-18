@@ -94,6 +94,8 @@ def check_follow(scene):
             continue
         wanted.pop(section)
         if clean(scene, section_key(section)):
+            from . import tab_queue
+            tab_queue.ORIGIN[0] = "HQ after the preview"
             try:
                 result = bpy.ops.studio.add(mode='ANIM', section=section, quality='HIGH', where=str(where),
                                             no_preview=True)
@@ -101,6 +103,8 @@ def check_follow(scene):
                     started.append(section)
             except RuntimeError as ex:
                 print("AI Studio: High Quality after the preview:", ex)
+            finally:
+                tab_queue.ORIGIN[0] = ""
     scene[FOLLOW_KEY] = wanted
     if started:
         from . import runner
