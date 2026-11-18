@@ -741,6 +741,115 @@ def _draw_compare(layout, context):
     row.operator(STUDIO_OT_render_ab.bl_idname, text="", icon='X').action = "CLEAR"
 
 
+class STUDIO_PT_photo_export(Panel):
+    """Export, in the Photo workspace's top bar (not under the renders)."""
+    bl_space_type = 'IMAGE_EDITOR'
+    bl_region_type = 'HEADER'
+    bl_label = "Export"
+    bl_ui_units_x = 14
+
+    def draw(self, context):
+        from . import photo_view
+        scene = context.scene
+        path = _selected_image(runner.queue_images(scene))
+        photo_view.draw_export(self.layout, context, path)
+
+
+def draw_photo_header(self, context):
+    """[⤴ Export] at the right of the Image Editor's top bar, in the Photo workspace."""
+    workspace = getattr(context, "workspace", None)
+    if workspace is None or workspace.name != photo_workspace():
+        return
+    self.layout.popover(STUDIO_PT_photo_export.__name__, text="Export", icon='EXPORT')
+
+
+class STUDIO_OT_photo_step(Operator):
+    bl_idname = "studio.photo_step"
+    bl_label = "Next Render"
+    bl_description = "Arrow keys in the Photo workspace: the next (→ ↑) or the one before (← ↓), big"
+    bl_options = {'INTERNAL'}
+
+    direction: IntProperty(default=1, options={'SKIP_SAVE'})
+
+    @classmethod
+    def poll(cls, context):
+        workspace = getattr(context, "workspace", None)
+        return workspace is not None and workspace.name == photo_workspace() and \
+            context.area is not None and context.area.type == 'IMAGE_EDITOR'
+
+    def execute(self, context):
+        from . import render_review
+        images = render_review.arrange(runner.queue_images(context.scene))   # in the order of the list
+        if not images:
+            return {'CANCELLED'}
+        current = _view["path"] if _view["path"] in images else images[0]
+        index = max(0, min(len(images) - 1, images.index(current) + self.direction))
+        _view["path"] = images[index]
+        show_in_image_editor(context, images[index])
+        for area in context.screen.areas:
+            area.tag_redraw()
+        return {'FINISHED'}
+
+
+def draw_sort_head(layout, context):
+    """The top of Sort: [Low | High] [Sort ▾] [▦ | ☰] [size]."""
+    from . import render_review
+    scene, wm = context.scene, context.window_manager
+    row = layout.row(align=True)
+    row.scale_y = 1.2
+    row.prop_enum(scene.studio, "quality", 'LOW', text="Low", icon='SORTTIME')
+    row.prop_enum(scene.studio, "quality", 'HIGH', text="High", icon='SHADING_RENDERED')
+    row.separator()
+    sort = next(label for key, label, _i in render_review.SORTS if key == render_review.state["sort"])
+    row.menu(STUDIO_MT_render_arrange.bl_idname, text=sort, icon='FILTER')
+    row.separator()
+    row.prop(wm, "studio_render_layout", expand=True, icon_only=True)
+    if wm.studio_render_layout == 'GRID':
+        sub = row.row(align=True)
+        sub.ui_units_x = 3
+        sub.prop(wm, "studio_render_columns", text="")
+
+
+def _mark_buttons(row, path):
+    """[👍] [👎]: good or bad (click again: no mark)."""
+    from . import render_review
+    stars = render_review.rating(path)
+    op = row.operator(STUDIO_OT_render_rate.bl_idname, text="", icon='CHECKMARK',
+                      depress=stars >= render_review.GOOD, emboss=stars >= render_review.GOOD)
+    op.path, op.stars = path, render_review.GOOD
+    op = row.operator(STUDIO_OT_render_rate.bl_idname, text="", icon='X',
+                      depress=0 < stars <= render_review.BAD, emboss=0 < stars <= render_review.BAD)
+    op.path, op.stars = path, render_review.BAD
+
+
+class STUDIO_OT_render_rename(Operator):
+    bl_idname = "studio.render_rename"
+    bl_label = "Rename Render"
+    bl_description = "Give this render a name of its own (the file is renamed in its folder)"
+    bl_options = {'INTERNAL'}
+
+    path: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    name: StringProperty(name="Name", options={'SKIP_SAVE'})
+
+    def invoke(self, context, _event):
+        self.name = os.path.splitext(os.path.basename(self.path))[0]
+        return context.window_manager.invoke_props_dialog(self, confirm_text="Rename")
+
+    def execute(self, context):
+        from . import render_review
+        try:
+            new = render_review.rename_render(self.path, self.name)
+        except (OSError, ValueError) as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        if _view["path"] == self.path:
+            _view["path"] = new
+        for key in ("A", "B"):
+            if _ab[key] == self.path:
+                _ab[key] = new
+        return {'FINISHED'}
+
+
 def _draw_overview(layout, context, images, shown):
     """All renders as small pictures: sorted and filtered (menu), a batch as one group, refined
     versions marked. Click the name = big above, [A] [B] = compare."""
@@ -761,9 +870,11 @@ def _draw_overview(layout, context, images, shown):
         box.label(text="None of them", icon='INFO')
         return
     width = context.region.width / (20 * (context.preferences.system.ui_scale or 1.0))
-    columns = max(2, min(5, int(width // 6)))
+    wm = context.window_manager
+    as_list = getattr(wm, "studio_render_layout", 'GRID') == 'LIST'
+    columns = 1 if as_list else max(1, min(6, getattr(wm, "studio_render_columns", 2)))
     grouped = render_review.state["sort"] == 'NEW'
-    shown_list = images if _overview["all"] else images[:OVERVIEW_FIRST]
+    shown_list = images                                  # all of them: the sidebar scrolls
     grid = None
     group_now = None
     for path in shown_list:
@@ -778,11 +889,19 @@ def _draw_overview(layout, context, images, shown):
                                  emboss=False).path = os.path.dirname(path)
             grid = box.grid_flow(row_major=True, columns=columns, even_columns=True, align=False)
             group_now = group
+        if as_list:                                # one line each: small picture, name, marks
+            line = grid.row(align=True)
+            op = line.operator(STUDIO_OT_render_pick.bl_idname, text=_title(path), translate=False,
+                               icon_value=render_review.thumb(path) or 0, depress=path == shown)
+            op.path, op.slot = path, "VIEW"
+            _mark_buttons(line, path)
+            line.operator(STUDIO_OT_render_rename.bl_idname, text="", icon='GREASEPENCIL', emboss=False).path = path
+            continue
         cell = grid.column(align=True)
         pic = cell.box() if path == shown else cell.column()
         icon = render_review.thumb(path)
-        if icon:
-            pic.template_icon(icon_value=icon, scale=max(3.0, width / columns - 1.2))
+        if icon:                                   # (only template_icon draws a preview big; the name is the button)
+            pic.template_icon(icon_value=icon, scale=max(3.0, width / columns - 0.8))
         kind = render_review.refined_kind(path)
         name = cell.row(align=True)
         name.scale_y = 0.8
@@ -792,17 +911,13 @@ def _draw_overview(layout, context, images, shown):
         op.path, op.slot = path, "VIEW"
         info = cell.row(align=True)
         info.scale_y = 0.8
-        _ab_button(info, path, "A")
-        _ab_button(info, path, "B")
+        _mark_buttons(info, path)
+        info.operator(STUDIO_OT_render_rename.bl_idname, text="", icon='GREASEPENCIL', emboss=False).path = path
         tag = info.row(align=True)
         tag.active = False
         tag.alignment = 'RIGHT'
-        stars = render_review.rating(path)
-        tag.label(text=render_review.stars_text(stars) if stars else
-                  ("Low" if render_review.quality_of(path) == 'LOW' else ""))
-    if len(images) > OVERVIEW_FIRST:
-        box.operator(STUDIO_OT_render_overview.bl_idname, emboss=False,
-                     text="Less" if _overview["all"] else "All %d Renders" % len(images))
+        tag.label(text="Low" if render_review.quality_of(path) == 'LOW' else "")
+
 
 
 def draw_statusbar(self, context):
@@ -849,6 +964,65 @@ def _factor_row(layout, label, factors, op, depress_value, **props):
             setattr(o, key, value)
 
 
+class STUDIO_OT_goto_workspace(Operator):
+    bl_idname = "studio.goto_workspace"
+    bl_label = "Open"
+    bl_options = {'INTERNAL'}
+
+    which: StringProperty(default='PHOTO', options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, _context, props):
+        return ("The Photo workspace: all renders big, sort, adjust, Krea" if props.which == 'PHOTO'
+                else "The Film workspace: the film's sections, cut and export")
+
+    def execute(self, context):
+        if self.which == 'PHOTO':
+            return bpy.ops.studio.open_review()
+        name = next((n for n in ("Film", "Video Editing") if bpy.data.workspaces.get(n)), "Film")
+        open_workspace(context, name, 'SEQUENCE_EDITOR')
+        return {'FINISHED'}
+
+
+def draw_render_head(layout, context):
+    """The top of the Render tab, compact: [Mac|Farm] [LQ|HQ] [▣|▶] [⚙], the size, then [Render] [Photo] [Video]."""
+    scene = context.scene
+    rq = scene.studio
+    render = scene.render
+    row = layout.row(align=True)
+    sub = row.row(align=True)
+    sub.prop_enum(rq, "farm_mode", 'OFF', text="Mac", icon='DESKTOP')
+    sub.prop_enum(rq, "farm_mode", 'ON', text="Farm", icon='NETWORK_DRIVE')
+    row.separator(factor=0.5)
+    sub = row.row(align=True)
+    sub.prop_enum(rq, "quality", 'LOW', text="LQ")
+    sub.prop_enum(rq, "quality", 'HIGH', text="HQ")
+    row.separator(factor=0.5)
+    sub = row.row(align=True)
+    sub.prop_enum(rq, "quality_view", 'STILL', text="", icon='IMAGE_DATA')
+    sub.prop_enum(rq, "quality_view", 'ANIM', text="", icon='RENDER_ANIMATION')
+    row.popover(STUDIO_PT_output.__name__, text="", icon='PREFERENCES')
+    pct = render.resolution_percentage / 100
+    row = layout.row(align=True)                  # size: the pixels and 0.5× … 4×
+    split = row.split(factor=0.42, align=True)
+    left = split.row()
+    left.label(text="%d × %d px" % (round(render.resolution_x * pct), round(render.resolution_y * pct)),
+               icon='FULLSCREEN_ENTER', translate=False)
+    buttons = split.row(align=True)
+    for factor in SCALE_PRESETS:
+        op = buttons.operator('studio.set_scale', text="%gx" % factor,
+                              depress=render.resolution_percentage == round(factor * 100))
+        op.factor = factor
+    row = layout.row(align=True)                  # go: render, or open the pictures / the film
+    row.scale_y = 1.4
+    op = row.operator(STUDIO_OT_add.bl_idname, text="Render", icon='RENDER_STILL'
+                      if rq.quality_view == 'STILL' else 'RENDER_ANIMATION')
+    op.mode = 'ANIM' if rq.quality_view == 'ANIM' else 'STILL'
+    op.quality = rq.quality
+    row.operator(STUDIO_OT_goto_workspace.bl_idname, text="Photo", icon='IMAGE').which = 'PHOTO'
+    row.operator(STUDIO_OT_goto_workspace.bl_idname, text="Video", icon='SEQUENCE').which = 'FILM'
+
+
 def draw_quality(layout, context):
     """Render tab: [Stills | Animation], then High and Low Quality of that kind, each from a preset
     (Quick, Medium, High, Max) with its values (quality.py)."""
@@ -861,9 +1035,6 @@ def draw_quality(layout, context):
         quality.schedule_ensure()               # files from before: filled once (not while drawing)
     cycles = render.engine == 'CYCLES'
     animation = rq.quality_view == 'ANIM'
-    row = layout.row(align=True)
-    row.scale_y = 1.2
-    row.prop(rq, "quality_view", expand=True)
     pct = render.resolution_percentage / 100
     width, height = round(render.resolution_x * pct), round(render.resolution_y * pct)
     for which, title, icon in (('HIGH', "High Quality", 'SHADING_RENDERED'), ('LOW', "Low Quality", 'SORTTIME')):
@@ -910,12 +1081,6 @@ def draw_quality(layout, context):
             box.prop(prof, "eevee_samples")
             box.prop(prof, "motion_blur", toggle=True, icon='ONIONSKIN_ON')
     box = layout.box()                           # the same for every render
-    row = box.row()
-    row.label(text="Size", icon='FULLSCREEN_ENTER')
-    sub = row.row()
-    sub.alignment = 'RIGHT'
-    sub.label(text="%d × %d px" % (width, height), translate=False)
-    _factor_row(box, "", SCALE_PRESETS, 'studio.set_scale', render.resolution_percentage)
     row = box.row(align=True)
     row.prop(render, "film_transparent", text="Transparent", toggle=True, icon='IMAGE_RGB_ALPHA')
     row.prop(render, "use_persistent_data", text="Keep Data", toggle=True, icon='MEMORY')
@@ -1045,7 +1210,8 @@ def _draw_renders(layout, context, review):
     newer.enabled = index > 0
     newer.operator(STUDIO_OT_preview_step.bl_idname, text="", icon='TRIA_RIGHT').direction = -1
     head.operator(STUDIO_OT_show_render.bl_idname, text="", icon='ZOOM_IN')
-    scale = max(6.0, min(24.0, context.region.width / (20 * (context.preferences.system.ui_scale or 1.0)) - 2.5))
+    full = context.region.width / (20 * (context.preferences.system.ui_scale or 1.0)) - 2.5
+    scale = max(6.0, min(24.0, full)) if review else max(4.0, min(10.0, full * 0.55))   # small here
     if image is not None and path:
         pic.template_icon(icon_value=layout.icon(image), scale=scale)
     else:   # the same height until the draft is there
@@ -1061,17 +1227,10 @@ def _draw_renders(layout, context, review):
         row.label(text=frame, icon='RENDER_ANIMATION', translate=False)
         row.operator(STUDIO_OT_render_reveal.bl_idname, text="", icon='FILE_FOLDER', emboss=False).path = path
     elif path:
-        _ab_button(row, path, "A")
-        _ab_button(row, path, "B")
+        _mark_buttons(row, path)
         row.label(text=_title(path), translate=False)
+        row.operator(STUDIO_OT_render_rename.bl_idname, text="", icon='GREASEPENCIL', emboss=False).path = path
         row.operator(STUDIO_OT_render_reveal.bl_idname, text="", icon='FILE_FOLDER', emboss=False).path = path
-        row = pic.row(align=True)
-        _stars(row, path)
-        refine = row.row(align=True)
-        refine.alignment = 'RIGHT'
-        if not review:          # all renders big, compare and sort: the Photo workspace
-            refine.operator(STUDIO_OT_open_review.bl_idname, text="Compare", icon='IMAGE')
-        refine.operator(STUDIO_OT_render_refine.bl_idname, text="Refine", icon='NODE_COMPOSITING').path = path
     if not review:              # the queue, comparing and sorting: in the Photo workspace (the tab's head)
         return
     _draw_compare(layout, context)
@@ -1183,11 +1342,10 @@ def _draw_pick(layout, context, images, path):
     if live is not None or not path:
         return
     row = box.row(align=True)
-    _ab_button(row, path, "A")
-    _ab_button(row, path, "B")
+    _mark_buttons(row, path)
     row.label(text=_title(path), translate=False)
+    row.operator(STUDIO_OT_render_rename.bl_idname, text="", icon='GREASEPENCIL', emboss=False).path = path
     row.operator(STUDIO_OT_render_reveal.bl_idname, text="", icon='FILE_FOLDER', emboss=False).path = path
-    _stars(box.row(align=True), path)
 
 
 class STUDIO_PT_review(Panel):
@@ -1223,29 +1381,19 @@ class STUDIO_PT_review(Panel):
         path = _selected_image(images)
         a, b = (_ab[k] if _ab[k] and os.path.isfile(_ab[k]) else "" for k in ("A", "B"))
         photo_view.want(context, image_edit.preview_file(scene, path) if path else "", a, b)
-        _draw_pick(layout, context, images, path)
-        if tab == 'SORT':
-            box, _head, is_open = section(layout, "photo_compare", "Compare", 'IMAGE_REFERENCE')
-            if is_open:
-                photo_view.draw_compare(box, context, a, b)
-            row = layout.row(align=True)
-            sort = next(label for key, label, _i in render_review.SORTS if key == render_review.state["sort"])
-            row.menu(STUDIO_MT_render_arrange.bl_idname, text=sort, icon='FILTER')
+        if tab != 'SORT':
+            _draw_pick(layout, context, images, path)
+        if tab == 'SORT':                                # only the renders, one after another (← → step)
+            draw_sort_head(layout, context)
             _draw_overview(layout, context, images, path)
-            box, _head, is_open = section(layout, "photo_export", "Export", 'EXPORT', default_open=False)
-            if is_open:
-                photo_view.draw_export(box, context, path)
         elif tab == 'ADJUST':
-            photo_view.draw_notes(layout, context, path)
+            photo_view.draw_adjust_bar(layout, context, path)     # the chat follows below (ui_panel)
         elif tab == 'LOOK':
-            tab_finish.draw_look(layout, context)            # the look (compositor: the next renders)
-            tab_finish._draw_adjust(layout, context, path)   # light and colour of this picture
+            # Only this picture's light and colour: the look of the next renders (compositor) is in the
+            # Camera tab of the 3D view – here it changed the viewport, not the picture
+            tab_finish._draw_adjust(layout, context, path)
         else:
             tab_finish._draw_krea(layout, context, path)
-            box, _head, is_open = section(layout, "mockup", "Mockup: Product in a Photo", 'IMAGE_REFERENCE',
-                                          default_open=True)
-            if is_open:
-                mockup.draw(box, context)
 
 
 class STUDIO_PT_render_queue(_SidebarPanel, Panel):
@@ -1266,11 +1414,8 @@ class STUDIO_PT_render_queue(_SidebarPanel, Panel):
         if not RUN.busy:
             shots.draw_check(layout, scene)
         from . import renderfarm
-        _draw_renders(layout, context, review=False)   # first what came out (the newest image or frame)
-        draw_queue(layout, context)                    # then what is coming
-        head = layout.row(align=True)                  # where renders go (this Mac / the farm) · settings
-        head.scale_y = 1.2
-        renderfarm.draw_switch(head, context)
-        head.popover(STUDIO_PT_output.__name__, text="", icon='PREFERENCES')
+        draw_render_head(layout, context)              # where, LQ/HQ, still/film, size, [Render] [Photo] [Video]
+        draw_queue(layout, context)                    # what is coming
         renderfarm.draw_state(layout, context)
-        draw_quality(layout, context)
+        _draw_renders(layout, context, review=False)   # what came out (small; big in the Photo workspace)
+        draw_quality(layout, context)                  # High and Low Quality in detail

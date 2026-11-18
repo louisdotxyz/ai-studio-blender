@@ -295,7 +295,7 @@ def on_depsgraph_update(scene, _depsgraph=None):
             lightsets.guard_lights(scene)     # before Light Wrangler's timer looks at the active light
             lightsets.schedule_follow(scene)  # only the lights of the camera you look through
         from . import background
-        background.sync(scene)   # e.g. another World or view transform: update the color
+        background.schedule_sync(scene)   # e.g. another World or view transform: the color, after the change
     except Exception as ex:  # nie den Depsgraph-Update blockieren
         print("AI Studio: Format-Sync fehlgeschlagen:", ex)
 

@@ -641,6 +641,16 @@ class STUDIO_Settings(PropertyGroup):
     edit_saturation: FloatProperty(name="Saturation", description="All colors stronger (+) or grayer (−)",
                                    default=0.0, min=-100.0, max=100.0, precision=0, options=set(),
                                    update=_edit_changed)
+    edit_whites: FloatProperty(name="Whites", description="The brightest parts: brighter (+) or softer (−)",
+                               default=0.0, min=-100.0, max=100.0, precision=0, options=set(), update=_edit_changed)
+    edit_blacks: FloatProperty(name="Blacks", description="The darkest parts: deeper (−) or lifted (+)",
+                               default=0.0, min=-100.0, max=100.0, precision=0, options=set(), update=_edit_changed)
+    edit_fade: FloatProperty(name="Fade", description="A matte, faded look: the blacks become gray", default=0.0,
+                             min=0.0, max=100.0, precision=0, options=set(), update=_edit_changed)
+    edit_vignette: FloatProperty(name="Vignette", description="Darker (−) or lighter (+) edges", default=0.0,
+                                 min=-100.0, max=100.0, precision=0, options=set(), update=_edit_changed)
+    edit_grain: FloatProperty(name="Grain", description="Film grain", default=0.0, min=0.0, max=100.0, precision=0,
+                              options=set(), update=_edit_changed)
     background_mode: EnumProperty(
         name="Background",
         items=[

@@ -436,8 +436,23 @@ def _glide():
     return SCROLL_TICK
 
 
+def _in_photo_chat(context):
+    """The chat in the Photo workspace's sidebar (Image Editor › Studio › Adjust)."""
+    area, region = context.area, context.region
+    if not (area and region and area.type == 'IMAGE_EDITOR' and region.type == 'UI'):
+        return False
+    if getattr(context.window_manager, "studio_photo_tab", "") != 'ADJUST':
+        return False
+    try:
+        return region.active_panel_category == "Studio"
+    except (AttributeError, TypeError):
+        return True
+
+
 def _in_claude_sidebar(context):
     area, region = context.area, context.region
+    if _in_photo_chat(context):
+        return True
     if not (area and region and area.type in {'VIEW_3D', 'SEQUENCE_EDITOR'} and region.type == 'UI'):
         return False
     try:
@@ -447,6 +462,8 @@ def _in_claude_sidebar(context):
 
 
 def _mouse_over_chat(context, event):
+    if _in_photo_chat(context):
+        return True          # there the sidebar is the chat: the wheel scrolls the chat, never both
     region = context.region
     scale = ui_scale(context)
     _x, view_y = region.view2d.region_to_view(event.mouse_region_x, event.mouse_region_y)
@@ -479,6 +496,20 @@ class CLAUDE_OT_chat_scroll(bpy.types.Operator):
         if steps:
             scroll(steps, smooth=True)
             context.region.tag_redraw()
+        return {'FINISHED'}
+
+
+class CLAUDE_OT_chat_no_zoom(bpy.types.Operator):
+    """Ctrl + wheel and pinching over the chat: nothing (the sidebar's text stays the same size)."""
+    bl_idname = "claude.chat_no_zoom"
+    bl_label = "Keep Chat Size"
+    bl_options = {'INTERNAL'}
+
+    @classmethod
+    def poll(cls, context):
+        return _in_claude_sidebar(context)
+
+    def invoke(self, context, event):
         return {'FINISHED'}
 
 
@@ -522,7 +553,7 @@ class CLAUDE_OT_toggle_summary(bpy.types.Operator):
         return {'FINISHED'}
 
 
-classes = (CLAUDE_OT_chat_scroll, CLAUDE_OT_chat_scroll_bottom, CLAUDE_OT_chat_scroll_to,
+classes = (CLAUDE_OT_chat_scroll, CLAUDE_OT_chat_no_zoom, CLAUDE_OT_chat_scroll_bottom, CLAUDE_OT_chat_scroll_to,
            CLAUDE_OT_toggle_summary)
 
 
@@ -539,6 +570,13 @@ def register():
         kmi = km.keymap_items.new(CLAUDE_OT_chat_scroll.bl_idname, event_type, value)
         kmi.properties.lines = lines
         _keymaps.append((km, kmi))
+    for event_type, value, ctrl in (("WHEELUPMOUSE", 'PRESS', True), ("WHEELDOWNMOUSE", 'PRESS', True),
+                                    ("TRACKPADZOOM", 'ANY', False), ("MOUSESMARTZOOM", 'ANY', False),
+                                    ("NUMPAD_PLUS", 'PRESS', True), ("NUMPAD_MINUS", 'PRESS', True)):
+        try:
+            _keymaps.append((km, km.keymap_items.new(CLAUDE_OT_chat_no_zoom.bl_idname, event_type, value, ctrl=ctrl)))
+        except (TypeError, ValueError):
+            pass
 
 
 def unregister():

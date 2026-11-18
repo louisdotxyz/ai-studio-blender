@@ -49,7 +49,8 @@ def part_key(obj):
 
 
 def _archived(obj):
-    coll = bpy.data.collections.get(archive_collection_name())
+    from .cameras import ARCHIVE, scene_collection
+    coll = scene_collection(bpy.context.scene, ARCHIVE, create=False)
     return coll is not None and obj.name in coll.all_objects
 
 
@@ -168,17 +169,8 @@ def archive_collection(scene=None):
     scene = scene or bpy.context.scene
     from .cameras import rename_old_collections
     rename_old_collections()
-    name = archive_collection_name()
-    coll = bpy.data.collections.get(name)
-    if coll is None:   # an archive this scene already has under an older name ("archiv velo")
-        coll = next((c for c in scene.collection.children
-                     if c.name.lower().startswith("archiv")), None)
-    if coll is None:
-        coll = bpy.data.collections.new(name)
-        coll.hide_viewport = coll.hide_render = True
-    if coll not in scene.collection.children_recursive:
-        scene.collection.children.link(coll)
-    return coll
+    from .cameras import ARCHIVE, scene_collection
+    return scene_collection(scene, ARCHIVE)        # "Archiv <scene>" (or the scene's older "Archiv")
 
 
 def archive(objects, scene=None, version=""):
@@ -216,7 +208,8 @@ def take_over(pairs, materials=True, collections=True, old="ARCHIVE", scene=None
         if setup:
             copy_setup(previous, new, skip_parents=olds)
         if collections:
-            targets = [c for c in previous.users_collection if c.name != archive_collection_name()]
+            from .cameras import ARCHIVE, kind_of
+            targets = [c for c in previous.users_collection if kind_of(c) != ARCHIVE]
             if targets:
                 for coll in list(new.users_collection):
                     coll.objects.unlink(new)
@@ -304,10 +297,10 @@ def check(objects, floor=True):
 def temp_collection(scene=None):
     """The collection for helper objects; the add-on empties it after each answer of Claude."""
     scene = scene or bpy.context.scene
-    name = temp_collection_name()
-    coll = bpy.data.collections.get(name)
+    from .cameras import TEMP, scene_collection
+    coll = scene_collection(scene, TEMP, create=False)
     if coll is None:
-        coll = bpy.data.collections.new(name)
+        coll = scene_collection(scene, TEMP)
         coll[TEMP_KEY] = True
     elif not coll.get(TEMP_KEY) and not coll.all_objects:
         coll[TEMP_KEY] = True      # an empty one of that name becomes ours; one with your things never
@@ -319,7 +312,8 @@ def temp_collection(scene=None):
 def empty_temp():
     """Delete what is in the temporary collection (only one the add-on marked) and the collection.
     Returns the number of removed objects."""
-    coll = bpy.data.collections.get(temp_collection_name())
+    from .cameras import TEMP, scene_collection
+    coll = scene_collection(bpy.context.scene, TEMP, create=False)
     if coll is None or not coll.get(TEMP_KEY) or coll.library is not None:
         return 0
     objects = list(coll.all_objects)

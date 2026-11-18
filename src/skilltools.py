@@ -111,7 +111,7 @@ class M:
             data = source.data.copy() if source else bpy.data.cameras.new("Match " + name)
             data.name = "Match " + name
             cam = bpy.data.objects.new("Match " + name, data)
-            (bpy.data.collections.get(cameras.camera_collection_name()) or scene.collection).objects.link(cam)
+            cameras.camera_collection(scene).objects.link(cam)
             if source:
                 cam.matrix_world = source.matrix_world.copy()
             cameras.rename(cam, "match " + name)

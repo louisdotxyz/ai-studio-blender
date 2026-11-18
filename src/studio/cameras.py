@@ -111,9 +111,47 @@ def rename_old_collections():
                 break
 
 
+def kind_of(coll):
+    """Which of the six collections this is ("Light pack", "Light" and "light pack" are all LIGHT), or None."""
+    name = (coll.name if coll is not None else "").lower()
+    for kind in COLLECTIONS:
+        k = kind.lower()
+        if name == k or name.startswith(k + " "):
+            return kind
+    return None
+
+
+def scene_name_of(kind, scene):
+    """The name a scene's collection gets: kind and scene, like "Camera pack", "Light pack", "Archiv pack"."""
+    return "%s %s" % (kind, scene.name)
+
+
+def scene_collection(scene, kind, create=True):
+    """The scene's collection of this kind: "<Kind> <scene>" (any case), else one of that kind already in
+    this scene (an older "Light" or "Archiv"); made as "<Kind> <scene>" when missing."""
+    if scene is None:
+        return None
+    wanted = scene_name_of(kind, scene).lower()
+    inside = list(scene.collection.children_recursive)
+    found = next((c for c in inside if c.name.lower() == wanted), None)
+    if found is None:
+        found = next((c for c in inside if c.name.lower() == kind.lower()), None)
+    if found is None:
+        found = next((c for c in scene.collection.children if kind_of(c) == kind), None)
+    if found is None and create:
+        found = bpy.data.collections.new(scene_name_of(kind, scene))
+        if kind == ARCHIVE:
+            found.hide_viewport = found.hide_render = True
+        scene.collection.children.link(found)
+    return found
+
+
 def named_collection(scene, name):
-    """The collection with this name, linked into the scene (created when missing)."""
+    """The collection with this name, linked into the scene (created when missing). The six of the add-on
+    (Camera, Set, Light, Object, Archiv, TEMP) are the scene's own: "<Kind> <scene>"."""
     rename_old_collections()
+    if name in COLLECTIONS:
+        return scene_collection(scene, name)
     coll = bpy.data.collections.get(name)
     if coll is None:
         coll = bpy.data.collections.new(name)
@@ -159,7 +197,7 @@ def set_cameras_visible(scene, visible):
         for cam in scene_cameras(scene):
             if cam.name in view_layer.objects:
                 cam.hide_set(not visible, view_layer=view_layer)
-        coll = bpy.data.collections.get(camera_collection_name())
+        coll = scene_collection(scene, CAMERA, create=False)
         layer = _layer_collection(view_layer.layer_collection, coll) if coll is not None else None
         if layer is not None and visible and layer.hide_viewport:
             layer.hide_viewport = False

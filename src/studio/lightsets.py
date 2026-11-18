@@ -94,8 +94,7 @@ def owner_of(scene, obj):
 
 
 def _archived(obj):
-    archive = cameras.archive_collection_name()
-    return any(c.name == archive for c in obj.users_collection)
+    return any(cameras.kind_of(c) == cameras.ARCHIVE for c in obj.users_collection)
 
 
 def _visible(scene, coll, cam=None):
@@ -181,7 +180,7 @@ def clear_set(scene, coll):
 
 
 def archive(scene, obj):
-    target = cameras.named_collection(scene, cameras.archive_collection_name())
+    target = cameras.scene_collection(scene, cameras.ARCHIVE)
     for c in list(obj.users_collection):
         c.objects.unlink(obj)
     target.objects.link(obj)
@@ -359,10 +358,9 @@ def needs_setup(scene):
 
 def light_collections(scene):
     """Collections that hold lights directly (the user's own sets from before), not the archive."""
-    archive = cameras.archive_collection_name()
     found = []
     for coll in scene.collection.children_recursive:
-        if coll.name == archive or is_set(coll):
+        if cameras.kind_of(coll) == cameras.ARCHIVE or is_set(coll):
             continue
         if any(o.type == 'LIGHT' for o in coll.objects):
             found.append(coll)

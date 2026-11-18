@@ -465,6 +465,33 @@ def _state(scene):
             view.use_curve_mapping, display.display_device)
 
 
+_later = set()
+
+
+def _sync_later():
+    for name in list(_later):
+        scene = bpy.data.scenes.get(name)
+        if scene is not None:
+            try:
+                sync(scene)
+            except Exception as ex:
+                print("ID Toolkit: background:", ex)
+    _later.clear()
+    return None
+
+
+def schedule_sync(scene):
+    """From the depsgraph handler: the background follows a moment after the change, once – not inside the
+    update and not on every step of a slider (dragging Exposure rebuilt the compositor's nodes dozens of times
+    a second while Cycles drew the viewport: Blender crashed)."""
+    if _busy[0] or _cache.get(scene.name) == _state(scene):
+        return
+    _later.add(scene.name)
+    if bpy.app.timers.is_registered(_sync_later):
+        bpy.app.timers.unregister(_sync_later)
+    bpy.app.timers.register(_sync_later, first_interval=0.35)
+
+
 def sync(scene, force=False, viewport=False):
     """Applies the background setting to the scene. Cheap when nothing changed."""
     if _busy[0]:

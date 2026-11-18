@@ -158,7 +158,8 @@ def apply_cad_rules(objects):
 def archive_overview(scene=None):
     """[(collection name, objects, triangles)] of the archive and its versions."""
     from .cadswap import archive_collection_name
-    root = bpy.data.collections.get(archive_collection_name())
+    from .cameras import ARCHIVE, scene_collection
+    root = scene_collection(scene or bpy.context.scene, ARCHIVE, create=False)
     if root is None:
         return []
     out = []

@@ -10,10 +10,22 @@ import time
 import bpy
 
 # scene.studio property → (label, min, max): the values are -100 … 100 (exposure in stops)
-KEYS = ("edit_exposure", "edit_contrast", "edit_highlights", "edit_shadows",
-        "edit_temperature", "edit_tint", "edit_vibrance", "edit_saturation")
-LIGHT = KEYS[:4]
-COLOR = KEYS[4:]
+LIGHT = ("edit_exposure", "edit_contrast", "edit_highlights", "edit_shadows", "edit_whites", "edit_blacks")
+COLOR = ("edit_temperature", "edit_tint", "edit_vibrance", "edit_saturation")
+EFFECTS = ("edit_fade", "edit_vignette", "edit_grain")
+KEYS = LIGHT + COLOR + EFFECTS
+# Looks: a starting point, every slider can be moved afterwards
+LOOKS = (
+    ("Clean", {"edit_contrast": 8, "edit_vibrance": 10, "edit_whites": 5}),
+    ("Bright", {"edit_exposure": 0.3, "edit_shadows": 25, "edit_highlights": -10, "edit_whites": 10}),
+    ("Punchy", {"edit_contrast": 25, "edit_vibrance": 30, "edit_blacks": -10, "edit_whites": 10}),
+    ("Moody", {"edit_exposure": -0.2, "edit_contrast": 18, "edit_blacks": -15, "edit_saturation": -15,
+               "edit_vignette": -30, "edit_temperature": -10}),
+    ("Warm", {"edit_temperature": 25, "edit_vibrance": 10}),
+    ("Cool", {"edit_temperature": -25, "edit_tint": 5}),
+    ("Film", {"edit_fade": 35, "edit_contrast": -5, "edit_grain": 25, "edit_saturation": -10, "edit_temperature": 8}),
+    ("B&W", {"edit_saturation": -100, "edit_contrast": 20, "edit_blacks": -10}),
+)
 PREVIEW_SIZE = 1600         # longest side of the preview copy (it is shown big in the Photo workspace)
 _cache = {"key": None, "base": None, "size": (0, 0), "float": False, "file": "", "source": ""}
 _state = {"want": None, "counter": 0}
@@ -21,7 +33,7 @@ _state = {"want": None, "counter": 0}
 
 def values(scene):
     rs = scene.studio
-    return {key: float(getattr(rs, key)) for key in KEYS}
+    return {key: float(getattr(rs, key, 0.0)) for key in KEYS}
 
 
 def is_neutral(vals):
@@ -47,7 +59,7 @@ def _smooth(edge0, edge1, x):
     return t * t * (3 - 2 * t)
 
 
-def apply(pixels, vals, is_float=False):
+def apply(pixels, vals, is_float=False, size=None):
     """pixels: flat RGBA float array (sRGB display values; linear when is_float). Returns a new one, sRGB."""
     import numpy as np
     px = np.asarray(pixels, dtype=np.float32).reshape(-1, 4)
@@ -74,6 +86,10 @@ def apply(pixels, vals, is_float=False):
     contrast = vals["edit_contrast"] / 100.0
     if contrast:
         rgb = (rgb - 0.5) * (1.0 + contrast) + 0.5
+    whites, blacks = vals.get("edit_whites", 0.0) / 100.0, vals.get("edit_blacks", 0.0) / 100.0
+    if whites or blacks:                          # levels: where white and black lie
+        black, white = -blacks * 0.12, 1.0 - whites * 0.12
+        rgb = (rgb - black) / max(1e-3, white - black)
     rgb = np.clip(rgb, 0.0, 1.0)
     lum = (rgb @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32))[:, None]
     vibrance, saturation = vals["edit_vibrance"] / 100.0, vals["edit_saturation"] / 100.0
@@ -82,6 +98,20 @@ def apply(pixels, vals, is_float=False):
         rgb = lum + (rgb - lum) * (1.0 + vibrance * (1.0 - sat))
     if saturation:
         rgb = lum + (rgb - lum) * (1.0 + saturation)
+    fade = vals.get("edit_fade", 0.0) / 100.0
+    if fade:                                      # matte: the blacks lifted to gray
+        rgb = fade * 0.2 + rgb * (1.0 - fade * 0.2)
+    vignette, grain = vals.get("edit_vignette", 0.0) / 100.0, vals.get("edit_grain", 0.0) / 100.0
+    if size and (vignette or grain) and size[0] * size[1] == len(rgb):
+        w, h = size
+        if vignette:
+            x = np.linspace(-1.0, 1.0, w, dtype=np.float32)[None, :]
+            y = np.linspace(-1.0, 1.0, h, dtype=np.float32)[:, None]
+            r2 = np.clip((x * x + y * y) / 2.0, 0.0, 1.0).reshape(-1)
+            rgb *= (1.0 + vignette * 0.7 * r2 ** 1.5)[:, None]
+        if grain:
+            noise = np.random.default_rng(7).standard_normal(len(rgb)).astype(np.float32)
+            rgb += (noise * grain * 0.07)[:, None]
     out = px.copy()
     out[:, :3] = np.clip(rgb, 0.0, 1.0)
     return out.reshape(-1)
@@ -134,7 +164,7 @@ def save(scene, source):
         raise ValueError("Render an image first")
     pixels, size, is_float = _read(source)
     target = edit_path(source)
-    _write(apply(pixels, values(scene), is_float), size, target)
+    _write(apply(pixels, values(scene), is_float, size), size, target)
     return target
 
 
@@ -183,7 +213,7 @@ def _make_preview():
             _cache.update(base=base, size=size, float=is_float, base_source=(source, key[1]))
         _state["counter"] += 1          # a new name each time: the preview image reloads by its path
         path = os.path.join(_folder(), "preview_%d_%d.png" % (os.getpid(), _state["counter"]))
-        _write(apply(_cache["base"], vals, _cache["float"]), _cache["size"], path)
+        _write(apply(_cache["base"], vals, _cache["float"], _cache["size"]), _cache["size"], path)
         old = _cache["file"]
         _cache.update(key=key, file=path, source=source, time=time.monotonic())
         if old and old != path:

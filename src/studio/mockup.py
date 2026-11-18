@@ -1554,7 +1554,7 @@ class STUDIO_PT_mockup_on(Panel):
 
 classes = (StudioMockup, STUDIO_OT_mockup_new, STUDIO_OT_mockup_go, STUDIO_OT_mockup_place, STUDIO_OT_mockup_render,
            STUDIO_OT_mockup_fspy, STUDIO_OT_mockup_front, STUDIO_OT_mockup_krea, STUDIO_OT_mockup_ask,
-           STUDIO_PT_mockup, STUDIO_PT_mockup_photo, STUDIO_PT_mockup_on)
+           STUDIO_PT_mockup, STUDIO_PT_mockup_on)
 
 
 def register():

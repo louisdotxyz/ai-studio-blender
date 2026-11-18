@@ -72,6 +72,31 @@ def set_rating(path, stars):
     return stars
 
 
+GOOD, BAD = 5, 1          # the Photo tab only marks good or bad (stored as stars: sorting and filters stay)
+
+
+def rename_render(path, new_name):
+    """Renames a render file in its folder (same extension); its mark moves with it. Returns the new path."""
+    folder, old = os.path.dirname(path), os.path.basename(path)
+    ext = os.path.splitext(old)[1]
+    base = "".join(c for c in new_name.strip() if c not in '/\\:*?"<>|').strip()
+    if not base:
+        raise ValueError("Give it a name")
+    target = os.path.join(folder, base + ext)
+    if os.path.exists(target) and os.path.normcase(target) != os.path.normcase(path):
+        raise ValueError("%s exists already" % os.path.basename(target))
+    os.rename(path, target)
+    data = dict(_load(folder))
+    if old in data:
+        data[os.path.basename(target)] = data.pop(old)
+        ratings = os.path.join(folder, RATINGS)
+        with open(ratings, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=1, sort_keys=True)
+        _ratings[folder] = (os.path.getmtime(ratings), data)
+        _checked[folder] = 0.0
+    return target
+
+
 def stars_text(stars):
     return "★" * stars + "☆" * (5 - stars) if stars else ""
 

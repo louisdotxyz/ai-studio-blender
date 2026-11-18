@@ -218,6 +218,7 @@ class _ChatPanel:
             + len(prompt_preview_lines(context)) * 0.8
         if context.area is not None and context.area.type == 'SEQUENCE_EDITOR':
             reserved -= 1.6                  # no render row in the Video Editor's chat
+        reserved += getattr(self, "reserved_above", 0)   # panels above the chat in the same sidebar
         if (prefs is None or prefs.send_selection) and getattr(context, "selected_objects", None):
             reserved += 1                    # the "Selection: …" line
         if prefs is not None and prefs.backend == 'LOCAL':
@@ -868,6 +869,20 @@ class _ChatPanel:
 
 class CLAUDE_PT_chat(_ChatPanel, bpy.types.Panel):
     bl_space_type = 'VIEW_3D'
+
+
+class CLAUDE_PT_chat_photo(_ChatPanel, bpy.types.Panel):
+    """The chat in the Photo workspace (Image Editor › Studio, tab Adjust), under the drawing bar: the same
+    chat as in the Layout tab, so marks on the picture and words go to Claude together."""
+    bl_space_type = 'IMAGE_EDITOR'
+    bl_category = "Studio"
+    bl_order = 10
+    reserved_above = 6.5      # the tabs, the picked picture and the drawing bar
+
+    @classmethod
+    def poll(cls, context):
+        wm = context.window_manager
+        return getattr(wm, "studio_photo_tab", "") == 'ADJUST'
 
 
 class CLAUDE_PT_chat_video(_ChatPanel, bpy.types.Panel):

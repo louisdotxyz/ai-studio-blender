@@ -67,9 +67,8 @@ def scene_lights(scene):
 
 def setup_lights(scene):
     """The lights a saved setup describes: those that render, not the replaced ones in the archive."""
-    archive = cameras.archive_collection_name()
     return [o for o in scene_lights(scene) if not o.hide_render
-            and not any(c.name == archive for c in o.users_collection)]
+            and not any(cameras.kind_of(c) == cameras.ARCHIVE for c in o.users_collection)]
 
 
 def light_collection(scene):

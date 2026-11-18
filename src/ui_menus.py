@@ -156,6 +156,14 @@ def restore_draft():
 
 def _send_prompt(wm):
     text = wm.claude_prompt
+    try:                                     # the Photo workspace's Adjust tab: the picture goes with it
+        from .studio import photo_view
+        if photo_view.chat_send(bpy.context, text):
+            _clear_prompt(wm)
+            chatview.scroll(-10**9)
+            return
+    except Exception as ex:
+        print("ID Toolkit: picture with the message:", ex)
     try:                                     # the cut chat: the frame and section it is about, in front
         from . import film_chat
         tag = film_chat.frame_tag()

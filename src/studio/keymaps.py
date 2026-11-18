@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Shortcuts: ⌘R renders an image, ⌘E the film's sections (both Low Quality first, High Quality once nothing
+"""Shortcuts: ⌘R renders an image in High Quality (always), ⌘E the film's sections (both Low Quality first, High Quality once nothing
 changed), ⇧⌘R an image in Low Quality, ⇧⌘E views the newest image."""
 
 import bpy
@@ -28,7 +28,7 @@ EDITOR_KEYMAPS = (
 
 # (operator, key, modifier keys with ⌘, operator properties, label)
 SHORTCUTS = (
-    ("studio.add", 'R', {}, {"mode": 'STILL'}, "Render Image"),
+    ("studio.add", 'R', {}, {"mode": 'STILL', "quality": 'HIGH'}, "Render Image, High Quality"),
     ("studio.add", 'E', {}, {"mode": 'ANIM'}, "Render Film"),
     ("studio.add", 'R', {"shift": True}, {"mode": 'STILL', "quality": 'LOW'},
      "Render Image, Low Quality"),
@@ -66,6 +66,12 @@ def register_keymaps():
             for key, value in props.items():
                 setattr(kmi.properties, key, value)
             _keymaps.append((km, kmi))
+    # Photo workspace: the arrow keys go through the renders (only there: elsewhere they stay Blender's)
+    km = kc.keymaps.new(name="Image", space_type='IMAGE_EDITOR')
+    for key, direction in (('LEFT_ARROW', 1), ('RIGHT_ARROW', -1), ('UP_ARROW', -1), ('DOWN_ARROW', 1)):
+        kmi = km.keymap_items.new('studio.photo_step', key, 'PRESS')
+        kmi.properties.direction = direction
+        _keymaps.append((km, kmi))
     # Stop the queue (only does something while it runs, otherwise the key passes on).
     km = kc.keymaps.new(name="Window", space_type='EMPTY')
     _keymaps.append((km, km.keymap_items.new('studio.cancel', 'ESC', 'PRESS', shift=True)))

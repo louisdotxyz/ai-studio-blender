@@ -93,6 +93,8 @@ def _apply():
     try:
         if key[0] == "compare":
             image = _compare_image(key[1], key[2], key[3], key[4])
+        elif key[1] and os.path.isfile(key[1]) and os.sep + "finish" + os.sep in key[1]:
+            image = _adjusted_image(key[1])        # one image for the adjusted copy, named after the render
         elif key[1] and os.path.isfile(key[1]):
             image = bpy.data.images.load(key[1], check_existing=True)
             if _shown.get("mtime") != (key[1], _mtime(key[1])):
@@ -114,10 +116,32 @@ def _apply():
             area.tag_redraw()
     old = bpy.data.images.get(_shown.get("temp") or "")
     _shown["temp"] = image.name if os.sep + "finish" + os.sep in image.filepath else ""
-    if old is not None and old != image and old.name != COMPARE_IMAGE:   # the adjusted copy before this one
-        old.user_clear()
-        bpy.data.images.remove(old)
+    if old is not None and old != image and old.name != COMPARE_IMAGE and old.users == 0 \
+            and not old.get(ADJUSTED_KEY):
+        bpy.data.images.remove(old)       # the adjusted copy before this one, only once nothing shows it
+        # (user_clear() removed it under editors and renders that still used it: a crash while adjusting)
     return None
+
+
+ADJUSTED_KEY = "studio_adjusted"
+
+
+def _adjusted_image(path):
+    """The adjusted copy of a render: always the same image, its file swapped (no preview_123_45.png images
+    piling up in the editor's list), named after the render it shows."""
+    from . import image_edit
+    image = next((i for i in bpy.data.images if i.get(ADJUSTED_KEY)), None)
+    if image is None:
+        image = bpy.data.images.load(path, check_existing=False)
+        image[ADJUSTED_KEY] = True
+    else:
+        image.filepath = path
+        image.reload()
+    source = image_edit._cache.get("source") or path
+    name = "%s (adjusted)" % os.path.splitext(os.path.basename(source))[0]
+    if image.name != name:
+        image.name = name
+    return image
 
 
 def fit(window, area):
@@ -126,8 +150,38 @@ def fit(window, area):
         with _override(window, area):
             if bpy.ops.image.view_all.poll():
                 bpy.ops.image.view_all(fit_view=True)
+            _fit_free(area)
     except (RuntimeError, TypeError) as ex:
         print("AI Studio: Photo view fit:", ex)
+
+
+def _fit_free(area):
+    """view_all fills the whole editor, under the sidebar too: the picture goes into the part the sidebar
+    leaves free, centered there, so it is never covered."""
+    space = area.spaces.active
+    image = getattr(space, "image", None)
+    region = next((r for r in area.regions if r.type == 'WINDOW'), None)
+    ui = next((r for r in area.regions if r.type == 'UI' and r.width > 1), None)
+    if image is None or region is None or ui is None or not image.size[0] or not image.size[1]:
+        return
+    margin = 0.94
+    free_w = max(50, region.width - ui.width)
+    w, h = image.size
+    zoom = margin * min(free_w / w, region.height / h)
+    bpy.ops.image.view_zoom_ratio(ratio=zoom)
+    v2d = region.view2d
+
+    def center_x():
+        return (v2d.view_to_region(0.0, 0.5, clip=False)[0] + v2d.view_to_region(1.0, 0.5, clip=False)[0]) / 2.0
+
+    sidebar_right = ui.x > region.x + region.width / 2
+    edge = 0.03 * min(free_w, region.height)               # left-aligned, a small margin
+    target = (0 if sidebar_right else ui.width) + edge + zoom * w / 2.0
+    before = center_x()
+    bpy.ops.image.view_pan(offset=(10.0, 0.0))         # one known step: how many pixels is it?
+    step = center_x() - before
+    if abs(step) > 1e-6:
+        bpy.ops.image.view_pan(offset=(10.0 * (target - center_x()) / step, 0.0))
 
 
 class STUDIO_OT_photo_fit(Operator):
@@ -387,7 +441,9 @@ class STUDIO_OT_photo_draw(Operator):
             if space.ui_mode != 'VIEW':
                 space.ui_mode = 'VIEW'
             with _override(window, area):
-                bpy.ops.wm.tool_set_by_id(name="builtin.select_box" if drawing(context) else ANNOTATE,
+                # off: back to the Image Editor's own tool of the view mode (there is no Select Box there,
+                # so "Stop Drawing" did nothing before)
+                bpy.ops.wm.tool_set_by_id(name="builtin.sample" if drawing(context) else ANNOTATE,
                                           space_type='IMAGE_EDITOR')
         area.tag_redraw()
         return {'FINISHED'}
@@ -429,8 +485,8 @@ def send_text(path, note, marked):
 
 def _send_step():
     """1: fit the picture without the sidebar · 2: the screenshot (picture with the marks) · 3: to the chat."""
-    window, area = _find_area(_send["area"])
-    if area is None:
+    window, area = _find_area(_send["area"]) if _send["area"] else (bpy.context.window, None)
+    if area is None and _send["step"] != 2:
         _send["step"] = 0
         return None
     if _send["step"] == 1:
@@ -439,15 +495,16 @@ def _send_step():
         _send["step"] = 2
         return 0.3
     shot = ""
-    try:
-        os.makedirs(os.path.dirname(_send["shot"]), exist_ok=True)
-        with _override(window, area):
-            bpy.ops.screen.screenshot_area(filepath=_send["shot"])
-        shot = _send["shot"] if os.path.isfile(_send["shot"]) else ""
-    except (RuntimeError, TypeError) as ex:
-        print("AI Studio: screenshot of the picture:", ex)
-    _restore(window, area)
-    _data, count = marks(window)
+    if area is not None:                         # with marks: the picture as it is shown, marks on it
+        try:
+            os.makedirs(os.path.dirname(_send["shot"]), exist_ok=True)
+            with _override(window, area):
+                bpy.ops.screen.screenshot_area(filepath=_send["shot"])
+            shot = _send["shot"] if os.path.isfile(_send["shot"]) else ""
+        except (RuntimeError, TypeError) as ex:
+            print("AI Studio: screenshot of the picture:", ex)
+        _restore(window, area)
+    _data, count = marks(window) if window is not None else (None, 0)
     try:
         from .. import core, ui_menus
         attach = shot or (_send["path"] if os.path.isfile(_send["path"]) else "")
@@ -455,13 +512,56 @@ def _send_step():
             core.add_attachment(attach)
         wm = bpy.context.window_manager
         wm.claude_prompt = send_text(_send["path"], _send["note"], bool(shot and count))
-        ui_menus._send_prompt(wm)
+        _send["sending"] = True                  # our own message: not caught by chat_send again
+        try:
+            ui_menus._send_prompt(wm)
+        finally:
+            _send["sending"] = False
         wm.studio_photo_note = ""
-        clear_marks(window)
+        if window is not None:
+            clear_marks(window)
     except Exception as ex:
         print("AI Studio: send to Claude:", ex)
     _send["step"] = 0
     return None
+
+
+def chat_send(context, text):
+    """A message typed in the chat of the Photo workspace's Adjust tab: the picture goes with it by itself
+    (with the marks drawn on it when there are some). True when it was taken over."""
+    wm = context.window_manager
+    workspace = getattr(context, "workspace", None)
+    if _send.get("sending") or _send["step"] or getattr(wm, "studio_photo_tab", "") != 'ADJUST':
+        return False
+    from . import runner, tab_queue
+    if workspace is None or workspace.name != tab_queue.photo_workspace():
+        return False
+    path = tab_queue._selected_image(runner.queue_images(context.scene))
+    if not path and not text.strip():
+        return False
+    window = context.window
+    area = _picture_area(window)
+    import time
+    folder = os.path.join(os.path.dirname(path), "Notes") if path else bpy.app.tempdir
+    stem = os.path.splitext(os.path.basename(path))[0] if path else "picture"
+    _send.update(step=1, path=path or "", note=text, area=area.as_pointer() if area else 0,
+                 shot=os.path.join(folder, "%s_note_%s.png" % (stem, time.strftime("%H%M%S"))))
+    _data, count = marks(window)
+    if area is None or not count:
+        _send["step"] = 2                        # no marks: the render itself goes with the message
+        if area is not None:
+            _send["area"] = 0
+    else:
+        space = area.spaces.active
+        _send["keep"] = (space.show_region_ui, getattr(space, "show_gizmo", True))
+        space.show_region_ui = False             # only the picture in the screenshot
+        if hasattr(space, "show_gizmo"):
+            space.show_gizmo = False
+        if drawing(context):
+            with _override(window, area):
+                bpy.ops.wm.tool_set_by_id(name="builtin.sample", space_type='IMAGE_EDITOR')
+    bpy.app.timers.register(_send_step, first_interval=0.25)
+    return True
 
 
 class STUDIO_OT_photo_send(Operator):
@@ -498,10 +598,35 @@ class STUDIO_OT_photo_send(Operator):
                 space.show_gizmo = False
             if drawing(context):
                 with _override(window, area):
-                    bpy.ops.wm.tool_set_by_id(name="builtin.select_box", space_type='IMAGE_EDITOR')
+                    bpy.ops.wm.tool_set_by_id(name="builtin.sample", space_type='IMAGE_EDITOR')
         bpy.app.timers.register(_send_step, first_interval=0.25)
         self.report({'INFO'}, "Sent to Claude (see the Claude tab)")
         return {'FINISHED'}
+
+
+def draw_adjust_bar(layout, context, path):
+    """Adjust: one bar of icons – [✎ draw] [undo] [clear] [color] [send the marks] – the chat below."""
+    _data, count = marks(context.window)
+    row = layout.row(align=True)
+    row.scale_y = 1.3
+    on = drawing(context)
+    row.operator(STUDIO_OT_photo_draw.bl_idname, text="", icon='GREASEPENCIL', depress=on).action = 'PEN'
+    sub = row.row(align=True)
+    sub.enabled = count > 0
+    sub.operator(STUDIO_OT_photo_draw.bl_idname, text="", icon='LOOP_BACK').action = 'UNDO'
+    sub.operator(STUDIO_OT_photo_draw.bl_idname, text="", icon='TRASH').action = 'CLEAR'
+    data, _c = marks(context.window)
+    layer = data.layers.active if data is not None and len(data.layers) else None
+    if layer is not None:
+        color = row.row(align=True)
+        color.ui_units_x = 2
+        color.prop(layer, "color", text="")
+    info = row.row(align=True)
+    info.active = False
+    info.label(text="%d marks" % count if count else ("Draw on the picture" if on else ""))
+    send = row.row(align=True)
+    send.enabled = count > 0 and not _send["step"]
+    send.operator(STUDIO_OT_photo_send.bl_idname, text="", icon='EXPORT').path = path or ""
 
 
 def draw_notes(layout, context, path):

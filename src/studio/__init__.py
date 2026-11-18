@@ -49,7 +49,8 @@ from .tab_material import (STUDIO_MT_material_more, STUDIO_MT_material_new, STUD
 from .tab_queue import (STUDIO_MT_render_presets, STUDIO_OT_add, STUDIO_OT_cancel, STUDIO_OT_clear, STUDIO_OT_low_scale, STUDIO_OT_move,
                         STUDIO_OT_preview_step, STUDIO_OT_remove, STUDIO_OT_render_queue, STUDIO_OT_show_render,
                         STUDIO_OT_render_overview, STUDIO_OT_render_pick, STUDIO_OT_render_reveal,
-                        STUDIO_OT_render_ab, STUDIO_OT_render_rate, STUDIO_OT_render_arrange, STUDIO_MT_render_arrange,
+                        STUDIO_OT_render_ab, STUDIO_OT_render_rate, STUDIO_OT_render_rename, STUDIO_PT_photo_export, draw_photo_header, STUDIO_OT_photo_step, STUDIO_OT_goto_workspace,
+                        STUDIO_OT_render_arrange, STUDIO_MT_render_arrange,
                         STUDIO_OT_render_refine, STUDIO_OT_open_review, STUDIO_PT_review,
                         STUDIO_OT_view_camera, STUDIO_PT_output, STUDIO_PT_render_queue, draw_statusbar)
 from . import cad_link, render_setup
@@ -220,6 +221,10 @@ classes = render_setup.classes + tab_anim.classes + (
     STUDIO_OT_render_overview,
     STUDIO_OT_render_ab,
     STUDIO_OT_render_rate,
+    STUDIO_OT_render_rename,
+    STUDIO_PT_photo_export,
+    STUDIO_OT_photo_step,
+    STUDIO_OT_goto_workspace,
     STUDIO_OT_render_arrange,
     STUDIO_MT_render_arrange,
     STUDIO_OT_render_refine,
@@ -336,6 +341,14 @@ def register():
     chat_render.register()
     render_size.register()
     quality.register()
+    bpy.types.IMAGE_HT_header.append(draw_photo_header)
+    bpy.types.WindowManager.studio_render_layout = EnumProperty(
+        name="Show", options={'SKIP_SAVE'}, default='GRID',
+        items=[('GRID', "Grid", "Pictures in a grid", 'IMGDISPLAY', 0),
+               ('LIST', "List", "One line each", 'LONGDISPLAY', 1)])
+    bpy.types.WindowManager.studio_render_columns = bpy.props.IntProperty(
+        name="Columns", description="How many pictures side by side (fewer = bigger)", min=1, max=6, default=2,
+        options={'SKIP_SAVE'})
     presets_io.register()
     shots.register()
     cad_link.register()
@@ -369,6 +382,7 @@ def unregister():
     shots.unregister()
     presets_io.unregister()
     quality.unregister()
+    bpy.types.IMAGE_HT_header.remove(draw_photo_header)
     render_size.unregister()
     chat_render.unregister()
     variants_ab.unregister()
