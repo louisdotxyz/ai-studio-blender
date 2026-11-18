@@ -22,9 +22,9 @@ from . import background, environment, runner
 # ------------------------------------------------------------------ render check
 
 def _node_images(tree, found, seen):
-    if tree is None or tree.name in seen:
+    if tree is None or tree.as_pointer() in seen:     # not by name: every material's tree has the same one
         return
-    seen.add(tree.name)
+    seen.add(tree.as_pointer())
     for node in tree.nodes:
         image = getattr(node, "image", None)
         if image is not None:
