@@ -761,6 +761,8 @@ class STUDIO_OT_krea_claude(Operator):
         except Exception as exc:
             print("ID Toolkit: Krea attachment:", exc)
         text = "\n".join(lines)
+        from . import photo_tools
+        photo_tools.remember_wish(wm.studio_krea_prompt)       # for "Again"
         wm.studio_krea_prompt = ""
         if core.is_busy():
             # a run that is going cannot get the connector any more: a new chat after it
@@ -997,8 +999,7 @@ def _draw_krea(layout, context, path):
     line.label(text="%s · ~%d credits%s%s" % (names.get(used, used), cost, " · %s" % what if what else "",
                                               " · %g left" % round(balance) if balance is not None else ""),
                icon='ERROR' if cost > krea.ASK_ABOVE else 'NONE', translate=False)
-    _krea_status(box)
-    row = box.row(align=True)
+    row = box.row(align=True)                       # what goes on: in the status bar at the bottom
     row.scale_y = 1.5
     row.enabled = bool(path)
     row.operator(STUDIO_OT_krea_claude.bl_idname, text="Make it with Claude", icon='EVENT_RETURN')

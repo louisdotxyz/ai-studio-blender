@@ -760,6 +760,8 @@ def draw_photo_header(self, context):
     workspace = getattr(context, "workspace", None)
     if workspace is None or workspace.name != photo_workspace():
         return
+    from . import photo_tools
+    photo_tools.draw_header_tools(self.layout, context)       # [✎] [⇄] [⤢] where the picture is
     self.layout.popover(STUDIO_PT_photo_export.__name__, text="Export", icon='EXPORT')
 
 
@@ -1388,8 +1390,11 @@ class STUDIO_PT_review(Panel):
             photo_view.want(context, mockup.shown_file(scene), "", "")
         else:
             photo_view.want(context, image_edit.preview_file(scene, path) if path else "", a, b)
+        from . import photo_tools
         if tab not in {'SORT', 'MOCKUP'}:
             _draw_pick(layout, context, images, path)
+        if tab != 'MOCKUP':                               # the versions of this picture (render, Krea, edits)
+            photo_tools.draw_filmstrip(layout, context, path)
         if tab == 'SORT':                                # only the renders, one after another (← → step)
             draw_sort_head(layout, context)
             _draw_overview(layout, context, images, path)
@@ -1399,6 +1404,9 @@ class STUDIO_PT_review(Panel):
             # Only this picture's light and colour: the look of the next renders (compositor) is in the
             # Camera tab of the 3D view – here it changed the viewport, not the picture
             tab_finish._draw_adjust(layout, context, path)
+            row = layout.row(align=True)
+            row.scale_y = 1.2
+            row.operator("studio.edit_apply_good", icon='CHECKMARK')    # this look on all the good ones
         else:                                            # the product into a photo of your own
             mockup.draw(layout.box(), context)
 

@@ -1100,6 +1100,14 @@ def photo_adjust_tools():
     check("mockup: the three ways ask Krea differently (restyle / only light and time / keep everything)",
           "Restyle everything else" in style and "every person" not in style and "Change only the light" in adjust
           and "every person and object" in match and mock.MODE_MODEL['MATCH'] == 'REGION', style[-160:])
+    tools = mod("studio.photo_tools")
+    base = os.path.join(TMP, "vers_P_01.png")
+    for name in ("vers_P_01.png", "vers_P_01_krea_01.png", "vers_P_01_edit_01.png"):
+        mock._write(np.ones((8, 8, 4), dtype=np.float32), os.path.join(TMP, name))
+    found = [os.path.basename(p) for p in tools.versions(os.path.join(TMP, "vers_P_01_krea_01.png"))]
+    check("photo: the versions of a picture (render, Krea, edit) from any of them",
+          set(found) == {"vers_P_01.png", "vers_P_01_krea_01.png", "vers_P_01_edit_01.png"} and
+          tools.versions(base)[0].endswith("vers_P_01.png"), found)
     # a set for a presentation: numbered pictures and an overview
     folder = os.path.join(TMP, "set_test")
     files = pv.export_set([src, res], folder, size=100)

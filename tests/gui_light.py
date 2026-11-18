@@ -411,7 +411,7 @@ STEPS = [splash_away, splash_gone, setup, tool_on, tool_hover, click_press, clic
 for _name, _pic in (('ADJUST', "11_adjust.png"), ('LOOK', "12_look.png"), ('MOCKUP', "13_mockup.png"),
                     ('SORT', "14_sort.png")):
     _step, _snap = _tab(_name, _pic)
-    STEPS += [_step, idle, _snap]
+    STEPS += [_step, idle, idle, _snap]
 STEPS += [photo_send, idle, idle, idle, photo_sent, finish]
 
 

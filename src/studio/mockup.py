@@ -2025,10 +2025,7 @@ def draw(layout, context, compact=False):
         from . import photo_view
         photo_view.draw_adjust_bar(layout, context, "", send=False)
         _info(layout, "Marks: for Claude only (where it goes), never sent to Krea")
-    from .. import core
-    status, reply = core.studio_reply('MOCKUP')
-    if status:
-        _info(layout, reply[:90], 'TIME' if status == "working" else 'OUTLINER_DATA_GP_LAYER')
+    # what goes on (Claude, Krea): in the status bar at the bottom, so nothing here moves
     # what Krea does
     box = layout.box()
     row = box.row(align=True)
@@ -2055,17 +2052,6 @@ def draw(layout, context, compact=False):
     row = box.row(align=True)
     row.scale_y = 1.6
     row.operator(STUDIO_OT_mockup_make.bl_idname, text="Make it", icon='PLAY')
-    job_state = krea.job["state"]
-    if krea.busy():
-        words = {"upload": "Uploading…", "working": "Krea is working…", "download": "Downloading…"}
-        _info(layout, "%s %d s" % (words[job_state], time.monotonic() - krea.job["started"]), 'TIME')
-    elif job_state == "error":
-        _info(layout, krea.job["text"][:90], 'ERROR', True)
-    elif last.get("path") and job_state == "done":
-        _info(layout, "Your product was put back (Krea had changed it)" if last.get("restored") else
-              "Done · your product secured", 'CHECKMARK')
-    if runner.RUN.busy and (runner.RUN.scene_name == scene.name or m.waiting):
-        _info(layout, "Rendering the product… the montage follows", 'TIME')
     from .ui_common import subsection
     if not subsection(layout, "mockup_finetune", "Fine-tune by hand", default_open=False):
         return
