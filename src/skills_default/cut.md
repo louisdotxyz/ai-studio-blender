@@ -30,6 +30,8 @@ Sections render as frames (animation/Frames/<section>/); every section is an ima
   split="EACH", quality="HIGH", folder=None, name=None) – it waits, survives a restart, exports, copies
   into folder under name and tells the chat. api.cut_export_waiting() shows how far, api.cut_export_cancel(id).
   Never write an own bpy.app.timers watcher for renders or exports.
+- The render farm slow, Macs gone, frames not coming: api.farm_report(hours=24) first – good and poor
+  hours, why each Mac ended (from its log book) and what was learned.
 - Strip colours: green = all High Quality, orange = rendered (Low Quality or not all), grey = draft only;
   the band under a strip shows it per frame (red = not rendered yet). api.film_check() for problems.
 - Everything is one undo step each; the user can also change it by hand in the Video Editor.

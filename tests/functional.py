@@ -2982,6 +2982,29 @@ def render_farm_folder():
     check("farm: a hung look shows, Reconnect gives it up and looks again", hung and farm._view["gen"] > keep_view["gen"],
           farm._view)
     farm._view.update(keep_view)
+    import importlib
+    flog = importlib.import_module(PKG + ".studio.farm_log")
+    keep_local = flog._local
+    flog._local = lambda: os.path.join(TMP, "farmlog")
+    base = time.time() - 3 * 3600
+    for k in range(6):
+        flog._last["t"] = 0.0
+        states = [("MD-1", 'rendering', "", ""), ("MD-2", 'rendering', "", ""), ("MD-3", 'rendering', "", "")]
+        if k >= 3:
+            states = [(n, 'offline', "", "") for n, _s, _j, _x in states]
+        flog.record(True, states, [{"have": 10 * k}], now=base + k * 120)
+    os.makedirs(os.path.join(root, "_worker", "logs"), exist_ok=True)
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(base + 300))
+    later = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(base + 3000))
+    with open(os.path.join(root, "_worker", "logs", "MD-1.log"), "w") as f:
+        f.write("%s | LEBT\n%s | VORHER kein sauberes Ende, letztes Lebenszeichen %s\n%s | SYSTEM x\n"
+                "%s | REGELN automatisch abmelden nach: 1800 s | geplant: \n" % (stamp, later, stamp, later, later))
+    rep = flog.report(4, root, now=base + 3600)
+    flog._local = keep_local
+    check("farm log: hours, Macs gone together, why a Mac ended, its logout rule learned",
+          rep["hours"] and any("3 Macs went offline together" in x for x in rep["learned"])
+          and any("logs out by itself after 30 min" in x for x in rep["learned"])
+          and rep["macs"]["MD-1"]["ends"] and "no clean end" in rep["macs"]["MD-1"]["ends"][0][1], rep["text"])
     keep_conn = dict(farm._conn)
     farm._conn.update(root=root, busy=True, since=time.monotonic() - 60, hung=0, time=time.monotonic())
     away = farm.gone_for()

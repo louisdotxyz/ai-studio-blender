@@ -1182,7 +1182,13 @@ def _watch_workers():
         heal()
     if not any(j["phase"] == "sent" for j in _jobs):
         return
-    if not connected():
+    ok = connected()
+    try:                                             # the farm's history (farm_log.report: good / poor hours)
+        from . import farm_log
+        farm_log.record(ok, worker_states() if ok else [], [j for j in _jobs if j["phase"] == "sent"])
+    except Exception as ex:
+        print("AI Studio farm log:", ex)
+    if not ok:
         return
     _alarm["had_share"] = True
     last = last_frame_time()

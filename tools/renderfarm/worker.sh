@@ -7,6 +7,10 @@
 # 0.6.0: alle Macs auf einmal abmelden, wenn du es sagst (AI Studio: "Log Out All Macs", oder Terminal:
 #        bash "Renderfarm Start (Mac).command" --alle-abmelden); control.json "abmelden_nach" (Minuten ohne
 #        Job, Standard 0 = nie). Nach dem naechsten Anmelden startet der Autostart die Renderfarm wieder.
+# 0.8.0: Logbuch pro Mac (~/.renderfarm/worker.log, Kopie auf dem Server in _worker/logs/<Mac>.log):
+#        Start, Jobs, Pakete mit Zeit, Server weg/zurueck, Ende mit Grund. Beim Start steht drin, wie die
+#        letzte Sitzung endete (sauber, Abmelden, Neustart, Ausschalten, Schlaf) und welche Regeln der Mac
+#        hat (automatisch abmelden nach, geplantes Ausschalten): so sieht AI Studio, warum Macs wegfallen.
 
 ROOT="${RF_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"   # vom Start gesetzt (lokale Kopie)
 VERSION=$(cat "$ROOT/_worker/VERSION" 2>/dev/null || echo "?")
@@ -19,6 +23,30 @@ SRVF="$HOME/.renderfarm_server"
 SMB=$(mount | grep " on $VOL (" | head -1 | sed -E 's#^//([^@]*@)?([^ ]+) on .*#smb://\1\2#')
 [ -n "$SMB" ] && echo "$SMB" > "$SRVF"
 t() { perl -e 'alarm shift; exec @ARGV' "$@"; }
+LDIR="$HOME/.renderfarm"; LLOG="$LDIR/worker.log"; SLOG="$ROOT/_worker/logs/$NAME.log"
+mkdir -p "$LDIR"
+log() {       # eine Zeile ins Logbuch (lokal immer; der Server bekommt es mit sync_log)
+  echo "$(date '+%Y-%m-%d %H:%M:%S') | $*" >> "$LLOG"
+}
+sync_log() {  # das lokale Logbuch auf den Server (haengt der Server, wartet es hoechstens 10 s)
+  if [ -f "$LLOG" ] && [ "$(wc -c < "$LLOG")" -gt 2000000 ]; then
+    tail -n 5000 "$LLOG" > "$LLOG.tmp" && mv -f "$LLOG.tmp" "$LLOG"
+  fi
+  t 10 mkdir -p "$ROOT/_worker/logs" 2>/dev/null && t 10 cp -f "$LLOG" "$SLOG" 2>/dev/null
+}
+why_ended() { # wie die letzte Sitzung endete: aus dem Logbuch und dem System
+  local last since
+  last=$(tail -1 "$LLOG" 2>/dev/null)
+  case "$last" in
+    *"| ENDE"*|"") ;;
+    *) since=$(echo "$last" | cut -c1-19)
+       log "VORHER kein sauberes Ende, letztes Lebenszeichen $since" ;;
+  esac
+  log "SYSTEM letzte Anmeldungen: $(last -5 "$USER" 2>/dev/null | grep -v '^$' | grep -v wtmp | awk '{$1=$1};1' | tr '\n' ';' | cut -c1-400)"
+  log "SYSTEM Neustarts: $(last reboot 2>/dev/null | head -3 | awk '{$1=$1};1' | tr '\n' ';')  Ausschalten: $(last shutdown 2>/dev/null | head -3 | awk '{$1=$1};1' | tr '\n' ';')"
+  log "SYSTEM Schlaf/Wach: $(pmset -g log 2>/dev/null | grep -E ' (Sleep|Wake|DarkWake|Shutdown) ' | tail -4 | cut -c1-90 | tr '\n' ';')"
+  log "REGELN automatisch abmelden nach: $(defaults read /Library/Preferences/.GlobalPreferences com.apple.autologout.AutoLogOutDelay 2>/dev/null || echo aus) s | geplant: $(pmset -g sched 2>/dev/null | tr -s ' ' | tr '\n' ';' | cut -c1-200) | Schlaf: $(pmset -g 2>/dev/null | grep -E '^ *(sleep|displaysleep) ' | tr -s ' ' | tr '\n' ';')"
+}
 remount() {   # Server-Verbindung pruefen und bei Bedarf neu verbinden (Login aus dem Schluesselbund)
   t 10 ls "$Q" >/dev/null 2>&1 && return 0
   echo "$(date +%H:%M) Server weg -> verbinde neu ..."
@@ -108,28 +136,47 @@ print("RF: Szene", sc.name, "|", r.engine)
 PYEOF
 
 status() { echo "$NAME | $1 | $(date '+%Y-%m-%d %H:%M') | Blender $BV | v$VERSION" > "$ST/$NAME-render.txt" 2>/dev/null; }
-trap 'status beendet; echo; echo "Beendet."; exit 0' INT TERM
+ended() {     # Ende mit Grund ins Logbuch (INT: Ctrl+C, TERM: Abmelden/Ausschalten/kill, HUP: Fenster zu)
+  log "ENDE $1"; status beendet; sync_log; echo; echo "Beendet."; exit 0
+}
+trap 'ended "Signal INT (Ctrl+C)"' INT
+trap 'ended "Signal TERM (Abmelden, Ausschalten oder beendet)"' TERM
+trap 'ended "Signal HUP (Terminal-Fenster zu oder Abmelden)"' HUP
 caffeinate -i -w $$ &
 
+why_ended
+log "START v$VERSION | Blender $BV | angemeldet: $(stat -f %Su /dev/console 2>/dev/null) | Strom: $(pmset -g batt 2>/dev/null | grep -o "'.*'" | head -1)"
 status wartet
 remount && board
+sync_log
+BEAT=$(date +%s)
 echo "Wartet auf Jobs ... (Beenden: Ctrl+C)"
 while true; do
-  remount || { echo "$(date +%H:%M) Server nicht erreichbar, warte ..."; sleep 60; continue; }
+  if ! remount; then
+    [ "${SERVER_GONE:-0}" = 0 ] && log "SERVER weg"; SERVER_GONE=1
+    echo "$(date +%H:%M) Server nicht erreichbar, warte ..."; sleep 60; continue
+  fi
+  [ "${SERVER_GONE:-0}" = 1 ] && { log "SERVER wieder da"; SERVER_GONE=0; }
+  if [ $(( $(date +%s) - BEAT )) -ge 300 ]; then BEAT=$(date +%s); log "LEBT"; sync_log; fi
   read -r FARM ENDE SEIT IDLE_MIN < <(control)
   if [ "$FARM" = "aus" ]; then
     if [ "$SEIT" -ge "$STARTED" ] && [ "$ENDE" = "abmelden" ]; then
-      status abgemeldet; echo "$(date +%H:%M) Farm aus -> melde ab"; sleep 5
+      status abgemeldet; log "ENDE abgemeldet auf Befehl (Farm aus, abmelden)"; sync_log
+      echo "$(date +%H:%M) Farm aus -> melde ab"; sleep 5
       osascript -e 'tell application "loginwindow" to «event aevtrlgo»'; exit 0
     elif [ "$SEIT" -ge "$STARTED" ] && [ "$ENDE" = "herunterfahren" ]; then
-      status heruntergefahren; echo "$(date +%H:%M) Farm aus -> fahre herunter"; sleep 5
+      status heruntergefahren; log "ENDE ausgeschaltet auf Befehl (Farm aus, herunterfahren)"; sync_log
+      echo "$(date +%H:%M) Farm aus -> fahre herunter"; sleep 5
       osascript -e 'tell application "System Events" to shut down'; exit 0
     fi
+    [ "${PAUSED:-0}" = 0 ] && log "PAUSE Farm aus"; PAUSED=1
     status "pausiert (Farm aus)"; sleep 60; continue
   fi
+  [ "${PAUSED:-0}" = 1 ] && { log "PAUSE vorbei (Farm an)"; PAUSED=0; }
   for J in "$Q"/*.json; do
     [ -e "$J" ] || continue
     if [ -n "$RF_ROOT" ] && [ "$ROOT/_worker/worker.sh" -nt "${BASH_SOURCE[0]}" ]; then
+      log "ENDE Update: neue Worker-Version auf dem Server"; sync_log
       echo "$(date +%H:%M) neue Worker-Version auf dem Server -> startet neu"; exit 3   # der Start holt sie
     fi
     JOB=$(basename "$J" .json); B="$Q/$JOB.blend"
@@ -141,6 +188,7 @@ while true; do
     fi
     board
     echo "$(date +%H:%M) Job $JOB (Szene $SCENE, Frames $START-$END)"
+    log "JOB $JOB Frames $START-$END"
     status "rendert $JOB"
     LAST_WORK=$(date +%s)
     # die .blend einmal auf diesen Mac kopieren: jedes Paket laedt dann von der eigenen Platte statt
@@ -161,7 +209,7 @@ while true; do
       [ $FREE = 1 ] || continue
       read -r FARM _ _ _ < <(control); [ "$FARM" = "aus" ] && { STOPPED=1; break; }
       echo "$(date +%H:%M:%S) Frames $CS-$CE ..."
-      T0=$(date +%s)
+      T0=$(date +%s); PK0=$T0; D0=$(frames_done "$JOB")
       RF_JOB="$JOB" RF_OUT="$OUT" RF_JSON="$J" "$BLENDER" "${ARGS[@]}" --python "$PY" -s $CS -e $CE -a 2>&1 \
         | while IFS= read -r line; do
             case "$line" in
@@ -172,17 +220,22 @@ while true; do
               *RF:*|*rror*) echo "$line" ;;
             esac
           done
+      RC=${PIPESTATUS[0]}; D1=$(frames_done "$JOB")
+      log "PAKET $JOB $CS-$CE | $((D1 - D0)) neue Frames | $(( $(date +%s) - PK0 )) s | Blender-Code $RC"
+      if [ $(( $(date +%s) - BEAT )) -ge 300 ]; then BEAT=$(date +%s); sync_log; fi
     done
     LAST_WORK=$(date +%s)
-    [ $STOPPED = 1 ] && { echo "$(date +%H:%M) Farm aus - Job $JOB pausiert"; continue; }
+    [ $STOPPED = 1 ] && { log "PAUSE Job $JOB (Farm aus)"; echo "$(date +%H:%M) Farm aus - Job $JOB pausiert"; continue; }
     DONE=$(frames_done "$JOB")
     if [ "$DONE" -ge "$TOTAL" ]; then
       date > "$Q/$JOB.done"; echo "$(date +%H:%M) FERTIG: $JOB ($DONE/$TOTAL Frames)"
+      log "FERTIG $JOB ($DONE/$TOTAL)"
     fi
   done
   status wartet
   if [ "${IDLE_MIN:-0}" -gt 0 ] && [ $(( $(date +%s) - LAST_WORK )) -ge $(( IDLE_MIN * 60 )) ]; then
-    status abgemeldet; echo "$(date +%H:%M) $IDLE_MIN min ohne Job -> melde ab"; sleep 5
+    status abgemeldet; log "ENDE abgemeldet nach $IDLE_MIN min ohne Job"; sync_log
+    echo "$(date +%H:%M) $IDLE_MIN min ohne Job -> melde ab"; sleep 5
     osascript -e 'tell application "loginwindow" to «event aevtrlgo»'; exit 0
   fi
   board

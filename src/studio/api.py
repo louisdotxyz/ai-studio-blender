@@ -1127,6 +1127,16 @@ def cut_export(edl=False, format=None, quality=None, size=None, range=None, musi
     return out
 
 
+def farm_report(hours=24):
+    """When the render farm worked well and when not, and why Macs dropped out: hour by hour (share
+    reachable, Macs online / rendering, frames), the events, each studio Mac's session ends with the reason
+    from its log book (Ctrl+C, logout, shutdown, update, no clean end + what macOS says), its rules (log out
+    automatically after …, scheduled shutdown) and the patterns learned (kept for next time). Returns text;
+    call it first when the farm misbehaves."""
+    from . import farm_log, renderfarm
+    return farm_log.report(hours, renderfarm.share_root())["text"]
+
+
 def cut_export_when_ready(sections=None, split=None, format=None, quality=None, size=None, folder=None,
                           name=None, frames='HIGH'):
     """Export by itself once every frame of these sections (names; None = as chosen in Export) is rendered
