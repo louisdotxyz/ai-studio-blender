@@ -463,9 +463,10 @@ def setup(scene, mapping):
 
 
 def register():
-    for handlers in (bpy.app.handlers.frame_change_pre, bpy.app.handlers.render_pre):
-        if _on_frame not in handlers:
-            handlers.append(_on_frame)
+    # Not in render_pre: switching a collection there rebuilds the view layer under the render that has
+    # just started (Blender crashes). Renders call follow() themselves before they start.
+    if _on_frame not in bpy.app.handlers.frame_change_pre:
+        bpy.app.handlers.frame_change_pre.append(_on_frame)
 
 
 def unregister():

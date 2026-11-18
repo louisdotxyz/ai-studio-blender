@@ -205,6 +205,8 @@ def render_mask(scene, path, target=None):
         r.image_settings.file_format = 'PNG'
         r.image_settings.color_mode = 'RGBA'
         scene.camera = camera
+        from . import lightsets
+        lightsets.follow(scene, viewport=False)      # this camera's light set, before the render starts
         bpy.ops.render.render(scene=scene.name)
         bpy.data.images["Render Result"].save_render(raw, scene=scene)
     finally:

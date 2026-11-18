@@ -141,7 +141,8 @@ def tidy(window):
         images = [a for a in screen.areas if a.type == 'IMAGE_EDITOR']
         if not images:
             biggest = max(screen.areas, key=lambda a: a.width * a.height)
-            biggest.type = 'IMAGE_EDITOR'
+            with _override(window, biggest):
+                biggest.type = 'IMAGE_EDITOR'
             continue
         keep = max(images, key=lambda a: a.width * a.height)
         others = [a for a in screen.areas if a != keep]
@@ -161,9 +162,12 @@ def tidy(window):
                 break
         if not done:
             break
-    for _area, space in _editors(window):
-        space.show_region_ui = True
-        space.ui_mode = 'VIEW'
+    for area, space in list(_editors(window)):
+        with _override(window, area):               # from a timer there is no window: Blender needs one here
+            if not space.show_region_ui:
+                space.show_region_ui = True
+            if space.ui_mode != 'VIEW':
+                space.ui_mode = 'VIEW'
     return closed
 
 
@@ -214,11 +218,14 @@ def toggle_compositor(window):
         return False
     low = min((new, keep), key=lambda a: a.y)
     high = keep if low == new else new
-    high.type = 'IMAGE_EDITOR'
-    low.type = 'NODE_EDITOR'
-    low.ui_type = 'CompositorNodeTree'
-    for area, space in ((high, high.spaces.active), (low, low.spaces.active)):
-        space.show_region_ui = area == high             # the one sidebar stays the picture's
+    with _override(window, high):
+        high.type = 'IMAGE_EDITOR'
+    with _override(window, low):
+        low.type = 'NODE_EDITOR'
+        low.ui_type = 'CompositorNodeTree'
+    for area in (high, low):
+        with _override(window, area):
+            area.spaces.active.show_region_ui = area == high      # the one sidebar stays the picture's
     return True
 
 
