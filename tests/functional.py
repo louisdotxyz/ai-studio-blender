@@ -2305,7 +2305,9 @@ def setup_in_one_click():
     inst = cli.Installer(command="echo 'Download failed' >&2; exit 1", download_dir=folder).start()
     inst._thread.join(20)
     check("failed installer: not ok, message kept", not inst.ok and "Download failed" in inst.error(), inst.lines)
-    inst = cli.Installer(command="curl -fsSL http://127.0.0.1:9/x | bash", download_dir=folder)
+    # a failing download in a pipe (not "curl … | bash" itself: security software on the Mac kills the
+    # process that runs it, and with it the whole test Blender)
+    inst = cli.Installer(command="sh -c 'echo no connection >&2; exit 7' | cat", download_dir=folder)
     inst.command = "set -o pipefail; " + inst.command
     inst.start()._thread.join(30)
     check("no internet: the pipe does not hide the error", not inst.ok, inst.lines)
