@@ -641,8 +641,8 @@ class STUDIO_MT_render_arrange(Menu):
 class STUDIO_OT_render_refine(Operator):
     bl_idname = "studio.render_refine"
     bl_label = "Refine"
-    bl_description = ("Refine this render in the Compositing workspace (Studio tab in its sidebar): look, Krea and "
-                      "adjustments (the result comes back here)")
+    bl_description = ("Work on this render in the Photo workspace: big, with compare, look, adjustments, Krea, "
+                      "mockup and export in one sidebar")
     bl_options = {'INTERNAL'}
 
     path: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
@@ -650,7 +650,7 @@ class STUDIO_OT_render_refine(Operator):
     def execute(self, context):
         if self.path:
             _view["path"] = self.path
-        open_workspace(context, photo_workspace(), 'NODE_EDITOR')
+        open_workspace(context, photo_workspace(), 'IMAGE_EDITOR')
         return {'FINISHED'}
 
 
@@ -1143,8 +1143,41 @@ def draw_queue(layout, context, buttons=True):
     return True
 
 
+def _draw_pick(layout, context, images, path):
+    """The picked picture in one small box (it is big next to the sidebar): ◀ 3 / 20 ▶, A B, name, stars."""
+    entries = ([""] if _live() else []) + images
+    if not entries:
+        sub = layout.row()
+        sub.active = False
+        sub.label(text="No renders yet: start them in the chat", icon='INFO')
+        return
+    live = _live() if not _view["path"] else None
+    index = 0 if live is not None or path not in entries else entries.index(path)
+    box = layout.box()
+    head = box.row(align=True)
+    older = head.row(align=True)
+    older.enabled = index < len(entries) - 1
+    older.operator(STUDIO_OT_preview_step.bl_idname, text="", icon='TRIA_LEFT').direction = 1
+    count = head.row(align=True)
+    count.alignment = 'CENTER'
+    count.label(text="Rendering" if live is not None else "%d / %d" % (index + 1, len(entries)) if index else "Newest")
+    newer = head.row(align=True)
+    newer.enabled = index > 0
+    newer.operator(STUDIO_OT_preview_step.bl_idname, text="", icon='TRIA_RIGHT').direction = -1
+    if live is not None or not path:
+        return
+    row = box.row(align=True)
+    _ab_button(row, path, "A")
+    _ab_button(row, path, "B")
+    row.label(text=_title(path), translate=False)
+    row.operator(STUDIO_OT_render_reveal.bl_idname, text="", icon='FILE_FOLDER', emboss=False).path = path
+    _stars(box.row(align=True), path)
+
+
 class STUDIO_PT_review(Panel):
-    """The Photo workspace's Image Editor sidebar (Studio): the queue, the renders big, compare and sort."""
+    """The Photo workspace's one sidebar (Image Editor › Studio); the picked picture is big next to it.
+    Top to bottom, in the order of the work: pick and compare · adjust (look, light, colour) · Krea ·
+    mockup · export · all renders."""
     bl_space_type = 'IMAGE_EDITOR'
     bl_region_type = 'UI'
     bl_category = "Studio"
@@ -1153,14 +1186,39 @@ class STUDIO_PT_review(Panel):
 
     def draw(self, context):
         layout = self.layout
-        from . import render_review
+        from . import image_edit, mockup, photo_view, render_review, tab_finish
+        from .ui_common import section
+        photo_view.check_layout(context)
+        scene = context.scene
         head = layout.row(align=True)
         head.scale_y = 1.2
         sort = next(label for key, label, _i in render_review.SORTS if key == render_review.state["sort"])
         head.menu(STUDIO_MT_render_arrange.bl_idname, text=sort, icon='FILTER')
+        op = head.operator(photo_view.STUDIO_OT_photo_layout.bl_idname, text="", icon='NODE_COMPOSITING',
+                           depress=photo_view.compositor_open(context.screen))
+        op.action = 'LOOK'
+        head.operator(photo_view.STUDIO_OT_photo_layout.bl_idname, text="", icon='FULLSCREEN_ENTER').action = 'TIDY'
         head.popover(STUDIO_PT_output.__name__, text="", icon='PREFERENCES')
         draw_queue(layout, context)
-        _draw_renders(layout, context, review=True)
+        images = runner.queue_images(scene)
+        path = _selected_image(images)
+        a, b = (_ab[k] if _ab[k] and os.path.isfile(_ab[k]) else "" for k in ("A", "B"))
+        photo_view.want(context, image_edit.preview_file(scene, path) if path else "", a, b)
+        _draw_pick(layout, context, images, path)
+        box, _head, is_open = section(layout, "photo_compare", "Compare", 'IMAGE_REFERENCE')
+        if is_open:
+            photo_view.draw_compare(box, context, a, b)
+        tab_finish.draw_look(layout, context)                # the look (compositor: the next renders)
+        tab_finish._draw_adjust(layout, context, path)       # light and colour of this picture
+        tab_finish._draw_krea(layout, context, path)
+        box, _head, is_open = section(layout, "mockup", "Mockup: Product in a Photo", 'IMAGE_REFERENCE',
+                                      default_open=mockup.is_mockup(scene))
+        if is_open:
+            mockup.draw(box, context)
+        box, _head, is_open = section(layout, "photo_export", "Export", 'EXPORT', default_open=False)
+        if is_open:
+            photo_view.draw_export(box, context, path)
+        _draw_overview(layout, context, images, path)
 
 
 class STUDIO_PT_render_queue(_SidebarPanel, Panel):

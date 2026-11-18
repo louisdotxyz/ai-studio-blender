@@ -786,6 +786,8 @@ def _show_file(path):
     from . import runner, tab_queue
     runner._images_cache["time"] = 0.0
     tab_queue._view["path"] = path
+    from . import photo_view
+    photo_view._shown["key"] = None                      # the same file, written again: show it anew
     image = bpy.data.images.get(runner.PREVIEW_IMAGE)
     if image is not None and os.path.normpath(bpy.path.abspath(image.filepath)) == os.path.normpath(path):
         image.reload()

@@ -998,6 +998,31 @@ def _raises(func):
 
 
 @section
+def photo_workspace_tools():
+    """The Photo workspace: A and B in one picture, export at a size."""
+    import numpy as np
+    pv, mock, krea = mod("studio.photo_view"), mod("studio.mockup"), mod("studio.krea")
+    red, blue = os.path.join(TMP, "pv_a.png"), os.path.join(TMP, "pv_b.png")
+    for path, colour in ((red, (1.0, 0.0, 0.0, 1.0)), (blue, (0.0, 0.0, 1.0, 1.0))):
+        mock._write(np.tile(np.array(colour, dtype=np.float32), (200, 400, 1)), path)
+    wipe = pv._compare_image(red, blue, 'WIPE', 0.25)
+    px = np.empty(400 * 200 * 4, dtype=np.float32)
+    wipe.pixels.foreach_get(px)
+    px = px.reshape(200, 400, 4)
+    side = tuple(pv._compare_image(red, blue, 'SIDE', 0.5).size)
+    check("photo: A and B in one picture (A left of the line, B right), or side by side",
+          px[100, 50, 0] > 0.9 and px[100, 300, 2] > 0.9 and px[100, 100].min() > 0.9 and side[0] > 800, side)
+    bpy.data.images.remove(bpy.data.images[pv.COMPARE_IMAGE])
+    out = pv.export([red], 'JPEG', '1920')
+    big = os.path.join(TMP, "pv_big.png")
+    mock._write(np.ones((1000, 3000, 4), dtype=np.float32), big)
+    small = pv.export([big], 'PNG', '1920')
+    check("photo: export as JPG / PNG into Export, the longest side as chosen (never bigger than it was)",
+          out and out[0].endswith(os.path.join("Export", "pv_a.jpg")) and krea.image_size(small[0]) == (1920, 640)
+          and os.path.getsize(out[0]) > 0, (out, small))
+
+
+@section
 def mockup_photo():
     """The product in a photo: a scene of its own, the camera moves (never the product), montage, Krea."""
     import numpy as np

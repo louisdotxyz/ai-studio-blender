@@ -14,7 +14,7 @@ KEYS = ("edit_exposure", "edit_contrast", "edit_highlights", "edit_shadows",
         "edit_temperature", "edit_tint", "edit_vibrance", "edit_saturation")
 LIGHT = KEYS[:4]
 COLOR = KEYS[4:]
-PREVIEW_SIZE = 900          # longest side of the preview copy
+PREVIEW_SIZE = 1600         # longest side of the preview copy (it is shown big in the Photo workspace)
 _cache = {"key": None, "base": None, "size": (0, 0), "float": False, "file": "", "source": ""}
 _state = {"want": None, "counter": 0}
 
@@ -195,7 +195,7 @@ def _make_preview():
         print("ID Toolkit: Finish preview:", exc)
     for window in bpy.context.window_manager.windows:
         for area in window.screen.areas:
-            if area.type == 'VIEW_3D':
+            if area.type in {'VIEW_3D', 'IMAGE_EDITOR', 'NODE_EDITOR'}:
                 area.tag_redraw()
     return None
 
@@ -204,5 +204,5 @@ def changed(_self=None, _context=None):
     """Update callback of the sliders: redraw, the preview follows in the timer."""
     for window in bpy.context.window_manager.windows:
         for area in window.screen.areas:
-            if area.type == 'VIEW_3D':
+            if area.type in {'VIEW_3D', 'IMAGE_EDITOR', 'NODE_EDITOR'}:
                 area.tag_redraw()
