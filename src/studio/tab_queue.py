@@ -850,59 +850,75 @@ def _factor_row(layout, label, factors, op, depress_value, **props):
 
 
 def draw_quality(layout, context):
-    """Render tab: High Quality (the scene's own settings) and Low Quality (shares of it), at a glance."""
+    """Render tab: [Stills | Animation], then High and Low Quality of that kind, each from a preset
+    (Quick, Medium, High, Max) with its values (quality.py)."""
+    from . import quality
     from .ui_common import section
     scene = context.scene
     rq = scene.studio
     render = scene.render
-    p = runner.prefs(context)
+    if not rq.quality_ready:
+        quality.schedule_ensure()               # files from before: filled once (not while drawing)
     cycles = render.engine == 'CYCLES'
-    box, head, is_open = section(layout, "render_hq", "High Quality", 'SHADING_RENDERED')
+    animation = rq.quality_view == 'ANIM'
+    row = layout.row(align=True)
+    row.scale_y = 1.2
+    row.prop(rq, "quality_view", expand=True)
     pct = render.resolution_percentage / 100
-    head.label(text="%d × %d" % (round(render.resolution_x * pct), round(render.resolution_y * pct)),
-               translate=False)
-    if is_open:
-        _factor_row(box, "Size", SCALE_PRESETS, 'studio.set_scale', render.resolution_percentage)
+    width, height = round(render.resolution_x * pct), round(render.resolution_y * pct)
+    for which, title, icon in (('HIGH', "High Quality", 'SHADING_RENDERED'), ('LOW', "Low Quality", 'SORTTIME')):
+        prof = quality.profile(scene, animation, which)
+        key = "render_%s_%s" % ("anim" if animation else "still", which.lower())
+        box, head, is_open = section(layout, key, title, icon, default_open=which == 'HIGH')
+        name = dict((k, n) for k, n, _d in quality.PRESET_ITEMS).get(prof.preset, "")
+        head.label(text="%s · %d · %d × %d" % (name, prof.samples if cycles else prof.eevee_samples,
+                                              round(width * prof.resolution / 100),
+                                              round(height * prof.resolution / 100)), translate=False)
+        if not is_open:
+            continue
+        presets = box.row(align=True)
+        for preset in ('QUICK', 'MEDIUM', 'HIGH', 'MAX'):
+            presets.prop_enum(prof, "preset", preset)
+        if prof.preset == 'CUSTOM':
+            sub = box.row()
+            sub.active = False
+            sub.label(text="Custom: values changed by hand", icon='MODIFIER')
+        col = box.column(align=True)
+        col.prop(prof, "resolution", slider=True)
         if cycles:
-            cy = scene.cycles
             col = box.column(align=True)
-            col.prop(cy, "samples", text="Samples")
+            col.prop(prof, "samples")
             row = col.row(align=True)
-            if cy.use_adaptive_sampling:
-                row.prop(cy, "use_adaptive_sampling", text="")
-                row.prop(cy, "adaptive_threshold", text="Noise Threshold")
+            if prof.adaptive:
+                row.prop(prof, "adaptive", text="")
+                row.prop(prof, "threshold")
             else:
-                row.prop(cy, "use_adaptive_sampling", text="Noise Threshold", toggle=True)
-            col.prop(cy, "time_limit", text="Time Limit")
-            col = box.column(align=True)                 # light paths: total and the main kinds
-            col.prop(cy, "max_bounces", text="Light Bounces")
+                row.prop(prof, "adaptive", toggle=True)
+            col.prop(prof, "time_limit")
+            col = box.column(align=True)
+            col.prop(prof, "bounces")
             row = col.row(align=True)
-            row.prop(cy, "diffuse_bounces", text="Diffuse")
-            row.prop(cy, "glossy_bounces", text="Glossy")
-            row.prop(cy, "transmission_bounces", text="Glass")
-            col.prop(cy, "sample_clamp_indirect", text="Clamp Indirect")
+            row.prop(prof, "diffuse")
+            row.prop(prof, "glossy")
+            row.prop(prof, "transmission")
+            col.prop(prof, "clamp")
             row = box.row(align=True)
-            row.prop(cy, "use_denoising", text="Denoise", toggle=True, icon='SHADERFX')
-            row.prop(render, "use_motion_blur", text="Motion Blur", toggle=True, icon='ONIONSKIN_ON')
-            row = box.row(align=True)
-            row.prop(render, "film_transparent", text="Transparent", toggle=True, icon='IMAGE_RGB_ALPHA')
-            row.prop(render, "use_persistent_data", text="Keep Data", toggle=True, icon='MEMORY')
-        elif hasattr(scene, "eevee"):
-            box.prop(scene.eevee, "taa_render_samples", text="Samples")
-    box, head, is_open = section(layout, "render_lq", "Low Quality", 'SORTTIME')
-    if p is not None:
-        head.label(text="%d %% · %d %%" % (p.low_resolution, p.low_samples_percent), translate=False)
-    if is_open:
-        if p is not None:
-            _factor_row(box, "Resolution", LOW_SCALES, STUDIO_OT_low_scale.bl_idname, p.low_resolution,
-                        target="resolution")
-            _factor_row(box, "Samples", LOW_SCALES, STUDIO_OT_low_scale.bl_idname, p.low_samples_percent,
-                        target="samples")
-        if cycles:
-            row = box.row(align=True)
-            row.prop(rq, "low_denoise", text="Denoise", toggle=True, icon='SHADERFX')
-            row.prop(rq, "low_fast_light", text="Fast Light", toggle=True, icon='LIGHT')
-            row.prop(rq, "low_simplify", text="Simplify", toggle=True, icon='MOD_DECIM')
+            row.prop(prof, "denoise", toggle=True, icon='SHADERFX')
+            row.prop(prof, "simplify", toggle=True, icon='MOD_DECIM')
+            row.prop(prof, "motion_blur", toggle=True, icon='ONIONSKIN_ON')
+        else:
+            box.prop(prof, "eevee_samples")
+            box.prop(prof, "motion_blur", toggle=True, icon='ONIONSKIN_ON')
+    box = layout.box()                           # the same for every render
+    row = box.row()
+    row.label(text="Size", icon='FULLSCREEN_ENTER')
+    sub = row.row()
+    sub.alignment = 'RIGHT'
+    sub.label(text="%d × %d px" % (width, height), translate=False)
+    _factor_row(box, "", SCALE_PRESETS, 'studio.set_scale', render.resolution_percentage)
+    row = box.row(align=True)
+    row.prop(render, "film_transparent", text="Transparent", toggle=True, icon='IMAGE_RGB_ALPHA')
+    row.prop(render, "use_persistent_data", text="Keep Data", toggle=True, icon='MEMORY')
 
 
 class STUDIO_PT_output(Panel):

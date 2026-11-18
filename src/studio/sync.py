@@ -184,7 +184,9 @@ def frame_size(scene, winx, winy, zoomfac):
     cam = scene.camera
     fit = cam.data.sensor_fit if cam is not None and cam.type == 'CAMERA' else 'AUTO'
     if fit == 'AUTO':
-        frame_h, view_h = rx >= ry, winx >= winy
+        # The viewport takes the frame's own axis (measured: a portrait frame's sensor spans the
+        # viewport's height, also in a wide viewport), not the axis of the viewport's shape.
+        frame_h = view_h = rx >= ry
     else:
         frame_h = view_h = fit == 'HORIZONTAL'
     frame_w = 1.0 if frame_h else rx / ry            # in sensor sizes
@@ -269,6 +271,9 @@ def on_depsgraph_update(scene, _depsgraph=None):
     try:
         sync_scene(scene)
         check_view_changed(scene)
+        from . import lightsets
+        lightsets.guard_lights(scene)     # before Light Wrangler's timer looks at the active light
+        lightsets.schedule_follow(scene)  # only the lights of the camera you look through
         from . import background
         background.sync(scene)   # e.g. another World or view transform: update the color
     except Exception as ex:  # nie den Depsgraph-Update blockieren
@@ -316,6 +321,16 @@ def center_camera_frames():
             region = next((r for r in area.regions if r.type == 'WINDOW'), None)
             if region_3d is None or region is None or region_3d.view_perspective != 'CAMERA':
                 continue
+            key = area.as_pointer()           # viewport or sidebar resized: fit the size again
+            shape = (region.width, region.height, covered(area, region))
+            if _last_shape.get(key) != shape:
+                known = key in _last_shape
+                _last_shape[key] = shape
+                if known:
+                    fit_into_visible(area, region, region_3d, bpy.context.scene)
+                    area.tag_redraw()
+                    moved += 1
+                    continue
             target = centered_offset(area, region, region_3d)
             offset = region_3d.view_camera_offset
             if abs(offset[0] - target[0]) > 1e-5 or abs(offset[1] - target[1]) > 1e-5:
@@ -323,6 +338,9 @@ def center_camera_frames():
                 area.tag_redraw()
                 moved += 1
     return moved
+
+
+_last_shape = {}   # area pointer -> (width, height, covered) of its viewport
 
 
 def _center_timer():

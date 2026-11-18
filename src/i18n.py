@@ -699,6 +699,7 @@ DE = {
     "The Claude app gets Blender's tools now; reopen Claude once": 'Die Claude-App bekommt jetzt Blenders Werkzeuge; Claude einmal neu öffnen',
     # -- 1.8: Camera tab, CAD in the chat, Up / Down ---------------------------
     'Up / Down': 'Hoch / Runter',
+    'Roll': 'Neigung',
     'Camera and the point it looks at move up or down in the picture together (also in a straight top view; 0 = centered)': 'Kamera und Blickpunkt wandern zusammen im Bild nach oben oder unten (auch in der Draufsicht; 0 = mittig)',
     'CAD Comments and Jobs': 'CAD-Kommentare und -Aufträge',
     'Show the CAD comments and jobs for the CAD side': 'Die CAD-Kommentare und -Aufträge für die CAD-Seite zeigen',

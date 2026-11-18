@@ -1495,6 +1495,13 @@ def draw(layout, context, compact=False):
         row.operator(STUDIO_OT_mockup_krea.bl_idname, text="", icon='PLAY').claude = False
 
 
+def _in_photo(context):
+    """The mockup lives in the Photo workspace only, not under every tab of the Studio sidebar."""
+    from .tab_queue import photo_workspace
+    workspace = getattr(context, "workspace", None)
+    return workspace is not None and workspace.name == photo_workspace()
+
+
 class STUDIO_PT_mockup(Panel):
     """In a studio scene: closed, one button to start a mockup."""
     bl_space_type = 'VIEW_3D'
@@ -1506,13 +1513,18 @@ class STUDIO_PT_mockup(Panel):
 
     @classmethod
     def poll(cls, context):
-        return not is_mockup(context.scene)
+        return _in_photo(context) and not is_mockup(context.scene)
 
     def draw_header(self, context):
         self.layout.label(text="", icon='IMAGE_REFERENCE')
 
     def draw(self, context):
         draw(self.layout, context)
+
+
+class STUDIO_PT_mockup_photo(STUDIO_PT_mockup):
+    """The same start in the Photo workspace's image editor (its Studio sidebar)."""
+    bl_space_type = 'IMAGE_EDITOR'
 
 
 class STUDIO_PT_mockup_on(Panel):
@@ -1525,7 +1537,7 @@ class STUDIO_PT_mockup_on(Panel):
 
     @classmethod
     def poll(cls, context):
-        return is_mockup(context.scene)
+        return is_mockup(context.scene)      # only in a mockup scene: placing needs the 3D view
 
     def draw_header(self, context):
         self.layout.label(text="", icon='IMAGE_REFERENCE')
@@ -1536,7 +1548,7 @@ class STUDIO_PT_mockup_on(Panel):
 
 classes = (StudioMockup, STUDIO_OT_mockup_new, STUDIO_OT_mockup_go, STUDIO_OT_mockup_place, STUDIO_OT_mockup_render,
            STUDIO_OT_mockup_fspy, STUDIO_OT_mockup_front, STUDIO_OT_mockup_krea, STUDIO_OT_mockup_ask,
-           STUDIO_PT_mockup, STUDIO_PT_mockup_on)
+           STUDIO_PT_mockup, STUDIO_PT_mockup_photo, STUDIO_PT_mockup_on)
 
 
 def register():

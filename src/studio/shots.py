@@ -21,15 +21,72 @@ from . import background, environment, runner
 
 # ------------------------------------------------------------------ render check
 
-def render_problems(scene):
-    """[(text, icon)] that would spoil a render, most important first."""
+def _node_images(tree, found, seen):
+    if tree is None or tree.name in seen:
+        return
+    seen.add(tree.name)
+    for node in tree.nodes:
+        image = getattr(node, "image", None)
+        if image is not None:
+            found.add(image.name)
+        if node.type == 'GROUP':
+            _node_images(node.node_tree, found, seen)
+
+
+def used_images(scene):
+    """The images a render of this scene really uses: materials of the objects that render, and the World."""
+    found, seen = set(), set()
+    for obj in scene.objects:
+        if obj.hide_render or obj.type not in {'MESH', 'CURVE', 'SURFACE', 'META', 'FONT', 'CURVES', 'VOLUME'}:
+            continue
+        for slot in obj.material_slots:
+            if slot.material is not None:
+                _node_images(slot.material.node_tree, found, seen)
+    if scene.world is not None:
+        _node_images(scene.world.node_tree, found, seen)
+    return found
+
+
+def missing_images(scene):
+    used = used_images(scene)
+    return sorted(img.name for img in bpy.data.images
+                  if img.name in used and img.source in {'FILE', 'SEQUENCE', 'TILED'} and img.filepath
+                  and img.packed_file is None and not os.path.exists(bpy.path.abspath(img.filepath)))
+
+
+_searched = set()      # (file, missing) already looked for: once per session
+
+
+def _search_missing():
+    """Looks for missing textures by name in the project folder (and one folder up), like
+    File › External Data › Find Missing Files. Runs by itself, before anything is shown."""
+    folder = os.path.dirname(bpy.data.filepath) if bpy.data.filepath else ""
+    for path in [p for p in (folder, os.path.dirname(folder)) if p and os.path.isdir(p)]:
+        try:
+            bpy.ops.file.find_missing_files(directory=path, find_all=False)
+        except Exception as ex:
+            print("ID Toolkit: find missing files:", ex)
+    for window in bpy.context.window_manager.windows:
+        for area in window.screen.areas:
+            area.tag_redraw()
+    return None
+
+
+def render_problems(scene, search=True):
+    """[(text, icon)] that would spoil a render, most important first. Missing textures are looked for
+    in the project folder first; only those really used by the render count."""
     problems = []
     rq = scene.studio
     if not any(it.camera for it in rq.items) and scene.camera is None:
         problems.append(("No camera to render", 'CAMERA_DATA'))
-    missing = sorted({img.name for img in bpy.data.images
-                      if img.source in {'FILE', 'SEQUENCE', 'TILED'} and img.filepath and img.packed_file is None
-                      and img.users and not os.path.exists(bpy.path.abspath(img.filepath))})
+    missing = missing_images(scene)
+    if missing and search:
+        key = (bpy.data.filepath, tuple(missing))
+        if key not in _searched:
+            _searched.add(key)
+            if not bpy.app.timers.is_registered(_search_missing):
+                bpy.app.timers.register(_search_missing, first_interval=0.0)
+            missing = []                  # looked for first, shown only if still missing
     if missing:
         problems.append(("Missing textures: %s" % ", ".join(missing[:3]) + (" …" if len(missing) > 3 else ""),
                          'IMAGE_DATA'))
@@ -48,12 +105,42 @@ def render_problems(scene):
     return problems
 
 
+class STUDIO_OT_fix_render_problems(Operator):
+    bl_idname = "studio.fix_render_problems"
+    bl_label = "Let Claude Fix It"
+    bl_description = "Claude gets the list in the chat and fixes what would spoil the render"
+    bl_options = {'INTERNAL'}
+
+    def execute(self, context):
+        problems = render_problems(context.scene, search=False)
+        if not problems:
+            return {'CANCELLED'}
+        missing = missing_images(context.scene)
+        text = ("Before rendering, please fix these problems in the scene \"%s\" by yourself (look for missing "
+                "files in the project and asset folders, relink or replace them; ask only if there is no way):\n- %s"
+                % (context.scene.name, "\n- ".join(t for t, _i in problems)))
+        if missing:
+            text += "\nMissing textures (all): " + ", ".join(missing)
+        try:
+            from .. import ui_menus
+            wm = context.window_manager
+            wm.claude_prompt = text
+            ui_menus._send_prompt(wm)
+        except Exception as ex:
+            self.report({'ERROR'}, "Could not reach the chat: %s" % ex)
+            return {'CANCELLED'}
+        self.report({'INFO'}, "Claude is on it (see the Claude tab)")
+        return {'FINISHED'}
+
+
 def draw_check(layout, scene):
     problems = render_problems(scene)
     if not problems:
         return
     box = layout.box()
-    box.label(text="Before rendering", icon='ERROR')
+    row = box.row(align=True)
+    row.label(text="Before rendering", icon='ERROR')
+    row.operator(STUDIO_OT_fix_render_problems.bl_idname, text="Fix", icon='TOOL_SETTINGS')
     col = box.column(align=True)
     for text, icon in problems:
         col.label(text=text, icon=icon, translate=False)
@@ -341,7 +428,7 @@ def draw_results(layout):
 
 
 classes = (STUDIO_OT_shot_add, STUDIO_OT_shot_remove, STUDIO_OT_shot_preset, STUDIO_MT_shot_presets, STUDIO_OT_shot_menu,
-           STUDIO_OT_render_shots, STUDIO_OT_shots_stop, STUDIO_OT_compare_renders)
+           STUDIO_OT_render_shots, STUDIO_OT_shots_stop, STUDIO_OT_compare_renders, STUDIO_OT_fix_render_problems)
 
 
 def register():

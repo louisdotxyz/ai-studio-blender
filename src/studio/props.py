@@ -8,7 +8,7 @@ from bpy.props import (BoolProperty, CollectionProperty, EnumProperty, FloatProp
                        IntProperty, PointerProperty, StringProperty)
 from bpy.types import PropertyGroup
 
-from . import background, cameras, core, hdri, lights, matpresets, orbit, sync
+from . import background, cameras, core, hdri, lights, matpresets, orbit, quality, sync
 from .matpresets import _color_input
 from .keymaps import SHORTCUTS, _user_keymap_item
 
@@ -477,6 +477,16 @@ class STUDIO_Settings(PropertyGroup):
         description="Low Quality: subdivision at most 1, textures at most 1024 px (faster, less memory)")
     low_denoise: BoolProperty(name="Denoise", description="Always denoise Low Quality renders (Cycles)",
                               default=True)
+    # Render quality per kind (quality.py): High and Low, for stills and for animations
+    q_still_high: PointerProperty(type=quality.STUDIO_Quality)
+    q_still_low: PointerProperty(type=quality.STUDIO_Quality)
+    q_anim_high: PointerProperty(type=quality.STUDIO_Quality)
+    q_anim_low: PointerProperty(type=quality.STUDIO_Quality)
+    quality_ready: BoolProperty(options={'HIDDEN'})
+    quality_view: EnumProperty(
+        name="Render Settings For", options=set(),
+        items=[('STILL', "Stills", "High and Low Quality of still images", 'IMAGE_DATA', 0),
+               ('ANIM', "Animation", "High and Low Quality of animations and film sections", 'RENDER_ANIMATION', 1)])
     name_pattern: EnumProperty(name="File Names", items=core.NAME_PATTERNS, default='NAME_CAM')
     name_template: StringProperty(
         name="Template", default="{name}_{camera}",
@@ -671,7 +681,7 @@ class STUDIO_Settings(PropertyGroup):
     hdri_pins: CollectionProperty(type=STUDIO_HdriPin)
     hdri_pin_index: IntProperty(default=-1, options=set())
     place_mode: EnumProperty(name="Place", description="How a click on the product places the open light",
-                             items=PLACE_MODES, default='REFLECTION', options=set())
+                             items=PLACE_MODES, default='ILLUMINATION', options=set())
     # Looks: several lighting moods in this file (looks.py)
     light_looks: CollectionProperty(type=STUDIO_Look)
     light_look_index: IntProperty(default=-1, options=set())
@@ -742,6 +752,11 @@ class STUDIO_Settings(PropertyGroup):
         name="Vertical", description="Height above (+) or below (−) the object",
         subtype='ANGLE', min=-orbit.MAX_VERTICAL, max=orbit.MAX_VERTICAL,
         get=orbit.get_vertical, set=orbit.set_vertical, options=set(),
+    )
+    orbit_roll: FloatProperty(
+        name="Roll", description="Tilt the camera around its view axis (0 = level horizon)",
+        subtype='ANGLE', min=-math.pi, max=math.pi, soft_min=-math.radians(45), soft_max=math.radians(45),
+        get=orbit.get_roll, set=orbit.set_roll, options=set(),
     )
     orbit_distance: FloatProperty(
         name="Distance", description="Distance to the center of the object",
@@ -854,8 +869,9 @@ class STUDIO_Preferences(PropertyGroup):
         default=True, update=_frame_update,
     )
     frame_size: IntProperty(
-        name="Size", description="How much of the free part of the viewport the frame fills",
-        subtype='PERCENTAGE', min=20, max=100, default=50, update=_frame_update,
+        name="Size", description="How much of the free part of the viewport the frame fills "
+                                 "(over 100 %: bigger than the free part, under sidebar and headers)",
+        subtype='PERCENTAGE', min=20, max=400, soft_max=200, default=50, update=_frame_update,
     )
     frame_shift_x: IntProperty(
         name="Horizontal", description="Move the frame left (−) or right (+), in % of the free width",

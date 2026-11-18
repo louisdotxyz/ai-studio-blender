@@ -106,6 +106,8 @@ def _capture_render(scene):
     state = {key: getattr(rq, key) for key in RENDER_KEYS if hasattr(rq, key)}
     state["long_side"] = scene.get("id_render_long", 0)
     state["percentage"] = scene.render.resolution_percentage
+    from . import quality
+    state["quality_profiles"] = quality.capture(scene)
     return state
 
 
@@ -117,6 +119,9 @@ def _apply_render(scene, state):
                 setattr(rq, key, state[key])
             except (TypeError, ValueError):
                 pass
+    if state.get("quality_profiles"):
+        from . import quality
+        quality.restore(scene, state["quality_profiles"])
     if state.get("long_side"):
         from . import render_size
         render_size.set_long_side(scene, state["long_side"])

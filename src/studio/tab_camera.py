@@ -352,6 +352,7 @@ class STUDIO_PT_camera(_SidebarPanel, Panel):
         back = row.row(align=True)
         back.enabled = steps > 0 and not rq.camera_locked
         back.operator(STUDIO_OT_camera_back.bl_idname, text="", icon='LOOP_BACK')
+        row.prop(rq, "camera_locked", text="", icon='LOCKED' if rq.camera_locked else 'UNLOCKED')
         grid = box.grid_flow(row_major=True, columns=3, even_columns=True, align=True)
         for obj in cameras.scene_cameras(scene):
             grid.operator(STUDIO_OT_set_camera.bl_idname, text=obj.name, depress=(obj == cam)).name = obj.name
@@ -361,11 +362,6 @@ class STUDIO_PT_camera(_SidebarPanel, Panel):
             box.label(text="No scene camera")
             return
         locked = rq.camera_locked
-        row = box.row(align=True)
-        sub = row.row(align=True)
-        sub.enabled = not locked
-        sub.prop(rq, "orbit_target", text="", icon='PIVOT_CURSOR', placeholder="Orbit Around: 3D Cursor")
-        row.prop(rq, "camera_locked", text="", icon='LOCKED' if locked else 'UNLOCKED')
 
         # Lens, depth of field and format: one line each
         data = cam.data
@@ -401,8 +397,7 @@ class STUDIO_PT_camera(_SidebarPanel, Panel):
         colon.label(text=":")
         ratio.prop(rq, "aspect_y", text="")
         row.menu(STUDIO_MT_formats.bl_idname, text=format_name(render))
-        row.prop(own, "use_resolution", icon='PINNED' if own.use_resolution else 'UNPINNED', translate=False,
-                 text="%d × %d" % (round(render.resolution_x * pct), round(render.resolution_y * pct)))
+        row.prop(own, "use_resolution", icon='PINNED' if own.use_resolution else 'UNPINNED', text="")
 
         _draw_orbit(layout, scene, cam)
 
@@ -504,10 +499,14 @@ def _draw_orbit(layout, scene, cam):
     keys.button(head, 'ORBIT')
     if not is_open:
         return
+    row = box.row(align=True)                 # what the camera circles around (empty: the 3D cursor)
+    row.enabled = not rq.camera_locked
+    row.prop(rq, "orbit_target", text="", icon='PIVOT_CURSOR', placeholder="Orbit Around: 3D Cursor")
     col = box.column(align=True)
     col.enabled = not rq.camera_locked
     col.prop(rq, "orbit_horizontal")
     col.prop(rq, "orbit_vertical")
+    col.prop(rq, "orbit_roll", slider=True)
     if cam.data.type != 'ORTHO':        # orthographic: the distance changes nothing in the picture
         col.prop(rq, "orbit_distance")
     col.prop(rq, "orbit_height")

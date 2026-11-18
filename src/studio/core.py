@@ -460,32 +460,9 @@ def prepare_job(scene, camera, quality, filepath, background_mode, low_resolutio
             ov.set(scene, "render.resolution_x", int(resolution[0]))
             ov.set(scene, "render.resolution_y", int(resolution[1]))
 
-        if quality == 'LOW':
-            percent = ov.get(scene, "render.resolution_percentage")
-            ov.set(scene, "render.resolution_percentage",
-                   max(1, round(percent * low_resolution / 100)))
-            engine = scene.render.engine
-            # low_samples: share of the High (scene) samples in percent
-            if engine == 'CYCLES':
-                ov.set(scene, "cycles.samples", max(1, round(ov.get(scene, "cycles.samples") * low_samples / 100)))
-                if scene.studio.low_denoise:
-                    ov.set(scene, "cycles.use_denoising", True)
-                if scene.studio.low_fast_light:
-                    for path, most in (("cycles.max_bounces", 3), ("cycles.diffuse_bounces", 2),
-                                       ("cycles.glossy_bounces", 2), ("cycles.transmission_bounces", 3)):
-                        ov.set(scene, path, min(most, ov.get(scene, path)))
-                    ov.set(scene, "cycles.caustics_reflective", False)
-                    ov.set(scene, "cycles.caustics_refractive", False)
-                    ov.set(scene, "render.use_motion_blur", False)
-                if scene.studio.low_simplify:
-                    ov.set(scene, "render.use_simplify", True)
-                    ov.set(scene, "render.simplify_subdivision_render",
-                           min(1, ov.get(scene, "render.simplify_subdivision_render")))
-                    if ov.get(scene, "cycles.texture_limit_render") in {'OFF', '2048', '4096', '8192'}:
-                        ov.set(scene, "cycles.texture_limit_render", '1024')
-            elif engine == 'BLENDER_EEVEE':
-                ov.set(scene, "eevee.taa_render_samples",
-                       max(1, round(ov.get(scene, "eevee.taa_render_samples") * low_samples / 100)))
+        # High or Low Quality of a still or an animation: the profile of the Render tab (quality.py)
+        from . import quality as quality_profiles
+        quality_profiles.apply(ov, scene, animation, quality)
 
         if animation and ANIM_FORMATS.get(scene.studio.anim_format, ("IMAGE",))[0] == 'VIDEO':
             # Video codecs (H.264) need even pixel sizes: bake the percentage into an even size.

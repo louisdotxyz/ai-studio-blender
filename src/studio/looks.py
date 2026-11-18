@@ -5,6 +5,8 @@ A look holds the exact state of every light (place, brightness, size, color, on 
 (image, studio lights or sky), background, floor, haze and the image look. The look that is open follows
 what you change; switching stores it and brings the other one back. A light added in one look exists in
 the others too, switched off there.
+
+With light sets (lightsets.py) the looks are per camera ("variants" A / B …) and hold only its lights.
 """
 
 import json
@@ -120,18 +122,89 @@ def apply(scene, data):
 
 
 # ------------------------------------------------------------------ the looks of a scene
+# With light sets (lightsets.py) every camera has its own variants A / B …: they hold only the lights of
+# its set (the World is the same for all cameras) and live on the set. Before that: the looks of the
+# scene (Scene.studio.light_looks), with World, background and floor.
+
+def _set(scene):
+    from . import lightsets
+    if not lightsets.enabled(scene) or scene.camera is None:
+        return None
+    return lightsets.set_of(scene, scene.camera)
+
+
+def _set_looks(coll):
+    from . import lightsets
+    try:
+        found = json.loads(coll.get(lightsets.LOOKS_KEY) or "[]")
+        return found if isinstance(found, list) else []
+    except ValueError:
+        return []
+
+
+def _save_set_looks(coll, found, index):
+    from . import lightsets
+    coll[lightsets.LOOKS_KEY] = json.dumps(found)
+    coll[lightsets.LOOK_INDEX_KEY] = index
+
+
+def _set_index(coll, found):
+    from . import lightsets
+    index = int(coll.get(lightsets.LOOK_INDEX_KEY, -1))
+    return index if 0 <= index < len(found) else -1
+
+
+def capture_set(coll):
+    from . import lightsets
+    return {"lights": {obj.name: _light_state(obj) for obj in lightsets.set_lights(coll)}}
+
+
+def apply_set(scene, coll, data):
+    from . import lightsets
+    saved = data.get("lights") or {}
+    for obj in lightsets.set_lights(coll):
+        state = saved.get(obj.name)
+        if state is None:
+            obj.hide_render = obj.hide_viewport = True      # made in another variant
+        else:
+            _restore_light(scene, obj, state)
+    rs = scene.studio
+    if rs.active_light is not None and rs.active_light.hide_render:
+        rs.active_light = None
+    return []
+
 
 def names(scene):
+    coll = _set(scene)
+    if coll is not None:
+        return [look.get("name", "?") for look in _set_looks(coll)]
+    from . import lightsets
+    if lightsets.enabled(scene):
+        return []
     return [look.name for look in scene.studio.light_looks]
 
 
 def active(scene):
+    coll = _set(scene)
+    if coll is not None:
+        return _set_index(coll, _set_looks(coll))
+    from . import lightsets
+    if lightsets.enabled(scene):
+        return -1
     rs = scene.studio
     return rs.light_look_index if 0 <= rs.light_look_index < len(rs.light_looks) else -1
 
 
 def store(scene):
-    """Writes the scene's current state into the open look."""
+    """Writes the current state into the open look."""
+    coll = _set(scene)
+    if coll is not None:
+        found = _set_looks(coll)
+        index = _set_index(coll, found)
+        if index >= 0:
+            found[index]["data"] = capture_set(coll)
+            _save_set_looks(coll, found, index)
+        return
     index = active(scene)
     if index >= 0:
         scene.studio.light_looks[index].data = json.dumps(capture(scene))
@@ -145,6 +218,25 @@ def _next_name(scene):
 def add(scene):
     """A new look as a copy of what is there now; it becomes the open one. The first call also keeps the
     state so far as look A."""
+    if _set(scene) is None and scene.camera is not None:
+        from . import lightsets
+        if lightsets.enabled(scene):
+            lightsets.active_collection(scene)          # the camera gets its set first
+    coll = _set(scene)
+    if coll is not None:
+        found = _set_looks(coll)
+        data = capture_set(coll)
+        if not found:
+            found.append({"name": _next_name(scene), "data": data})
+        else:
+            index = _set_index(coll, found)
+            if index >= 0:
+                found[index]["data"] = data
+        used = {look.get("name") for look in found}
+        name = next((n for n in NAMES if n not in used), "Look %d" % (len(used) + 1))
+        found.append({"name": name, "data": data})
+        _save_set_looks(coll, found, len(found) - 1)
+        return name
     rs = scene.studio
     data = json.dumps(capture(scene))
     if not len(rs.light_looks):
@@ -161,6 +253,18 @@ def add(scene):
 
 
 def switch(scene, index):
+    coll = _set(scene)
+    if coll is not None:
+        found = _set_looks(coll)
+        if not 0 <= index < len(found):
+            raise ValueError("No variant %r" % index)
+        current = _set_index(coll, found)
+        if index == current:
+            return []
+        if current >= 0:
+            found[current]["data"] = capture_set(coll)
+        _save_set_looks(coll, found, index)
+        return apply_set(scene, coll, found[index].get("data") or {})
     rs = scene.studio
     if not 0 <= index < len(rs.light_looks):
         raise ValueError("No look %r" % index)
@@ -183,6 +287,24 @@ def switch_name(scene, name):
 
 def remove(scene, index=None):
     """Removes a look (default: the open one) and opens its neighbor."""
+    coll = _set(scene)
+    if coll is not None:
+        found = _set_looks(coll)
+        current = _set_index(coll, found)
+        index = current if index is None else index
+        if not 0 <= index < len(found):
+            return
+        found.pop(index)
+        if not found:
+            _save_set_looks(coll, [], -1)
+            return
+        if index == current:
+            target = min(index, len(found) - 1)
+            _save_set_looks(coll, found, target)
+            apply_set(scene, coll, found[target].get("data") or {})
+        else:
+            _save_set_looks(coll, found, current - 1 if index < current else current)
+        return
     rs = scene.studio
     current = active(scene)
     index = current if index is None else index

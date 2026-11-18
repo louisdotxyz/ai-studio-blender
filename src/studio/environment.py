@@ -266,6 +266,8 @@ FLAG_PATTERNS = (
     ('BRANCHES', "Tree", "Leaves and branches of a tree, moving in the wind"),
     ('WATER', "Water", "Moving ripples of light, like light reflected off water"),
     ('CLOUDS', "Clouds", "Soft shadows that drift slowly"),
+    ('SOFTBOX', "Softbox", "A soft frame: the light fades out towards its edges, with a faint grid like a softbox's"),
+    ('GRADIENT', "Gradient", "The light fades from one side to the other (turn the light to turn the gradient)"),
 )
 MOVING = {'DAPPLE', 'BRANCHES', 'WATER', 'CLOUDS'}
 GOBO_PREFIX = "Studio | Gobo "
@@ -381,6 +383,28 @@ def _moving_pattern(nt, pattern, generated):
     return light
 
 
+def _soft_pattern(nt, pattern, generated):
+    """How much light passes (0..1) for the soft textures: a gradient across the card, or a softbox – soft
+    towards the edges with a faint grid."""
+    xyz = nt.nodes.new('ShaderNodeSeparateXYZ')
+    nt.links.new(generated, xyz.inputs[0])
+    x, y = xyz.outputs["X"], xyz.outputs["Y"]
+    if pattern == 'GRADIENT':
+        return _smooth(nt, x, 0.1, 0.9)
+    ex = _math(nt, 'ABSOLUTE', _math(nt, 'SUBTRACT', x, 0.5))
+    ey = _math(nt, 'ABSOLUTE', _math(nt, 'SUBTRACT', y, 0.5))
+    edge = _math(nt, 'MAXIMUM', ex, ey)                      # 0 in the middle, 0.5 at the border
+    soft = _math(nt, 'SUBTRACT', 1.0, _smooth(nt, edge, 0.18, 0.48))
+    grid = nt.nodes.new('ShaderNodeTexBrick')
+    grid.offset, grid.squash = 0.0, 1.0
+    grid.inputs["Scale"].default_value = 6.0
+    grid.inputs["Mortar Size"].default_value = 0.02
+    grid.inputs["Mortar Smooth"].default_value = 0.6
+    nt.links.new(generated, grid.inputs["Vector"])
+    lines = _math(nt, 'SUBTRACT', 1.0, _math(nt, 'MULTIPLY', grid.outputs["Fac"], 0.35))
+    return _math(nt, 'MULTIPLY', soft, lines)
+
+
 def _flag_material(pattern, owner=""):
     """A flag is one shared black material; every gobo gets its own (its scale and speed are per light)."""
     name = GOBO_PREFIX + pattern.title() + (" | " + owner if owner and pattern != 'FLAG' else "")
@@ -403,6 +427,8 @@ def _flag_material(pattern, owner=""):
     coord = nt.nodes.new('ShaderNodeTexCoord')
     if pattern in MOVING:
         nt.links.new(_moving_pattern(nt, pattern, coord.outputs["Generated"]), mix.inputs["Fac"])
+    elif pattern in {'SOFTBOX', 'GRADIENT'}:
+        nt.links.new(_soft_pattern(nt, pattern, coord.outputs["Generated"]), mix.inputs["Fac"])
     else:
         ramp = nt.nodes.new('ShaderNodeMath')
         ramp.operation = 'GREATER_THAN'

@@ -71,6 +71,7 @@ if spec and bpy.data.objects.get(spec.get("source", "")) is not None:      # a s
     data = source.data.copy()
     data.lens = spec.get("lens", data.lens)
     cam = bpy.data.objects.new("farm_camera", data)
+    cam["studio_light_source"] = source.name          # its light set is the source camera's
     scene.collection.objects.link(cam)
     m = spec["matrix"]
     cam.matrix_world = Matrix([m[0:4], m[4:8], m[8:12], m[12:16]])
@@ -97,6 +98,12 @@ if expected is not None:                           # one camera for the job: no 
     scene.timeline_markers.clear()
     scene.camera = expected
 print("RF camera", scene.camera.name if scene.camera else None)
+if scene.camera is not None and scene.get("studio_light_sets"):   # ID Toolkit light sets: the job camera's
+    _lname = scene.camera.get("studio_light_source") or scene.camera.name
+    for _coll in scene.collection.children_recursive:
+        _owner, _shared = _coll.get("studio_light_camera"), bool(_coll.get("studio_light_shared"))
+        if _owner is not None or _shared:
+            _coll.hide_render = not (_shared or getattr(_owner, "name", None) == _lname)
 images = scene.render.image_settings
 for attr, v in (("media_type", "IMAGE"), ("file_format", cfg["format"])):
     try:

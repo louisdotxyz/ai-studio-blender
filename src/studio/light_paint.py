@@ -360,8 +360,42 @@ class STUDIO_OT_sky_time(Operator):
 SKY_TIMES = (("Sunrise", 6.4), ("Morning", 9.0), ("Noon", 12.0), ("Golden", 17.2), ("Dusk", 18.3), ("Night", 23.0))
 
 
+class STUDIO_OT_place_toggle(Operator):
+    bl_idname = "studio.place_toggle"
+    bl_label = "Drag on Product"
+    bl_description = ("Grab the open light on the product and drag it: it moves so it shines where you drag "
+                      "(the way can be changed under More). Ctrl + click makes a new light. Click again: off")
+    bl_options = {'INTERNAL'}
+
+    def execute(self, context):
+        wm = context.window_manager
+        if tool_active(context):
+            restore_tool(context)
+            wm.studio_place_off = True
+        else:
+            wm.studio_place_off = False
+            activate_tool(context)
+        return {'FINISHED'}
+
+
 def draw_place_row(layout, context):
-    """Click on the product: [Reflection] [Light] [Rim] / [Shade] [Shadow]. The pressed one is active."""
+    """One button: [🖱 Drag on Product] (pressed = a drag on the product moves the open light). How it is
+    placed (reflection, light, rim, shade, shadow) is under More: draw_place_way."""
+    on = tool_active(context)
+    row = layout.row(align=True)
+    row.scale_y = 1.3
+    row.operator(STUDIO_OT_place_toggle.bl_idname, text="Drag on Product" if not on else "Drag on Product · on",
+                 icon='MOUSE_LMB_DRAG', depress=on)
+
+
+def draw_place_way(layout, context):
+    """Under More: what a drag on the product does."""
+    row = layout.row(align=True)
+    row.label(text="Drag places")
+    row.prop(context.scene.studio, "place_mode", text="")
+
+
+def _draw_place_row_old(layout, context):
     rs = context.scene.studio
     on = tool_active(context)
     # [🖱] [Reflection] [Light] [Rim] / [Shade] [Shadow]: the mouse says "click on the product"
@@ -406,7 +440,8 @@ def draw_sky(box, scene):
         sub.label(text="Clouds and stars: with Physical Starlight & Atmosphere", icon='INFO')
 
 
-classes = (STUDIO_OT_light_paint, STUDIO_OT_light_nudge, STUDIO_OT_place_mode, STUDIO_OT_sky_time)
+classes = (STUDIO_OT_light_paint, STUDIO_OT_light_nudge, STUDIO_OT_place_mode, STUDIO_OT_place_toggle,
+           STUDIO_OT_sky_time)
 
 
 def register():

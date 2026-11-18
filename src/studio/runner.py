@@ -890,6 +890,10 @@ class Runner:
         overrides = plan.as_list()
         own = []                       # this job's own size and samples (the scene stays as it is)
         low = self.quality == 'LOW'     # a Low Quality preview of a job with its own size and samples
+        from . import quality
+        low_res = quality.profile(scene, self.animation, 'LOW').resolution
+        high_samples = max(1, quality.profile(scene, self.animation, 'HIGH').samples)
+        low_samples = 100.0 * quality.profile(scene, self.animation, 'LOW').samples / high_samples
         if getattr(item, "job_width", 0) > 0 and getattr(item, "job_height", 0) > 0:   # (a 4K version) stays
             own += [["render.resolution_x", item.job_width], ["render.resolution_y", item.job_height],   # low:
                     ["render.resolution_percentage", max(1, round(low_res)) if low else 100]]   # it came in 4K

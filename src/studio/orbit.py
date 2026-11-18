@@ -8,7 +8,8 @@ looks at it. Height moves camera and center up or down (world Z), Left / Right m
 sideways (along the camera's horizontal axis) and Up / Down along the image's up direction
 (the camera's Y axis: in a straight top view this is the only way to move the picture up or
 down). Vertical goes up to ±90°: the roll comes from the horizontal angle, so a straight top
-view keeps its direction.
+view keeps its direction. Roll tilts the camera around its own view axis (it keeps looking at
+the center); it is kept on the camera and stays when the other values change.
 """
 
 import math
@@ -56,10 +57,26 @@ def pitch(obj):
     return math.asin(max(-1.0, min(1.0, z.z)))
 
 
+ROLL_KEY = "_studio_roll"
+
+
+def roll_of(camera):
+    """The camera's roll around its view axis (radians), 0 when never set."""
+    try:
+        return float(camera.get(ROLL_KEY, 0.0)) if camera is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _rolled(camera, matrix):
+    """A matrix without roll (orbit_matrix, look_at_matrix) with the camera's roll."""
+    roll = roll_of(camera)
+    return matrix @ Matrix.Rotation(roll, 4, 'Z') if roll else matrix
+
+
 def heading(obj):
-    """Horizontal angle from the object's X axis (exact also when it looks straight down)."""
-    x = obj.matrix_world.to_3x3().normalized().col[0]
-    return math.atan2(-x.x, x.y)
+    """Horizontal angle of the view (exact also when it looks straight down, roll taken out)."""
+    return _angles(obj.matrix_world, roll_of(obj))[0]
 
 
 def orbit_values(obj, center):
@@ -106,13 +123,15 @@ def set_orbit(camera, target, horizontal=None, vertical=None, distance=None, lif
     d = cur_d if distance is None else distance
     v = max(-MAX_VERTICAL, min(MAX_VERTICAL, v))
     d = max(MIN_DISTANCE, d)
-    put(camera, orbit_matrix(target_center(target, lift), h, v, d, camera.matrix_world.to_scale()), d)
+    put(camera, _rolled(camera, orbit_matrix(target_center(target, lift), h, v, d,
+                                             camera.matrix_world.to_scale())), d)
 
 
 def aim(camera, target, lift=0.0):
     """Camera stays where it is and looks at the object."""
     center = target_center(target, lift)
-    put(camera, look_at_matrix(camera.matrix_world.translation.copy(), center, camera.matrix_world.to_scale()),
+    put(camera, _rolled(camera, look_at_matrix(camera.matrix_world.translation.copy(), center,
+                                               camera.matrix_world.to_scale())),
         (camera.matrix_world.translation - center).length)
 
 
@@ -129,13 +148,15 @@ def pivot_of(camera):
     return parent if parent is not None and parent.get(PIVOT_KEY) else None
 
 
-def _angles(matrix):
+def _angles(matrix, roll=0.0):
+    """(horizontal, vertical) of the view; straight up/down the horizontal comes from the X axis,
+    minus the roll (which turns X around the view axis there)."""
     z = matrix.to_3x3().normalized().col[2]
     vertical = math.asin(max(-1.0, min(1.0, z.z)))
     if math.hypot(z.x, z.y) > 1e-6:
         return math.atan2(z.y, z.x), vertical
     x = matrix.to_3x3().normalized().col[0]
-    return math.atan2(-x.x, x.y), vertical
+    return math.atan2(-x.x, x.y) - (roll if z.z > 0 else -roll), vertical
 
 
 def put(camera, matrix, distance=None):
@@ -145,7 +166,8 @@ def put(camera, matrix, distance=None):
         camera.matrix_world = matrix
         return
     d = max(MIN_DISTANCE, distance if distance is not None else (camera.location.x or 1.0))
-    h, v = _angles(matrix)
+    roll = roll_of(camera)
+    h, v = _angles(matrix, roll)
     before = pivot.rotation_euler.z                     # no jump 359° → 1° between keys
     h = before + (h - before + math.pi) % (2 * math.pi) - math.pi
     direction = Vector((math.cos(v) * math.cos(h), math.cos(v) * math.sin(h), math.sin(v)))
@@ -156,7 +178,7 @@ def put(camera, matrix, distance=None):
     camera.matrix_parent_inverse = Matrix.Identity(4)
     camera.rotation_mode = 'XYZ'
     camera.location = (d, 0.0, 0.0)
-    camera.rotation_euler = _ON_PIVOT.to_euler('XYZ')
+    camera.rotation_euler = (_ON_PIVOT @ Matrix.Rotation(roll, 4, 'Z')).to_euler('XYZ')
     camera.scale = scale
 
 
@@ -253,8 +275,8 @@ def camera_orbit(settings, camera=None):
 def _place(settings, camera, horizontal, vertical, distance):
     vertical = max(-MAX_VERTICAL, min(MAX_VERTICAL, vertical))
     distance = max(MIN_DISTANCE, distance)
-    put(camera, orbit_matrix(_center(settings, camera, horizontal, vertical), horizontal, vertical,
-                             distance, camera.matrix_world.to_scale()), distance)
+    put(camera, _rolled(camera, orbit_matrix(_center(settings, camera, horizontal, vertical), horizontal,
+                                             vertical, distance, camera.matrix_world.to_scale())), distance)
     remember(camera, (horizontal, vertical, distance))
 
 
@@ -333,6 +355,26 @@ def set_up(settings, value):
     matrix.translation += _up(values[0], values[1]) * (value - settings.orbit_up)
     put(camera, matrix)
     settings.orbit_up = value
+    remember(camera, values)
+
+
+def get_roll(settings):
+    return roll_of(settings.id_data.camera)
+
+
+def set_roll(settings, value):
+    """Roll: the camera turns around its own view axis, position and target stay."""
+    camera = _camera(settings)
+    if camera is None:
+        return
+    value = (value + math.pi) % (2 * math.pi) - math.pi
+    values = camera_orbit(settings, camera)
+    delta = value - roll_of(camera)
+    camera[ROLL_KEY] = value
+    if pivot_of(camera) is not None:
+        camera.rotation_euler = (_ON_PIVOT @ Matrix.Rotation(value, 4, 'Z')).to_euler('XYZ')
+        return
+    camera.matrix_world = camera.matrix_world @ Matrix.Rotation(delta, 4, 'Z')
     remember(camera, values)
 
 

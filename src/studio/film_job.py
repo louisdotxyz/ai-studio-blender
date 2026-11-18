@@ -84,6 +84,21 @@ def _apply(scene, overrides):
         print("FILM could not set %s: %s" % (path, ex), flush=True)
 
 
+def _light_sets(scene):
+    """ID Toolkit light sets (lightsets.py): only the set of the job's camera and the shared one render.
+    The add-on is not loaded here, so the two keys on the collections are read directly."""
+    cam = scene.camera
+    if cam is None or not scene.get("studio_light_sets"):
+        return
+    name = cam.get("studio_light_source") or cam.name
+    for coll in scene.collection.children_recursive:
+        owner = coll.get("studio_light_camera")
+        shared = bool(coll.get("studio_light_shared"))
+        if owner is None and not shared:
+            continue
+        coll.hide_render = not (shared or getattr(owner, "name", None) == name)
+
+
 def _pin_camera(scene):
     """The film's camera stays the camera on every frame. Unbinding the timeline markers' cameras is not
     enough: Blender still switched to a marker's camera on a frame change (the films of 4.0 rendered from
@@ -111,6 +126,7 @@ def _camera(scene, spec):
     temp.constraints.clear()
     temp.parent = None
     scene.collection.objects.link(temp)
+    temp["studio_light_source"] = source.name      # its light set is the source camera's
     m = spec["matrix"]
     temp.matrix_world = Matrix([m[0:4], m[4:8], m[8:12], m[12:16]])
     if temp.data.type != 'ORTHO' and spec.get("lens", 0) > 0:
@@ -213,6 +229,7 @@ def main():
               flush=True)
         scene.camera = expected
     _pin_camera(scene)
+    _light_sets(scene)
     _state["camera"] = scene.camera.name if scene.camera else ""
     render = scene.render
     for stamp in ("use_stamp_camera", "use_stamp_render_time", "use_stamp_frame"):

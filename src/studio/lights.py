@@ -59,7 +59,10 @@ BUILTIN_PRESETS = {
 # ------------------------------------------------------------------ Basics
 
 def scene_lights(scene):
-    return sorted((o for o in scene.objects if o.type == 'LIGHT'), key=lambda o: o.name.lower())
+    """The lights of the camera you look through (its set, the shared set, lights without a set;
+    lightsets.py). Before the lights belong to cameras: every light of the scene."""
+    from . import lightsets
+    return sorted(lightsets.current_lights(scene), key=lambda o: o.name.lower())
 
 
 def setup_lights(scene):
@@ -70,7 +73,9 @@ def setup_lights(scene):
 
 
 def light_collection(scene):
-    return cameras.named_collection(scene, cameras.light_collection_name())
+    """Where new lights go: the light set of the camera you look through."""
+    from . import lightsets
+    return lightsets.active_collection(scene)
 
 
 def subject(scene, target):
@@ -484,8 +489,8 @@ def focus_selection(scene, objects):
         empty = bpy.data.objects.new(FOCUS_NAME, None)
         empty.empty_display_type = 'SPHERE'
         empty.hide_render = True
-    if empty.name not in scene.objects:
-        light_collection(scene).objects.link(empty)
+    if empty.name not in scene.objects:      # for all cameras: not inside a camera's light set
+        cameras.named_collection(scene, cameras.light_collection_name()).objects.link(empty)
     empty.parent = None
     empty.matrix_world = Matrix.Translation((lo + hi) / 2)   # valid right away, not only after an update
     radius = max((hi - lo).length / 2, 0.05)

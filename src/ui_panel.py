@@ -128,14 +128,23 @@ def _fit_rows(context, rows, unit, key):
     except (AttributeError, TypeError, ReferenceError):
         return rows
     if state["key"] != key:
-        state.update(key=key, extra=0)
+        state.update(key=key, extra=0, probe=False, blocked=False)
     try:
         top = region.view2d.region_to_view(0, region.height - 1)[1]
     except (AttributeError, RuntimeError, TypeError):
         top = 0.0
     if top < -2.0 and rows - state["extra"] > 6:
+        if state.get("probe"):
+            state["blocked"] = True       # giving a row back made the sidebar scroll: it stays like this
+        state["probe"] = False
         state["extra"] += max(1, int(-top / unit + 0.99))
         region.tag_redraw()
+    elif state["extra"] > 0 and not state.get("blocked"):
+        state["extra"] -= 1               # something went away (e.g. a render bar): take the room back
+        state["probe"] = True
+        region.tag_redraw()
+    else:
+        state["probe"] = False
     return max(6, rows - state["extra"])
 
 
@@ -213,7 +222,13 @@ class _ChatPanel:
             reserved += 1                    # the "Selection: …" line
         if prefs is not None and prefs.backend == 'LOCAL':
             reserved += 1   # local model status has two lines
-        rows = _fit_rows(context, int(max(6, context.region.height / unit - reserved)), unit, round(reserved * 4))
+        # Starts again from the estimate whenever something around the chat changes: the cards (also
+        # the ones not in the estimate: questions, code to run, renders), or the sidebar's size. Before,
+        # a card that came and went left the chat short until the next estimate change.
+        from .studio import runner
+        key = (round(reserved * 4), context.region.height, context.region.width, len(core.questions),
+               len(core.pending), bool(runner.RUN.busy), len(core.versions() or ()))
+        rows = _fit_rows(context, int(max(6, context.region.height / unit - reserved)), unit, key)
         chatview.draw_chat(layout, context, rows, att_icon)
 
         self._draw_crash(layout, context)

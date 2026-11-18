@@ -20,7 +20,7 @@ from . import (addons, background, cameras, claude_link, core, env_ui, environme
                variants_ab, chat_render, render_review, film, migrate, keys, motion, cut, explode, autoquality, project)
 # Loaded for their side effects: the chat finds claude_tools (Claude's studio_* tools) in
 # sys.modules; api and variants are the helpers in execute_python.
-from . import api, baselib, claude_tools, light_items, looks, variants  # noqa: F401
+from . import api, baselib, claude_tools, light_items, looks, quality, variants  # noqa: F401
 from .props import (STUDIO_CameraSettings, STUDIO_HdriPin, STUDIO_Item, STUDIO_LightSettings, STUDIO_Look, STUDIO_MotionStep, STUDIO_CutItem, STUDIO_Shot, STUDIO_Preferences,
                     STUDIO_Settings, _apply_clipping)
 from .ui_common import STUDIO_TABS, _unpin
@@ -156,6 +156,7 @@ classes = render_setup.classes + tab_anim.classes + (
     STUDIO_Shot,
     STUDIO_HdriPin,
     STUDIO_Look,
+    quality.STUDIO_Quality,
     STUDIO_Settings,
     STUDIO_OT_render_queue,
     STUDIO_OT_cancel,
@@ -333,6 +334,7 @@ def register():
     project.register()
     chat_render.register()
     render_size.register()
+    quality.register()
     presets_io.register()
     shots.register()
     cad_link.register()
@@ -365,6 +367,7 @@ def unregister():
     cad_link.unregister()
     shots.unregister()
     presets_io.unregister()
+    quality.unregister()
     render_size.unregister()
     chat_render.unregister()
     variants_ab.unregister()

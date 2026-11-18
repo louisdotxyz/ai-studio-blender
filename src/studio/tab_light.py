@@ -500,18 +500,24 @@ class STUDIO_PT_lighting(_SidebarPanel, Panel):
 
         # The same head as every tab: [presets ▾] [looks A B …] [+ save scene] [settings]
         light_ui.draw_head(layout, scene, STUDIO_PT_light_settings.__name__)
+        light_ui.draw_setup_hint(layout, scene)       # files from before: lights per camera
 
         # The open light, always here: how a click on the product places it, and its few values
         light_ui.draw_open_light(layout, context)
 
-        # Lights: the ones that are on (eye, kind, name, brightness), the others folded into one line
-        box, head, is_open = section(layout, "lights", "Lights", 'LIGHT')
+        # Lights: with light sets those of the camera you look through, by role (Key, Fill, Rim …)
+        from . import lightsets
+        title = "Lights"
+        if lightsets.enabled(scene) and scene.camera is not None:
+            title = "Lights · %s" % scene.camera.name
+        box, head, is_open = section(layout, "lights", title, 'LIGHT')
         head.menu(light_ui.STUDIO_MT_light_new.bl_idname, text="", icon='ADD')
         if is_open:
             light_ui.draw_list(box, context)
 
         # World: one line (what it is, how bright); everything else inside
-        box, head, is_open = section(layout, "world", "World", 'WORLD', default_open=False)
+        box, head, is_open = section(layout, "world", "World · All Cameras" if lightsets.enabled(scene) else "World",
+                                     'WORLD', default_open=False)
         from . import keys
         keys.button(head, 'WORLD')
         path = hdri.current_path(scene)
