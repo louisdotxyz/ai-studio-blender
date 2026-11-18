@@ -869,6 +869,9 @@ def _draw_overview(layout, context, images, shown):
     if not images:
         box.label(text="None of them", icon='INFO')
         return
+    if getattr(context.window_manager, "studio_render_items", None) is not None:
+        draw_render_list(box, context, images, shown)
+        return
     width = context.region.width / (20 * (context.preferences.system.ui_scale or 1.0))
     wm = context.window_manager
     as_list = getattr(wm, "studio_render_layout", 'GRID') == 'LIST'
@@ -989,6 +992,14 @@ def draw_render_head(layout, context):
     scene = context.scene
     rq = scene.studio
     render = scene.render
+    row = layout.row(align=True)                  # go: render, or open the pictures / the film
+    row.scale_y = 1.4
+    op = row.operator(STUDIO_OT_add.bl_idname, text="Render", icon='RENDER_STILL'
+                      if rq.quality_view == 'STILL' else 'RENDER_ANIMATION')
+    op.mode = 'ANIM' if rq.quality_view == 'ANIM' else 'STILL'
+    op.quality = rq.quality
+    row.operator(STUDIO_OT_goto_workspace.bl_idname, text="Photo", icon='IMAGE').which = 'PHOTO'
+    row.operator(STUDIO_OT_goto_workspace.bl_idname, text="Video", icon='SEQUENCE').which = 'FILM'
     row = layout.row(align=True)
     sub = row.row(align=True)
     sub.prop_enum(rq, "farm_mode", 'OFF', text="Mac", icon='DESKTOP')
@@ -1013,14 +1024,6 @@ def draw_render_head(layout, context):
         op = buttons.operator('studio.set_scale', text="%gx" % factor,
                               depress=render.resolution_percentage == round(factor * 100))
         op.factor = factor
-    row = layout.row(align=True)                  # go: render, or open the pictures / the film
-    row.scale_y = 1.4
-    op = row.operator(STUDIO_OT_add.bl_idname, text="Render", icon='RENDER_STILL'
-                      if rq.quality_view == 'STILL' else 'RENDER_ANIMATION')
-    op.mode = 'ANIM' if rq.quality_view == 'ANIM' else 'STILL'
-    op.quality = rq.quality
-    row.operator(STUDIO_OT_goto_workspace.bl_idname, text="Photo", icon='IMAGE').which = 'PHOTO'
-    row.operator(STUDIO_OT_goto_workspace.bl_idname, text="Video", icon='SEQUENCE').which = 'FILM'
 
 
 def draw_quality(layout, context):
@@ -1418,8 +1421,95 @@ class STUDIO_PT_render_queue(_SidebarPanel, Panel):
         if not RUN.busy:
             shots.draw_check(layout, scene)
         from . import renderfarm
-        draw_render_head(layout, context)              # where, LQ/HQ, still/film, size, [Render] [Photo] [Video]
+        draw_render_head(layout, context)              # [Render] [Photo] [Video], where, LQ/HQ, still/film, size
+        _draw_renders(layout, context, review=False)   # what came out (small; big in the Photo workspace)
         draw_queue(layout, context)                    # what is coming
         renderfarm.draw_state(layout, context)
-        _draw_renders(layout, context, review=False)   # what came out (small; big in the Photo workspace)
         draw_quality(layout, context)                  # High and Low Quality in detail
+
+
+# ------------------------------------------------------------------ the renders as a list (click a picture = pick it)
+
+class STUDIO_RenderEntry(bpy.types.PropertyGroup):
+    path: StringProperty()
+
+
+_list_state = {"key": None}
+
+
+def _on_render_index(wm, context):
+    items = wm.studio_render_items
+    if 0 <= wm.studio_render_index < len(items):
+        path = items[wm.studio_render_index].path
+        if path and path != _view["path"]:
+            _view["path"] = path
+            area = getattr(context, "area", None)
+            if area is not None and area.type == 'IMAGE_EDITOR':
+                show_in_image_editor(context, path)
+            for window in context.window_manager.windows:
+                for a in window.screen.areas:
+                    a.tag_redraw()
+
+
+def _sync_list():
+    """Fills the list with the renders (arranged), and points it at the one that is shown."""
+    wm = bpy.context.window_manager
+    key = _list_state.get("want")
+    if key is None:
+        return None
+    paths, shown = key
+    items = wm.studio_render_items
+    if [i.path for i in items] != list(paths):
+        items.clear()
+        for path in paths:
+            items.add().path = path
+    index = paths.index(shown) if shown in paths else -1
+    if wm.studio_render_index != index:
+        wm["studio_render_index"] = index            # raw: no update callback, nothing is picked again
+    _list_state["key"] = key
+    return None
+
+
+class STUDIO_UL_renders(bpy.types.UIList):
+    """One render: its picture (click anywhere on it: shown big), marks, name, rename."""
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        from . import render_review
+        path = item.path
+        columns = max(1, getattr(context.window_manager, "studio_render_columns", 2))
+        thumb = render_review.thumb(path)
+        if self.layout_type == 'GRID':
+            width = context.region.width / (20 * (context.preferences.system.ui_scale or 1.0))
+            col = layout.column(align=True)
+            if thumb:
+                col.template_icon(icon_value=thumb, scale=max(3.0, width / columns - 1.0))
+            row = col.row(align=True)
+            row.scale_y = 0.8
+            _mark_buttons(row, path)
+            row.label(text=_title(path), translate=False)
+            row.operator(STUDIO_OT_render_rename.bl_idname, text="", icon='GREASEPENCIL', emboss=False).path = path
+            return
+        row = layout.row(align=True)
+        row.label(text=_title(path), icon_value=thumb or 0, translate=False)
+        if render_review.quality_of(path) == 'LOW':
+            sub = row.row()
+            sub.active = False
+            sub.label(text="Low")
+        _mark_buttons(row, path)
+        row.operator(STUDIO_OT_render_rename.bl_idname, text="", icon='GREASEPENCIL', emboss=False).path = path
+
+
+def draw_render_list(layout, context, images, shown):
+    """All renders in a Blender list: click a picture to see it big; ← → go through them."""
+    wm = context.window_manager
+    key = (tuple(images), shown)
+    if key != _list_state["key"]:
+        _list_state["want"] = key
+        if not bpy.app.timers.is_registered(_sync_list):
+            bpy.app.timers.register(_sync_list, first_interval=0.0)
+    grid = getattr(wm, "studio_render_layout", 'GRID') == 'GRID'
+    columns = max(1, getattr(wm, "studio_render_columns", 2))
+    count = max(1, len(images))
+    layout.template_list("STUDIO_UL_renders", "", wm, "studio_render_items", wm, "studio_render_index",
+                         type='GRID' if grid else 'DEFAULT', columns=columns if grid else 0,
+                         rows=count if not grid else max(1, (count + columns - 1) // columns), maxrows=count)

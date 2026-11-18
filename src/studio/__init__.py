@@ -49,7 +49,7 @@ from .tab_material import (STUDIO_MT_material_more, STUDIO_MT_material_new, STUD
 from .tab_queue import (STUDIO_MT_render_presets, STUDIO_OT_add, STUDIO_OT_cancel, STUDIO_OT_clear, STUDIO_OT_low_scale, STUDIO_OT_move,
                         STUDIO_OT_preview_step, STUDIO_OT_remove, STUDIO_OT_render_queue, STUDIO_OT_show_render,
                         STUDIO_OT_render_overview, STUDIO_OT_render_pick, STUDIO_OT_render_reveal,
-                        STUDIO_OT_render_ab, STUDIO_OT_render_rate, STUDIO_OT_render_rename, STUDIO_PT_photo_export, draw_photo_header, STUDIO_OT_photo_step, STUDIO_OT_goto_workspace,
+                        STUDIO_OT_render_ab, STUDIO_OT_render_rate, STUDIO_OT_render_rename, STUDIO_PT_photo_export, draw_photo_header, STUDIO_OT_photo_step, STUDIO_OT_goto_workspace, STUDIO_RenderEntry, STUDIO_UL_renders, _on_render_index,
                         STUDIO_OT_render_arrange, STUDIO_MT_render_arrange,
                         STUDIO_OT_render_refine, STUDIO_OT_open_review, STUDIO_PT_review,
                         STUDIO_OT_view_camera, STUDIO_PT_output, STUDIO_PT_render_queue, draw_statusbar)
@@ -225,6 +225,8 @@ classes = render_setup.classes + tab_anim.classes + (
     STUDIO_PT_photo_export,
     STUDIO_OT_photo_step,
     STUDIO_OT_goto_workspace,
+    STUDIO_RenderEntry,
+    STUDIO_UL_renders,
     STUDIO_OT_render_arrange,
     STUDIO_MT_render_arrange,
     STUDIO_OT_render_refine,
@@ -346,6 +348,10 @@ def register():
         name="Show", options={'SKIP_SAVE'}, default='GRID',
         items=[('GRID', "Grid", "Pictures in a grid", 'IMGDISPLAY', 0),
                ('LIST', "List", "One line each", 'LONGDISPLAY', 1)])
+    bpy.types.WindowManager.studio_render_items = bpy.props.CollectionProperty(type=STUDIO_RenderEntry,
+                                                                            options={'SKIP_SAVE'})
+    bpy.types.WindowManager.studio_render_index = bpy.props.IntProperty(
+        default=-1, options={'SKIP_SAVE'}, update=_on_render_index)
     bpy.types.WindowManager.studio_render_columns = bpy.props.IntProperty(
         name="Columns", description="How many pictures side by side (fewer = bigger)", min=1, max=6, default=2,
         options={'SKIP_SAVE'})
