@@ -387,7 +387,6 @@ class STUDIO_PT_camera(_SidebarPanel, Panel):
         draw_dof(box, cam, space)
         # Format in one row: [3 : 4 ▾] [IG Portrait ▾] [📌 1500 × 2000] (pin: this camera keeps its format)
         own = cam.studio_camera
-        pct = render.resolution_percentage / 100
         row = box.row(align=True)
         ratio = row.row(align=True)          # [3] : [4]  both editable; common ratios in the formats menu
         ratio.prop(rq, "aspect_x", text="")

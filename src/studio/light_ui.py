@@ -545,7 +545,6 @@ def _draw_pin(box, context, item):
 
 def _draw_light(box, context, item):
     scene = context.scene
-    rs = scene.studio
     light = item[1]
     data = light.data
     own = light.studio_light

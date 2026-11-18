@@ -1445,7 +1445,17 @@ def shots_presets_check():
     img.source = 'FILE'
     img.filepath = "/nowhere/gone.png"
     img.use_fake_user = True
-    check("render check: missing texture", any("gone" in t for t, _i in shots.render_problems(scene)))
+    check("render check: a missing texture nothing uses is no problem",
+          not any("gone" in t for t, _i in shots.render_problems(scene, search=False)))
+    mat = bpy.data.materials.new("gone mat")
+    mat.use_nodes = True
+    mat.node_tree.nodes.new('ShaderNodeTexImage').image = img
+    bpy.ops.mesh.primitive_plane_add(size=0.1)
+    user = bpy.context.active_object
+    user.data.materials.append(mat)
+    check("render check: missing texture", any("gone" in t for t, _i in shots.render_problems(scene, search=False)))
+    bpy.data.objects.remove(user)
+    bpy.data.materials.remove(mat)
     bpy.data.images.remove(img)
     cam = next(o for o in scene.objects if o.type == 'CAMERA')
     scene.camera = cam
