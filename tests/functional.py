@@ -1095,6 +1095,11 @@ def photo_adjust_tools():
     loc = [row[3] for row in got["matrix"][:3]]
     check("mockup: the camera measured from the bike's points (position and lens)",
           got["rms_px"] < 0.5 and abs(got["lens"] - 28) < 0.3 and _m.dist(loc, pos) < 0.01, (got["rms_px"], got["lens"], loc))
+    style, adjust, match = (mock.krea_prompt('NANO21', "rear light", "black rain gear", mode=w)
+                            for w in ('STYLE', 'ADJUST', 'MATCH'))
+    check("mockup: the three ways ask Krea differently (restyle / only light and time / keep everything)",
+          "Restyle everything else" in style and "every person" not in style and "Change only the light" in adjust
+          and "every person and object" in match and mock.MODE_MODEL['MATCH'] == 'REGION', style[-160:])
     # a set for a presentation: numbered pictures and an overview
     folder = os.path.join(TMP, "set_test")
     files = pv.export_set([src, res], folder, size=100)

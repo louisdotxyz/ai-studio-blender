@@ -1381,8 +1381,11 @@ class STUDIO_PT_review(Panel):
         images = runner.queue_images(scene)
         path = _selected_image(images)
         a, b = (_ab[k] if _ab[k] and os.path.isfile(_ab[k]) else "" for k in ("A", "B"))
-        photo_view.want(context, image_edit.preview_file(scene, path) if path else "", a, b)
-        if tab != 'SORT':
+        if tab == 'MOCKUP' and mockup.is_mockup(scene):        # the mockup's own picture (Test, montage, Krea)
+            photo_view.want(context, mockup.shown_file(scene), "", "")
+        else:
+            photo_view.want(context, image_edit.preview_file(scene, path) if path else "", a, b)
+        if tab not in {'SORT', 'MOCKUP'}:
             _draw_pick(layout, context, images, path)
         if tab == 'SORT':                                # only the renders, one after another (← → step)
             draw_sort_head(layout, context)

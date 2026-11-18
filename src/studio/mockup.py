@@ -51,6 +51,16 @@ KREA_MODELS = [
     ('PRECISE', "Around It", "Ideogram 4.5 Precise changes everything but the product (a mask keeps it as it "
                              "is): another environment, weather, time of day (about 163 credits)"),
 ]
+MODES = [('MATCH', "Match", "Only your product goes in: the photo stays as it is (Krea 3 only around the "
+                            "product)", 'PINNED', 0),
+         ('ADJUST', "Match & Adjust", "Your product goes in and the photo changes a little: day to night, weather, "
+                                     "light (Nano Banana 2.1)", 'LIGHT_SUN', 1),
+         ('STYLE', "Style", "Your product stays, the rest is restyled: outfit, bike, camera look, environment "
+                            "(your pictures show the style)", 'COLOR', 2)]
+MODE_MODEL = {'MATCH': 'REGION', 'ADJUST': 'NANO21', 'STYLE': 'NANO21'}
+MODE_HINT = {'MATCH': "Where? (optional: \"on the rear rack\")",
+             'ADJUST': "What changes? (\"at night, wet street, street lamps\")",
+             'STYLE': "The style (\"black rain gear, matte black bike, 35 mm film look, forest road\")"}
 COMPOSE_KEYS = ("shadow_strength", "exposure", "warmth", "saturation", "soften", "glow", "grain", "night")
 _busy = [False]
 
@@ -199,6 +209,8 @@ class StudioMockup(PropertyGroup):
                                      "(\"on the fork, at night, wet street\") – empty: where it belongs")
     refs: StringProperty(name="Pictures", options=set(),
                          description="Pictures for Krea besides the montage (a close-up, a mood), one path per line")
+    mode: EnumProperty(name="Way", default='MATCH', options=set(), items=MODES)
+    preview: StringProperty(options={'HIDDEN'})         # the last Test picture
     quality: EnumProperty(name="Quality", default='LOW', options=set(),
                           items=[('LOW', "Preview", "The product rendered fast (enough for most photos)"),
                                  ('HIGH', "HQ", "The product rendered in High Quality (slower)")])
@@ -873,7 +885,14 @@ def placement_preview(scene, longest=1024):
         if ghost.shape[:2] == picture.shape[:2]:
             a = (ghost[..., 3] * 0.45)[..., None]
             picture[..., :3] = picture[..., :3] * (1.0 - a) + a * (0.0, 0.85, 1.0)
-    path = os.path.join(_data_dir(), "placement_%s.jpg" % _key(scene.name))
+    stem = "placement_%s_" % _key(scene.name)
+    for old in os.listdir(_data_dir()):
+        if old.startswith(stem):
+            try:
+                os.remove(os.path.join(_data_dir(), old))
+            except OSError:
+                pass
+    path = os.path.join(_data_dir(), "%s%d.jpg" % (stem, int(time.time() * 1000) % 10 ** 9))
     image = bpy.data.images.new("Mockup Placement", w, h, alpha=False)
     try:
         image.pixels.foreach_set(picture.reshape(-1))
@@ -881,7 +900,23 @@ def placement_preview(scene, longest=1024):
         image.save()
     finally:
         bpy.data.images.remove(image)
+    try:
+        scene.studio_mockup.preview = path
+    except (AttributeError, TypeError):
+        pass
     return path
+
+
+def shown_file(scene):
+    """What the Photo workspace shows for a mockup: the newest of Krea's picture, the montage and the Test
+    picture; else the photo."""
+    m = scene.studio_mockup
+    found = [p for p in (m.result, m.preview) if p and os.path.isfile(p)]
+    if m.result:
+        import glob
+        found += glob.glob(glob.escape(os.path.splitext(m.result)[0]) + "_krea_*.png")
+    found = [p for p in found if os.path.isfile(p)]
+    return max(found, key=os.path.getmtime) if found else bpy.path.abspath(m.photo)
 
 
 def render(scene, quality='LOW'):
@@ -1036,7 +1071,7 @@ BLEND = ("so it looks photographed in place: match the scene's light direction, 
 _sent = {}       # the file sent to Krea → what is needed to finish its result
 
 
-def krea_prompt(key, name, wish="", bars=False, close_up=False, scale="", refs=False):
+def krea_prompt(key, name, wish="", bars=False, close_up=False, scale="", refs=False, mode='MATCH'):
     """The prompt for a mockup, after the models' own guides: the change first, each picture's role named,
     what must stay in one sentence at the end, said as what is wanted (not what is not)."""
     wish = wish.strip().rstrip(".")
@@ -1053,14 +1088,25 @@ def krea_prompt(key, name, wish="", bars=False, close_up=False, scale="", refs=F
     if close_up:
         text += "Image 2 shows the same %s up close, for its details only. " % name
     if refs:
-        text += ("The other images are references for mood, light and colour only; do not copy their content. ")
+        text += ("The other images are references for the style; take their look, not their exact content. "
+                 if mode == 'STYLE' else
+                 "The other images are references for mood, light and colour only; do not copy their content. ")
     text += wish + "Blend the %s into the scene %s. " % (name, BLEND)
     if bars:
         text += "Fill the black bars at the edges by continuing the scene naturally. "
     if scale:
         text += scale.strip() + " "
-    text += ("Keep exactly the same: the %s's position, size, shape, materials and details, every person and "
-             "object, the camera angle and the framing." % name)
+    if mode == 'STYLE':                    # the rest is restyled: only the product and the framing stay
+        text += ("Restyle everything else as described (clothing, the bike, the camera look, the environment)%s. "
+                 "Keep exactly the same: the %s's position, size, shape, materials and details, the camera angle "
+                 "and the framing." % (", taking the style from the reference images" if refs else "", name))
+    elif mode == 'ADJUST':                 # light, time of day, weather change; the scene stays
+        text += ("Change only the light, time of day, weather and mood as described. Keep exactly the same: the "
+                 "%s's position, size, shape, materials and details, every person and object, their pose, the "
+                 "camera angle and the framing." % name)
+    else:
+        text += ("Keep exactly the same: the %s's position, size, shape, materials and details, every person and "
+                 "object, the camera angle and the framing." % name)
     return text
 
 
@@ -1134,7 +1180,7 @@ def krea_plan(scene, wish=None, model=None):
             scale = "True scale: the %s is about %s × %s × %s cm." % (
                 m.product_name, krea_scene._num(x), krea_scene._num(y), krea_scene._num(z))
     plan["prompt"] = krea_prompt(key, m.product_name.strip() or "product", wish, bars, bool(plan["close_up"]), scale,
-                                 bool(refs_of(m)) and key != 'PRECISE')
+                                 bool(refs_of(m)) and key != 'PRECISE', m.mode)
     _sent[os.path.normpath(send)] = plan
     try:
         with open(base + "_plan.json", "w", encoding="utf-8") as f:
@@ -1276,6 +1322,13 @@ class STUDIO_OT_mockup_new(Operator):
     filepath: StringProperty(subtype='FILE_PATH', options={'HIDDEN', 'SKIP_SAVE'})
     filter_image: BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
     filter_folder: BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
+    mode: EnumProperty(items=[(k, n, d) for k, n, d, _i, _n in MODES], default='MATCH', options={'SKIP_SAVE'})
+    place: BoolProperty(default=True, options={'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, _context, props):
+        return next((d for k, _n, d, _i, _x in MODES if k == props.mode), cls.bl_description) + \
+            ". Load the photo: the scene is made and Claude places your product by itself"
 
     def invoke(self, context, _event):
         context.window_manager.fileselect_add(self)
@@ -1287,7 +1340,11 @@ class STUDIO_OT_mockup_new(Operator):
         except (ValueError, OSError, RuntimeError) as ex:
             self.report({'ERROR'}, str(ex))
             return {'CANCELLED'}
-        self.report({'INFO'}, "%s: choose the model, then Make it" % scene.name)
+        m = scene.studio_mockup
+        m.mode, m.krea_model = self.mode, MODE_MODEL[self.mode]
+        if self.place:
+            start_place(context, scene)
+        self.report({'INFO'}, "%s: Claude places your product; Test shows it on the photo" % scene.name)
         return {'FINISHED'}
 
 
@@ -1553,6 +1610,130 @@ class STUDIO_OT_mockup_krea(Operator):
         return {'FINISHED'}
 
 
+def _marks_picture(context, scene):
+    """Your marks (the pen in the Photo workspace) drawn into a copy of the picture shown – for Claude only,
+    never sent to Krea. '' without marks."""
+    from . import photo_view
+    import numpy as np
+    window = context.window
+    if window is None:
+        return ""
+    data, count = photo_view.marks(window)
+    if not count:
+        return ""
+    base = shown_file(scene)
+    try:
+        pixels = _read(base, 1600)
+    except (OSError, RuntimeError, ValueError):
+        return ""
+    h, w = pixels.shape[:2]
+    out = pixels.copy()
+    radius = max(2, int(max(w, h) * 0.004))
+    yy, xx = np.mgrid[-radius:radius + 1, -radius:radius + 1]
+    disk = (xx ** 2 + yy ** 2) <= radius ** 2
+    for layer in data.layers:
+        colour = tuple(layer.color) if hasattr(layer, "color") else (1.0, 0.2, 0.2)
+        for frame in layer.frames:
+            for stroke in frame.strokes:
+                pts = [(p.co[0] * w, p.co[1] * h) for p in stroke.points]      # 0-1 of the picture, row 0 at the bottom
+                for (x0, y0), (x1, y1) in zip(pts, pts[1:] or pts):
+                    steps = max(1, int(max(abs(x1 - x0), abs(y1 - y0)) / max(1, radius)))
+                    for t in np.linspace(0, 1, steps + 1):
+                        cx, cy = int(x0 + (x1 - x0) * t), int(y0 + (y1 - y0) * t)
+                        ya, yb, xa, xb = cy - radius, cy + radius + 1, cx - radius, cx + radius + 1
+                        if ya < 0 or xa < 0 or yb > h or xb > w:
+                            continue
+                        out[ya:yb, xa:xb, :3][disk] = colour[:3]
+    target = os.path.join(_data_dir(), "marks_%s.png" % _key(scene.name))
+    _write(out, target)
+    return target
+
+
+def _ask_claude(context, scene, lines, krea_too):
+    from .. import core
+    if core.is_local():
+        return "Needs Claude (not a local model)"
+    marked = _marks_picture(context, scene)
+    if marked:
+        lines.append("My marks (pen, for you only – never send them to Krea): %s" % marked)
+    try:
+        core.add_attachment(bpy.path.abspath(scene.studio_mockup.photo))
+        for path in ([marked] if marked else []) + (refs_of(scene.studio_mockup) if krea_too else []):
+            core.add_attachment(bpy.path.abspath(path))
+    except Exception as ex:
+        print("AI Studio mockup: attachment:", ex)
+    text = "\n".join(lines)
+    if core.is_busy():
+        names = [s["name"] for s in core.skills.list_skills(core.workdir()) if s.get("studio_tab") == 'MOCKUP']
+        core.queue_chat(text, names, connectors=("Krea",) if krea_too else ())
+        return ""
+    if krea_too:
+        core.request_connector("Krea")
+    if not core.studio_prompt('MOCKUP', text):
+        core.connectors_next.discard("Krea")
+        return "Claude could not start"
+    return ""
+
+
+def _place_lines(scene):
+    m = scene.studio_mockup
+    refs = reference_objects(scene)
+    return ["Mockup scene: %s" % scene.name, "Photo: %s" % bpy.path.abspath(m.photo),
+            "Where: %s" % (m.wish.strip() if m.mode == 'MATCH' and m.wish.strip() else
+                           "where the product naturally belongs in this photo"),
+            ("Camera from the reference model (%s): MOCKUP MATCH – points of the model and the same points in the "
+             "photo, api.mockup_match; the model in cyan must lie on the photo's." % ", ".join(o.name for o in refs[:6])
+             if refs else "Measure the photo's camera (focal, horizon, roll, height) and place the product with "
+             "api.mockup_set."),
+            "Check with api.mockup_look() (it also becomes the Test picture in the panel), correct, at most 4 rounds."]
+
+
+def start_place(context, scene):
+    lines = ["Mockup: place my product in the photo, by yourself and without asking. Do not render, no Krea – "
+             "I check the Test picture first."] + _place_lines(scene)
+    return _ask_claude(context, scene, lines, False)
+
+
+class STUDIO_OT_mockup_auto(Operator):
+    bl_idname = "studio.mockup_auto"
+    bl_label = "Place"
+    bl_description = "Claude places your product again (from the photo, the bike model and your marks)"
+    bl_options = {'INTERNAL'}
+
+    @classmethod
+    def poll(cls, context):
+        return is_mockup(context.scene)
+
+    def execute(self, context):
+        error = start_place(context, context.scene)
+        if error:
+            self.report({'ERROR'}, error)
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
+class STUDIO_OT_mockup_test(Operator):
+    bl_idname = "studio.mockup_test"
+    bl_label = "Test"
+    bl_description = ("Your product (and the bike model in cyan) quickly laid on the photo, as it is placed now – "
+                      "in a second, no Krea")
+    bl_options = {'INTERNAL'}
+
+    @classmethod
+    def poll(cls, context):
+        return is_mockup(context.scene)
+
+    def execute(self, context):
+        try:
+            placement_preview(context.scene, 1600)
+        except (OSError, RuntimeError, ValueError) as ex:
+            self.report({'ERROR'}, "Test: %s" % ex)
+            return {'CANCELLED'}
+        for area in context.screen.areas:
+            area.tag_redraw()
+        return {'FINISHED'}
+
+
 class STUDIO_OT_mockup_make(Operator):
     bl_idname = "studio.mockup_make"
     bl_label = "Make it"
@@ -1575,9 +1756,12 @@ class STUDIO_OT_mockup_make(Operator):
             return {'CANCELLED'}
         name = dict((k, n) for k, n, _d in KREA_MODELS)[m.krea_model]
         refs = refs_of(m)
-        lines = ["Mockup, all automatic – do every step yourself, without asking, and show me the result:",
+        way = dict((k, n) for k, n, _d, _i, _x in MODES)[m.mode]
+        lines = ["Mockup, all automatic (%s) – do every step yourself, without asking, and show me the result:" % way,
                  "Mockup scene: %s" % scene.name, "Photo: %s" % bpy.path.abspath(m.photo),
-                 "Where / what: %s" % (m.wish.strip() or "where the product naturally belongs in this photo"),
+                 "Wish for Krea (%s): %s" % (way, m.wish.strip() or "only blend it in"),
+                 "The product is placed already (Test picture: %s): check it once with api.mockup_look(); only if "
+                 "it is clearly off, place it again as below." % (m.preview or "none yet"),
                  ("1. The camera from the reference model (%s): MOCKUP MATCH – points of the model and the same "
                   "points in the photo, api.mockup_match, check with api.mockup_look() (the model in cyan must lie "
                   "on the photo's)." % ", ".join(o.name for o in reference_objects(scene)[:6])
@@ -1591,21 +1775,9 @@ class STUDIO_OT_mockup_make(Operator):
                  "Format: %s." % m.format]
         if refs:
             lines.append("Pictures for Krea (sent with the montage by mockup_krea_prepare): %s" % ", ".join(refs))
-        try:
-            core.add_attachment(bpy.path.abspath(m.photo))
-            for path in refs:
-                core.add_attachment(bpy.path.abspath(path))
-        except Exception as ex:
-            print("AI Studio mockup: attachment:", ex)
-        text = "\n".join(lines)
-        if core.is_busy():
-            names = [s["name"] for s in core.skills.list_skills(core.workdir()) if s.get("studio_tab") == 'MOCKUP']
-            core.queue_chat(text, names, connectors=("Krea",))
-            self.report({'INFO'}, "Claude is busy: the mockup comes as the next chat")
-            return {'FINISHED'}
-        core.request_connector("Krea")
-        if not core.studio_prompt('MOCKUP', text):
-            core.connectors_next.discard("Krea")
+        error = _ask_claude(context, scene, lines, True)
+        if error:
+            self.report({'ERROR'}, error)
             return {'CANCELLED'}
         return {'FINISHED'}
 
@@ -1643,24 +1815,48 @@ class STUDIO_OT_mockup_refs(Operator):
         return {'FINISHED'}
 
 
-LIVE_KEY = "studio_mockup_live"        # on the screen: the area that shows the Live View (was a picture)
+LIVE_WORKSPACE = "Layout"
 
 
-def _live_area(screen):
-    want = screen.get(LIVE_KEY)
-    return next((a for a in screen.areas if a.type == 'VIEW_3D' and a.as_pointer() == want), None) if want else None
+def live_on(context):
+    return getattr(context, "workspace", None) is not None and context.workspace.name == LIVE_WORKSPACE
 
 
-def live_on(screen):
-    return _live_area(screen) is not None
+def _setup_live(window_index):
+    """(timer, after the workspace switched) its big 3D view looks through the mockup's camera."""
+    wm = bpy.context.window_manager
+    if window_index >= len(wm.windows):
+        return None
+    window = wm.windows[window_index]
+    views = [a for a in window.screen.areas if a.type == 'VIEW_3D']
+    if not views:
+        return None
+    area = max(views, key=lambda a: a.width * a.height)
+    space = area.spaces.active
+    space.region_3d.view_perspective = 'CAMERA'
+    space.lock_camera = True                                    # moving the view moves the camera
+    space.show_region_ui = True
+    space.shading.type = 'SOLID'
+    space.shading.show_xray = True                              # the photo shows through the model
+    space.shading.xray_alpha = 0.45
+    space.overlay.show_floor = space.overlay.show_axis_x = space.overlay.show_axis_y = False
+    region = next((r for r in area.regions if r.type == 'WINDOW'), None)
+    if region is not None:
+        with bpy.context.temp_override(window=window, area=area, region=region):
+            try:
+                bpy.ops.view3d.view_center_camera()
+            except RuntimeError:
+                pass
+    area.tag_redraw()
+    return None
 
 
 class STUDIO_OT_mockup_live(Operator):
     bl_idname = "studio.mockup_live"
     bl_label = "Live View"
-    bl_description = ("The photo with your model (and the bike as reference) in a 3D view through the mockup's "
-                      "camera: orbit, pan and zoom move the camera – you see the perspective live. Again: back "
-                      "to the picture")
+    bl_description = ("To the Layout workspace: the photo with your product and the bike model through the "
+                      "mockup's camera – orbit, pan and zoom move the camera, you see the perspective live. "
+                      "\"Back to Photo\" there brings you back")
     bl_options = {'INTERNAL'}
 
     @classmethod
@@ -1668,37 +1864,22 @@ class STUDIO_OT_mockup_live(Operator):
         return is_mockup(context.scene) and context.window is not None
 
     def execute(self, context):
-        window, screen, scene = context.window, context.window.screen, context.scene
-        area = _live_area(screen)
-        if area is not None:                                       # back to the picture
-            del screen[LIVE_KEY]
-            with context.temp_override(window=window, area=area):
-                area.type = 'IMAGE_EDITOR'
+        from .tab_queue import photo_workspace
+        window = context.window
+        if live_on(context):                                        # back to the Photo workspace
+            back = bpy.data.workspaces.get(photo_workspace())
+            if back is not None:
+                window.workspace = back
             return {'FINISHED'}
-        areas = [a for a in screen.areas if a.type in {'IMAGE_EDITOR', 'VIEW_3D'}]
-        if not areas:
+        layout = bpy.data.workspaces.get(LIVE_WORKSPACE)
+        if layout is None:
+            self.report({'ERROR'}, "No workspace \"Layout\" in this file")
             return {'CANCELLED'}
-        area = max(areas, key=lambda a: a.width * a.height)
-        with context.temp_override(window=window, area=area):
-            area.type = 'VIEW_3D'
-        screen[LIVE_KEY] = area.as_pointer()
-        space = area.spaces.active
-        space.region_3d.view_perspective = 'CAMERA'
-        space.lock_camera = True                                    # moving the view moves the camera
-        space.show_region_ui = True
-        space.shading.type = 'SOLID'
-        space.shading.show_xray = True                              # the photo shows through the model
-        space.shading.xray_alpha = 0.45
-        space.overlay.show_floor = space.overlay.show_axis_x = space.overlay.show_axis_y = False
-        scene.studio_mockup.free_camera = True
-        region = next((r for r in area.regions if r.type == 'WINDOW'), None)
-        if region is not None:
-            with context.temp_override(window=window, area=area, region=region):
-                try:
-                    bpy.ops.view3d.view_center_camera()
-                except RuntimeError:
-                    pass
-        self.report({'INFO'}, "Move the view: the camera follows. Match the model to the photo, then Render")
+        context.scene.studio_mockup.free_camera = True
+        window.workspace = layout
+        index = list(context.window_manager.windows).index(window)
+        bpy.app.timers.register(lambda: _setup_live(index), first_interval=0.15)
+        self.report({'INFO'}, "Move the view: the camera follows. Back to Photo when it fits")
         return {'FINISHED'}
 
 
@@ -1790,15 +1971,20 @@ def _info(layout, text, icon='NONE', alert=False):
 
 
 def draw(layout, context, compact=False):
-    """The mockup's controls (3D view sidebar and the Photo workspace's Refine panel)."""
+    """The mockup: three ways to start (a photo each), then place (Claude) · Test · Live View, pen marks for
+    Claude, model, aspect ratio, Make it; the sliders under Fine-tune."""
     from . import krea, runner
     scene = context.scene
     if not is_mockup(scene):
+        _info(layout, "Your product into a photo: choose the way, load the photo", 'IMAGE_REFERENCE')
         col = layout.column(align=True)
-        col.scale_y = 1.2
-        col.scale_y = 1.6
-        col.operator(STUDIO_OT_mockup_new.bl_idname, text="Load a Photo…", icon='IMAGE_REFERENCE')
-        _info(layout, "Then choose the model and Make it: Claude fits your product into it and Krea blends it in")
+        for key, name, text, icon, _n in MODES:
+            box = col.box()
+            row = box.row()
+            row.scale_y = 2.0
+            op = row.operator(STUDIO_OT_mockup_new.bl_idname, text="%d  %s" % (_n + 1, name), icon=icon)
+            op.mode = key
+            _info(box, text.split(" (")[0])
         for other in mockups():
             row = layout.row(align=True)
             row.operator(STUDIO_OT_mockup_go.bl_idname, text=other.name, icon='SCENE_DATA').scene = other.name
@@ -1806,60 +1992,75 @@ def draw(layout, context, compact=False):
             op.scene, op.remove = other.name, True
         return
     m = scene.studio_mockup
+    if live_on(context):                                           # in Layout: one way back
+        row = layout.row()
+        row.scale_y = 1.6
+        row.operator(STUDIO_OT_mockup_live.bl_idname, text="Back to Photo", icon='LOOP_BACK')
+        _info(layout, "Orbit, pan, zoom: the camera follows · then Test in Photo")
     back = source_scene(scene)
     row = layout.row(align=True)
+    row.prop(m, "mode", expand=True)
+    row = layout.row(align=True)
     row.label(text=os.path.basename(m.photo), icon='IMAGE_REFERENCE', translate=False)
-    row.operator(STUDIO_OT_mockup_new.bl_idname, text="", icon='FILE_FOLDER')
+    op = row.operator(STUDIO_OT_mockup_new.bl_idname, text="", icon='FILE_FOLDER')
+    op.mode = m.mode
     if back is not None:
-        row.operator(STUDIO_OT_mockup_go.bl_idname, text="", icon='LOOP_BACK').scene = back.name
+        row.operator(STUDIO_OT_mockup_go.bl_idname, text="", icon='X').scene = back.name
     try:
         info = state(scene)
     except (OSError, ValueError):
         info = {}
         _info(layout, "The photo is missing", 'ERROR', True)
+    # place · test · live
+    row = layout.row(align=True)
+    row.scale_y = 1.4
+    row.operator(STUDIO_OT_mockup_auto.bl_idname, text="Place", icon='PINNED')
+    row.operator(STUDIO_OT_mockup_test.bl_idname, text="Test", icon='HIDE_OFF')
+    row.operator(STUDIO_OT_mockup_live.bl_idname, text="Live", icon='VIEW_CAMERA', depress=live_on(context))
     refs_model = reference_objects(scene)
     row = layout.row(align=True)
-    row.scale_y = 1.2
     row.menu(STUDIO_MT_mockup_reference.bl_idname, icon='MOD_WIREFRAME',
              text="Match to: %s" % ("%d objects" % len(refs_model) if refs_model else "nothing (choose the bike)"))
-    row.operator(STUDIO_OT_mockup_live.bl_idname, text="Live View", icon='HIDE_OFF',
-                 depress=context.window is not None and live_on(context.window.screen))
-    # the simple way: a sentence (optional), pictures, model, a few choices, go
-    row = layout.row(align=True)
-    row.scale_y = 1.3
-    try:
-        row.prop(m, "wish", text="", placeholder="Where, and what else? (optional: \"on the fork, at night\")")
-    except TypeError:
-        row.prop(m, "wish", text="")
-    refs = refs_of(m)
-    row = layout.row(align=True)
-    row.operator(STUDIO_OT_mockup_refs.bl_idname, text="Pictures for Krea" if not refs else
-                 "Pictures (%d)" % len(refs), icon='ADD')
-    for index, path in enumerate(refs):
-        line = layout.row(align=True)
-        line.label(text=os.path.basename(path), icon='IMAGE_DATA', translate=False)
-        line.operator(STUDIO_OT_mockup_refs.bl_idname, text="", icon='X', emboss=False).remove = index
-    col = layout.column(align=True)
-    col.row(align=True).prop(m, "krea_model", expand=True)
-    row = col.row(align=True)
-    row.prop(m, "format", text="")
-    row.prop(m, "quality", expand=True)
-    from . import krea as _krea
-    balance = _krea.last_balance()
-    _info(layout, "~%d credits%s" % (UNITS[m.krea_model], " · %g left" % round(balance) if balance is not None else ""))
-    row = layout.row(align=True)
-    row.scale_y = 1.6
-    row.operator(STUDIO_OT_mockup_make.bl_idname, text="Make it", icon='PLAY')
+    if context.area is not None and context.area.type == 'IMAGE_EDITOR':
+        from . import photo_view
+        photo_view.draw_adjust_bar(layout, context, "", send=False)
+        _info(layout, "Marks: for Claude only (where it goes), never sent to Krea")
     from .. import core
     status, reply = core.studio_reply('MOCKUP')
     if status:
         _info(layout, reply[:90], 'TIME' if status == "working" else 'OUTLINER_DATA_GP_LAYER')
-    job_state = _krea.job["state"]
-    if _krea.busy():
+    # what Krea does
+    box = layout.box()
+    row = box.row(align=True)
+    row.scale_y = 1.3
+    try:
+        row.prop(m, "wish", text="", placeholder=MODE_HINT[m.mode])
+    except TypeError:
+        row.prop(m, "wish", text="")
+    refs = refs_of(m)
+    row = box.row(align=True)
+    row.operator(STUDIO_OT_mockup_refs.bl_idname, icon='ADD',
+                 text=("Style Pictures" if m.mode == 'STYLE' else "Pictures for Krea") +
+                 (" (%d)" % len(refs) if refs else ""))
+    for index, path in enumerate(refs):
+        line = box.row(align=True)
+        line.label(text=os.path.basename(path), icon='IMAGE_DATA', translate=False)
+        line.operator(STUDIO_OT_mockup_refs.bl_idname, text="", icon='X', emboss=False).remove = index
+    col = box.column(align=True)
+    col.row(align=True).prop(m, "krea_model", expand=True)
+    col.row(align=True).prop(m, "format", expand=True)
+    col.row(align=True).prop(m, "quality", expand=True)
+    balance = krea.last_balance()
+    _info(box, "~%d credits%s" % (UNITS[m.krea_model], " · %g left" % round(balance) if balance is not None else ""))
+    row = box.row(align=True)
+    row.scale_y = 1.6
+    row.operator(STUDIO_OT_mockup_make.bl_idname, text="Make it", icon='PLAY')
+    job_state = krea.job["state"]
+    if krea.busy():
         words = {"upload": "Uploading…", "working": "Krea is working…", "download": "Downloading…"}
-        _info(layout, "%s %d s" % (words[job_state], time.monotonic() - _krea.job["started"]), 'TIME')
+        _info(layout, "%s %d s" % (words[job_state], time.monotonic() - krea.job["started"]), 'TIME')
     elif job_state == "error":
-        _info(layout, _krea.job["text"][:90], 'ERROR', True)
+        _info(layout, krea.job["text"][:90], 'ERROR', True)
     elif last.get("path") and job_state == "done":
         _info(layout, "Your product was put back (Krea had changed it)" if last.get("restored") else
               "Done · your product secured", 'CHECKMARK')
@@ -2027,6 +2228,7 @@ class STUDIO_PT_mockup_on(Panel):
 classes = (StudioMockup, STUDIO_OT_mockup_new, STUDIO_OT_mockup_go, STUDIO_OT_mockup_place, STUDIO_OT_mockup_render,
            STUDIO_OT_mockup_fspy, STUDIO_OT_mockup_front, STUDIO_OT_mockup_krea, STUDIO_OT_mockup_ask,
            STUDIO_OT_mockup_make, STUDIO_OT_mockup_refs, STUDIO_OT_mockup_live, STUDIO_OT_mockup_reference,
+           STUDIO_OT_mockup_auto, STUDIO_OT_mockup_test,
            STUDIO_MT_mockup_reference, STUDIO_PT_mockup, STUDIO_PT_mockup_on)
 
 
