@@ -19,6 +19,7 @@ from mathutils import Vector
 
 OUT = sys.argv[sys.argv.index("--") + 1] if "--" in sys.argv else "/tmp/ai_studio_gui"
 os.makedirs(OUT, exist_ok=True)
+sys.stderr = open(os.path.join(OUT, "stderr.txt"), "w", encoding="utf-8", buffering=1)   # panel errors, to read
 PKG = next(n for n in sys.modules if n.startswith("bl_ext.") and n.endswith(".AI_Studio"))
 mod = lambda name: sys.modules[PKG + "." + name]   # noqa: E731
 lines, results, state = [], [], {}

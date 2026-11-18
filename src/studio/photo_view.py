@@ -401,11 +401,23 @@ def marks(window):
     area = _picture_area(window)
     data = getattr(area.spaces.active, "annotation", None) if area else None
     count = 0
-    if data is not None:
-        for layer in data.layers:
+    try:
+        for layer in (data.layers if data is not None else ()):
             for frame in layer.frames:
                 count += len(frame.strokes)
+    except ReferenceError:                       # just removed (Clear)
+        return None, 0
     return data, count
+
+
+def active_layer(window):
+    """The marks' layer (for its colour), or None."""
+    data, _count = marks(window)
+    try:
+        layers = data.layers if data is not None else ()
+        return getattr(layers, "active", None) or (layers[-1] if len(layers) else None)
+    except (AttributeError, ReferenceError, TypeError, IndexError):
+        return None
 
 
 def marks_box(window, pad=0.04):
@@ -640,8 +652,7 @@ def draw_adjust_bar(layout, context, path, send=True):
     sub.enabled = count > 0
     sub.operator(STUDIO_OT_photo_draw.bl_idname, text="", icon='LOOP_BACK').action = 'UNDO'
     sub.operator(STUDIO_OT_photo_draw.bl_idname, text="", icon='TRASH').action = 'CLEAR'
-    data, _c = marks(context.window)
-    layer = data.layers.active if data is not None and len(data.layers) else None
+    layer = active_layer(context.window)
     if layer is not None:
         color = row.row(align=True)
         color.ui_units_x = 2
@@ -670,8 +681,7 @@ def draw_notes(layout, context, path):
     sub.enabled = count > 0
     sub.operator(STUDIO_OT_photo_draw.bl_idname, text="", icon='LOOP_BACK').action = 'UNDO'
     sub.operator(STUDIO_OT_photo_draw.bl_idname, text="", icon='TRASH').action = 'CLEAR'
-    data, _c = marks(context.window)
-    layer = data.layers.active if data is not None and len(data.layers) else None
+    layer = active_layer(context.window)
     if layer is not None:
         row = col.row(align=True)
         row.prop(layer, "color", text="")
