@@ -926,6 +926,11 @@ def _raw_copy(scene):
     from . import film
     film._scene_copy(path)                       # nothing changed since the last copy: a hard link, no save
     _raw[key] = path
+    try:                                         # the state of this send is also a backup (a crash while
+        from .. import autosave                  # packing lost everything since the last save)
+        autosave.keep_copy(path)
+    except Exception as ex:
+        print("AI Studio: backup of the send:", ex)
     return path
 
 

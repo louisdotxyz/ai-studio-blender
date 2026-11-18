@@ -66,8 +66,11 @@ def save(items, blend=None):
 
 
 def add(scene, sections=None, split=None, fmt=None, quality=None, size=None, folder=None, name=None,
-        frames='HIGH'):
-    """A wish: these sections (None: as chosen in Export) exported once they are all rendered. Returns it."""
+        frames='HIGH', names=None):
+    """A wish: these sections (None: as chosen in Export) exported once they are all rendered. frames:
+    'HIGH' (all up to date in High Quality), 'ANY' (up to date, any quality) or 'EXISTING' (the frames that
+    are there, nothing still rendering for them – no up-to-date check). names: {section: file name} for one
+    file per section (each its own name, all into folder). Returns it."""
     from . import cut
     if not bpy.data.filepath:
         raise ValueError("Save the file first: the wish belongs to it")
@@ -84,7 +87,8 @@ def add(scene, sections=None, split=None, fmt=None, quality=None, size=None, fol
             "split": split or getattr(rq, "cut_export_split", 'ONE'),
             "format": fmt or getattr(rq, "cut_export_format", 'MP4'),
             "quality": quality or getattr(rq, "cut_export_quality", 'HIGH'),
-            "size": str(int(size)) if size else getattr(rq, "cut_export_size", '100'),
+            "size": (size if size == 'FRAMES' else str(int(size))) if size else getattr(rq, "cut_export_size", '100'),
+            "names": dict(names or {}),
             "folder": folder or "", "name": name or "", "frames": frames, "state": 'WAITING',
             "added": time.time(), "tries": 0, "ready_since": 0.0, "outs": [], "error": ""}
     items = [i for i in load() if not (i["state"] in STATES_WAIT and i["sections"] == item["sections"]
@@ -106,9 +110,33 @@ def ready(film, section, frames='HIGH'):
     if span is None:
         return False, 0, 0
     states = cut_overlay.states(section, span[0], span[1])
-    good = {'HIGH'} if frames == 'HIGH' else {'HIGH', 'LOW'}
+    good = {'HIGH'} if frames == 'HIGH' else {'HIGH', 'LOW', 'OLD'} if frames == 'EXISTING' else {'HIGH', 'LOW'}
     count = sum(1 for s in states if s in good)
+    if frames == 'EXISTING' and 'RENDERING' in states:
+        return False, count, len(states)
     return bool(states) and count == len(states), count, len(states)
+
+
+def waits_for(film, item):
+    """Why a wish has not started: "238 render · 2 missing · 15 old · LQ only", "" when it is ready."""
+    from . import cut, cut_overlay
+    counts = {}
+    for section in item["sections"]:
+        span = next(((s, e) for n, s, e, _m in cut.sections_of(film) if n == section), None)
+        if span is None:
+            counts["gone"] = counts.get("gone", 0) + 1
+            continue
+        for state in cut_overlay.states(section, span[0], span[1]):
+            counts[state] = counts.get(state, 0) + 1
+    words = []
+    for key, text in (('RENDERING', "render"), ('MISSING', "missing"), ('DRAFT', "draft"), ('gone', "section gone")):
+        if counts.get(key):
+            words.append("%d %s" % (counts[key], text))
+    if counts.get('OLD') and item.get("frames") != 'EXISTING':
+        words.append("%d old" % counts['OLD'])
+    if counts.get('LOW') and item.get("frames", 'HIGH') == 'HIGH':
+        words.append("%d LQ only" % counts['LOW'])
+    return " · ".join(words)
 
 
 def progress(film, item):
@@ -147,6 +175,13 @@ def _outputs(film, fmt):
     return [os.path.dirname(r[3]) if fmt == 'PNG' else r[3] + ext for r in ranges]
 
 
+def _labels(film):
+    """The section of each output (one file per section), "" for joined ranges."""
+    from . import cut
+    ranges, join = cut.export_plan(film)
+    return [""] if join else [r[0] for r in ranges]
+
+
 def _start(film, item):
     """The export with the wish's settings (the user's settings back afterwards). Returns the outputs."""
     from . import cut
@@ -161,6 +196,7 @@ def _start(film, item):
             if hasattr(rq, k) and getattr(rq, k) != v:
                 setattr(rq, k, v)
         outs = _outputs(film, item["format"])
+        item["labels"] = _labels(film)
         cut.export(film)
     finally:
         for k, v in keep.items():
@@ -175,9 +211,13 @@ def _deliver(item):
         return list(item["outs"])
     os.makedirs(item["folder"], exist_ok=True)
     done = []
+    labels = item.get("labels") or []
     for n, src in enumerate(item["outs"]):
         base = os.path.basename(src.rstrip("/\\"))
-        if item.get("name"):
+        own = (item.get("names") or {}).get(labels[n] if n < len(labels) else "")
+        if own:                                     # this section's own name
+            base = own + os.path.splitext(base)[1]
+        elif item.get("name"):
             ext = os.path.splitext(base)[1]
             base = item["name"] + ("" if len(item["outs"]) == 1 else " %d" % (n + 1)) + ext
         dst = os.path.join(item["folder"], base)

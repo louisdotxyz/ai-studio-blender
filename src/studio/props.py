@@ -550,7 +550,9 @@ class STUDIO_Settings(PropertyGroup):
     cut_export_size: EnumProperty(
         name="Size", options=set(), default='100',
         items=[('100', "100 %", "The scene's resolution"), ('50', "50 %", "Half the width and height"),
-               ('25', "25 %", "A quarter, to send around")])
+               ('25', "25 %", "A quarter, to send around"),
+               ('FRAMES', "As Rendered", "The size the frames have (1080 frames are not scaled up to the "
+                "film's 2K, 4K frames come out in 4K)")])
     cut_export_range: EnumProperty(
         name="Range", options=set(), default='ALL',
         items=[('ALL', "Whole Film", "All strips"),

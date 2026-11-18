@@ -316,15 +316,21 @@ def frame_status(section, start, end, fresh=False):
         w, h = png_size(os.path.join(folder, first_real)) if ext == ".png" else (0, 0)
         blank = blank_frame(folder, section, w, h)
     quality = job.get("quality", "") if done else ""
+    widths = [png_width(os.path.join(folder, n)) if r and ext == ".png" else 0 for n, r in zip(names, real)]
+    sizes = [w for w in widths if w]
+    if sizes:                                    # one strip has one scale: it shows the frames of one size
+        if job_width and any(abs(w - job_width) <= 1 for w in sizes):   # (the newest job's), the others
+            real_width = job_width                                       # hold the nearest of that size
+        else:
+            real_width = max(set(sizes), key=sizes.count)
     codes, base = [], []
-    for n, d, r in zip(names, drafts, real):
+    for n, d, r, w in zip(names, drafts, real, widths):
         if r:
             code = quality or 'LOW'
-            w = png_width(os.path.join(folder, n)) if ext == ".png" else 0
             if w and job_width and abs(w - job_width) > 1:     # rendered by an earlier job in another size
                 code = 'HIGH' if base_x and w >= base_x * 0.98 else 'LOW'
             codes.append(code)
-            base.append(n)
+            base.append(n if not (w and real_width and abs(w - real_width) > 1) else None)
         elif use_drafts and d in there:
             codes.append('DRAFT')
             base.append(d)
@@ -339,7 +345,7 @@ def frame_status(section, start, end, fresh=False):
                                                                  poster_width if use_poster else job_width),
            "poster": poster if use_poster else "",
            "job": bool(job), "job_width": job_width, "drafts": codes.count('DRAFT'), "codes": codes,
-           "shown": fill_gaps(base)}
+           "shown": fill_gaps(base) if any(b is not None for b in base) else [n for n in names]}
     _status[key] = (now, out, stamp)
     return out
 
@@ -449,9 +455,60 @@ def editor(scene):
     if film is None:
         return None
     found = bpy.data.scenes.get(film.get(CUT_KEY, ""))
-    if found is not None and found.get(FILM_KEY) == film.name:
-        return found
+    if found is not None and (found.get(FILM_KEY) == film.name or
+                              bpy.data.scenes.get(found.get(FILM_KEY, "")) is None):
+        return found                                # (the film was renamed: its cut still points at it)
     return next((s for s in bpy.data.scenes if s.get(FILM_KEY) == film.name), None)
+
+
+def orphan_cuts():
+    """Cut scenes whose film is gone (renamed before this version, or deleted) and that no film uses."""
+    used = {s.get(CUT_KEY) for s in bpy.data.scenes if s.get(CUT_KEY)}
+    return [s for s in bpy.data.scenes if s.get(FILM_KEY) and bpy.data.scenes.get(s[FILM_KEY]) is None
+            and s.name not in used]
+
+
+OUT, CURRENT, NEW, EFFECT = 1, 2, 3, 4   # the cut's channels: Out (muted, not in the export), Current (what
+CHANNELS = {OUT: "Out", CURRENT: "Current", NEW: "New", EFFECT: "Effect"}   # is valid), New (new versions and
+LAYOUT_KEY = "studio_channels"          # new sections come here), Effect (fades, dips; looks and bars above)
+
+
+def ensure_channels(ed):
+    """The channels named Out / Current / New / Effect and Out muted – once per cut (afterwards your names
+    and mutes stay). A cut from before (sections on channel 1) moves up by one first, so nothing goes mute."""
+    sed = ed.sequence_editor
+    channels = getattr(sed, "channels", None)
+    if channels is None or ed.get(LAYOUT_KEY):
+        return False
+    named = any(c.name in CHANNELS.values() for c in list(channels)[1:6])
+    if not named:
+        strips = [s for s in _all(sed) if s.channel < 6]
+        for strip in sorted(strips, key=lambda s: -s.channel):
+            try:
+                strip.channel = strip.channel + 1
+            except (RuntimeError, AttributeError):
+                pass
+        for number, name in CHANNELS.items():
+            try:
+                channels[number].name = name
+            except (IndexError, AttributeError):
+                pass
+        try:
+            channels[OUT].mute = True
+        except (IndexError, AttributeError):
+            pass
+    ed[LAYOUT_KEY] = 1
+    return True
+
+
+def channel_muted(strip):
+    """The strip is not in the picture: muted itself or on a muted channel (Out)."""
+    if strip.mute:
+        return True
+    try:
+        return bool(strip.id_data.sequence_editor.channels[strip.channel].mute)
+    except (AttributeError, IndexError):
+        return False
 
 
 CUT_WORLD = ".Cut World"  # an empty world for the Video Editor's scene (hidden: starts with a dot)
@@ -465,7 +522,9 @@ def editor_create(scene):
     if found is None:
         found = bpy.data.scenes.new(wanted)
         found[FILM_KEY] = film.name
-    elif found.name != wanted and bpy.data.scenes.get(wanted) is None:
+    if found.get(FILM_KEY) != film.name:
+        found[FILM_KEY] = film.name                 # the film was renamed: its cut goes with it
+    if found.name != wanted and bpy.data.scenes.get(wanted) is None:
         found.name = wanted                       # hidden (earlier: "NAME_cut", "NAME · Schnitt")
     if film.get(CUT_KEY) != found.name:
         film[CUT_KEY] = found.name
@@ -475,6 +534,7 @@ def editor_create(scene):
         found.world = world
     if found.sequence_editor is None:
         found.sequence_editor_create()
+    ensure_channels(found)
     try:
         if not found.sequence_editor.use_prefetch:    # frames read ahead in the background: smooth playback
             found.sequence_editor.use_prefetch = True
@@ -501,12 +561,31 @@ def _match(ed, film):
             setattr(r, attr, getattr(f, attr))
     if not r.use_sequencer:
         r.use_sequencer = True
-    for attr in ("view_transform", "look", "exposure", "gamma"):
+    # the frames are finished pictures (the film's view transform is in them): the cut shows them as they
+    # are – AgX on top again made them flat and grey
+    for attr, value in (("view_transform", "Standard"), ("look", "None"), ("exposure", 0.0), ("gamma", 1.0)):
         try:
-            if getattr(ed.view_settings, attr) != getattr(film.view_settings, attr):
-                setattr(ed.view_settings, attr, getattr(film.view_settings, attr))
+            if getattr(ed.view_settings, attr) != value:
+                setattr(ed.view_settings, attr, value)
         except (AttributeError, TypeError):
             pass
+
+
+def match_size(film):
+    """The cut has the film's size (checked every few seconds): changed → the strips fill the picture
+    again. Returns True when it changed."""
+    ed = editor(film)
+    if ed is None:
+        return False
+    before = (ed.render.resolution_x, ed.render.resolution_y)
+    _match(ed, film)
+    if before == (ed.render.resolution_x, ed.render.resolution_y):
+        return False
+    try:
+        sync(film)
+    except Exception as ex:
+        print("AI Studio: cut size:", ex)
+    return True
 
 
 def _sed_of(scene):
@@ -722,6 +801,8 @@ def _keep_window_scene():
         _marks_now()
         if time.monotonic() - _proxied[0] > 3.0:     # half-size previews for a smooth timeline
             _proxied[0] = time.monotonic()
+            for film in [s for s in bpy.data.scenes if s.get(CUT_KEY) and not s.get(FILM_KEY)]:
+                match_size(film)                      # the film's size changed: the cut follows at once
             from . import cut_proxy
             cut_proxy.tick()
         from . import cut_auto
@@ -828,7 +909,7 @@ def build(scene):
     at = found[0][1] if found else scene.frame_start
     for name, start, end, kind, data in found:
         length = end - start + 1
-        strip, paths = _make_section_strip(scene, name, kind, data, 1, at) if kind else (None, None)
+        strip, paths = _make_section_strip(scene, name, kind, data, CURRENT, at) if kind else (None, None)
         if strip is None:
             report["missing"].append(name)
             at += length
@@ -839,12 +920,12 @@ def build(scene):
         last = strip
         if item.hold:
             if paths:
-                hold = _image(strips, "%s hold" % name, paths[-1:], 1, strip.frame_final_end,
+                hold = _image(strips, "%s hold" % name, paths[-1:], CURRENT, strip.frame_final_end,
                               fit='ORIGINAL' if kind == "FRAMES" else 'FIT')
                 if kind == "FRAMES":
                     _fit(scene, hold, data["width"])
             else:                                   # only the video: its last image held
-                hold = strips.new_movie(name="%s hold" % name, filepath=data, channel=1,
+                hold = strips.new_movie(name="%s hold" % name, filepath=data, channel=CURRENT,
                                         frame_start=strip.frame_final_end)
                 hold.frame_offset_start = max(0, hold.frame_duration - 1)
             hold.frame_final_duration = item.hold
@@ -963,7 +1044,7 @@ def sync(scene):
                 continue
             if kind == "FRAMES" and not data["shown"]:
                 continue                            # nothing rendered yet: it comes with its first frames
-            _make_section_strip(scene, name, kind, data, 1, _place_for(scene, name, _end - start + 1, start))
+            _make_section_strip(scene, name, kind, data, NEW, _place_for(scene, name, _end - start + 1, start))
             names = [n for n, _s, _e, _m in sections_of(scene)]
             before = names[names.index(name) - 1] if names.index(name) > 0 else None
             for owner in (before, name):            # the transition into it, and its own
@@ -982,9 +1063,26 @@ def sync(scene):
                     if _get(strip, KIND_KEY) == "SECTION" and data["shown"]:
                         show(strip, data["names"], data["shown"])
                         mark(strip, data, scene)
+    _orphans_out(scene)
     repair(scene)
     _reload(scene)
     return "synced"
+
+
+def _orphans_out(scene):
+    """Strips of a section that is not in the film any more (renamed, split: 02 Orbit → 02 Orbit Ein / Loop /
+    Aus) go to Out (muted, not exported) instead of standing in the film."""
+    names = {n for n, _s, _e, _m in sections_of(scene)}
+    for strip in ours(scene):
+        if _get(strip, KIND_KEY) in {"SECTION", "HOLD", "FREEZE"} and _get(strip, SECTION_KEY) not in names \
+                and strip.channel != OUT:
+            quiet(strip)
+            try:
+                strip.channel = OUT
+            except (RuntimeError, AttributeError):
+                pass
+            if strip.channel != OUT:                # Out taken there: muted where it is
+                strip.mute = True
 
 
 def fast_shown(folder, shown):
@@ -1087,7 +1185,7 @@ def replace_section(scene, section):
     film_edit.copy_look(old, new)
     film_edit.remove(scene, old)
     film_edit.ripple(scene, at + length, new.frame_final_duration - length, skip=(new,))
-    new.channel = channel
+    new.channel = channel if channel >= CURRENT else CURRENT
     for owner in (before, section):
         if owner:
             item = settings(scene, owner)
@@ -1308,8 +1406,8 @@ def export_sections(scene):
     skip = export_left_out(scene)
     out = []
     for name, _s, _e, _m in sections_of(scene):
-        strips = [s for s in ours(scene) if _get(s, SECTION_KEY) == name and not s.mute
-                  and _get(s, KIND_KEY) in {"SECTION", "HOLD", "FREEZE"}]
+        strips = [s for s in ours(scene) if _get(s, SECTION_KEY) == name and not channel_muted(s)
+                  and _get(s, KIND_KEY) in {"SECTION", "HOLD", "FREEZE"}]       # only what is in the picture
         if strips and name not in skip:
             out.append((name, int(min(s.frame_final_start for s in strips)),
                         int(max(s.frame_final_end for s in strips)) - 1))
@@ -1424,6 +1522,21 @@ put(state='done', done=T, finished=time.time())
 """
 
 
+def export_percentage(film, render):
+    """The export's size in % of the cut: the Size chosen, or for "As Rendered" the size of the largest
+    frames of the sections exported (no 1080 frames blown up to 2K unnoticed)."""
+    size = getattr(film.studio, "cut_export_size", '100')
+    if size != 'FRAMES':
+        return int(size)
+    spans = {n: (s, e) for n, s, e, _m in sections_of(film)}
+    widths = []
+    for name, a, _b in export_sections(film):
+        if a is not None and name in spans:
+            widths.append(frame_status(name, *spans[name])["width"] or 0)
+    width = max(widths or [0])
+    return max(1, int(round(width * 100.0 / max(1, render.resolution_x)))) if width else 100
+
+
 def export(scene, path=None):
     """The chosen sections (Video Editor · Export: one file or one per section) as video or PNG frames with
     the export settings (format, quality, size) in its own Blender process; an older export of that name
@@ -1478,7 +1591,7 @@ def export(scene, path=None):
                     if not strip.mute:
                         strip.mute = True
                         muted.append(strip)
-        render.resolution_percentage = int(getattr(rq, "cut_export_size", '100'))
+        render.resolution_percentage = export_percentage(film, render)
         render.filepath = ranges[0][3]
         render.use_file_extension = True
         render.use_sequencer = True                   # the copy renders the strips
@@ -1652,8 +1765,13 @@ class STUDIO_OT_cut(Operator):
             elif self.action == 'SNAP':
                 self.report({'INFO'}, "%d sections on whole beats" % snap_to_beats(scene))
             elif self.action == 'EXPORT':
-                video, _log = export(scene)
-                self.report({'INFO'}, "Exporting in the background: %s" % video)
+                from . import cut_auto
+                if cut_auto._export_running() and bpy.data.filepath:   # one after the other: it waits
+                    item = cut_auto.add(scene, frames='EXISTING')
+                    self.report({'INFO'}, "Exports after the one running now: %s" % " + ".join(item["sections"]))
+                else:
+                    video, _log = export(scene)
+                    self.report({'INFO'}, "Exporting in the background: %s" % video)
             elif self.action == 'EDL':
                 self.report({'INFO'}, "EDL: %s" % edl(scene))
         except (ValueError, OSError, RuntimeError) as ex:
@@ -1919,6 +2037,10 @@ def register():
                                       description="The timeline plays half-size previews of the frames (made in "
                                       "the background as they arrive): smooth playback. Off: the full frames. "
                                       "Renders and the export always use the full frames", options={'SKIP_SAVE'})
+    wm.studio_cut_preview_size = EnumProperty(
+        name="Preview Size", items=(('50', "50 %", "Half size: sharp enough to judge, plays smoothly"),
+                                    ('25', "25 %", "Quarter size: the fastest playback (previews made anew)")),
+        default='50', update=cut_proxy.fast_changed)
     from . import cut_overlay, cut_panel, film_tools
     cut_panel.register()
     cut_overlay.register()
@@ -1942,7 +2064,8 @@ def unregister():
     cut_panel.unregister()
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
-    for prop in ("studio_cut_fade", "studio_cut_hold", "studio_cut_ratio", "studio_cut_fast"):
+    for prop in ("studio_cut_fade", "studio_cut_hold", "studio_cut_ratio", "studio_cut_fast",
+                 "studio_cut_preview_size"):
         if hasattr(bpy.types.WindowManager, prop):
             delattr(bpy.types.WindowManager, prop)
     from . import film_edit

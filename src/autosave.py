@@ -589,6 +589,31 @@ def save_now(reason, force=False, by_user=False):
     return path
 
 
+def keep_copy(path, reason="sent to the render farm"):
+    """A copy of the file just saved for something else (the farm's) also counts as a backup: hard-linked
+    into the autosave folder – no second save, and after a crash while packing the state of the send is
+    there to continue from. Returns the backup's path or None."""
+    if not bpy.data.filepath or not path or not os.path.isfile(path):
+        return None
+    folder = backup_folder()
+    try:
+        os.makedirs(folder, exist_ok=True)
+        stem = _stem()
+        target = _unique_path(folder, stem)
+        try:
+            os.link(path, target)
+        except OSError:
+            return None                              # another disk: the farm's copy stays the only one
+        prefs = _prefs()
+        if prefs is not None:
+            _prune(folder, stem, _keep(prefs))
+    except OSError:
+        return None
+    state.update(last=time.time(), path=target, reason=reason, error="")
+    write_marker()
+    return target
+
+
 def before_heavy(reason, gap=120.0):
     """A backup copy right before a long or risky step (CAD import, render list, film) – also with
     the periodic backups off; not again within `gap` seconds."""

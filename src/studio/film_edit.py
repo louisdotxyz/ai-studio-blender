@@ -21,7 +21,7 @@ from .cut import KIND_KEY, SECTION_KEY, _get, _strips, _tag
 OVERLAYS = {"LOOK", "BARS", "MUSIC"}          # over the whole film: they follow its length, never ripple
 SIDE_KEY = "studio_side"                      # fades: IN / OUT
 LOOK_MOD, COLOR_MOD = "Studio Look", "Studio Color"
-TOP = 6                                       # fades, titles, the look and bars start on this channel
+TOP = 4                                       # fades, titles, the look and bars start on this channel (Effect)
 
 
 # ------------------------------------------------------------------ helpers
@@ -211,8 +211,8 @@ def apply_transition(scene, section, kind, frames):
         return None
     if kind == 'CROSS':
         frames = max(1, min(frames, end.frame_final_duration, nxt.frame_final_duration - 1))
-        if nxt.channel == end.channel:
-            nxt.channel = end.channel + 1 if end.channel == 1 else 1
+        if nxt.channel == end.channel:                 # a cross needs two channels: Current and New
+            nxt.channel = cut.NEW if end.channel == cut.CURRENT else cut.CURRENT
         ripple(scene, nxt.frame_final_start, -frames, skip=(end,))
         fx = cut._effect(_strips(_sed(scene)), "%s ×" % section, 'CROSS', max(end.channel, nxt.channel) + 1,
                          nxt.frame_final_start, frames, input1=end, input2=nxt)

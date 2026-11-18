@@ -2589,6 +2589,21 @@ def motion_sections():
                   len(one) == 1 and not join and (one[0][1], one[0][2]) == cut.strip_range(scene)
                   and [r[0] for r in only] == ["02 Hero"] and [r[0] for r in each] == ["01 Intro", "02 Hero"]
                   and each[0][3] != each[1][3], (one, only, each))
+            ed_scene = cut.editor(scene)
+            chans = ed_scene.sequence_editor.channels
+            hero_ch = cut.section_strip(scene, "02 Hero").channel
+            check("cut channels: Out (muted) · Current · New · Effect, sections on Current or New, the cut shows "
+                  "the frames as they are (Standard, no look)",
+                  [chans[i].name for i in (1, 2, 3, 4)] == ["Out", "Current", "New", "Effect"] and chans[1].mute
+                  and hero_ch in (cut.CURRENT, cut.NEW) and ed_scene.view_settings.view_transform == 'Standard'
+                  and ed_scene.view_settings.look in ('None', ''), ([c.name for c in list(chans)[:5]], hero_ch,
+                                                                      ed_scene.view_settings.view_transform))
+            keep_size = scene.studio.cut_export_size
+            scene.studio.cut_export_size = 'FRAMES'
+            pct = cut.export_percentage(scene, ed_scene.render)
+            scene.studio.cut_export_size = keep_size
+            check("export 'As Rendered': the frames' own size in % of the cut (4-pixel test frames: tiny)",
+                  1 <= pct < 100, pct)
             cp, fe = mod("studio.cut_proxy"), mod("studio.film_edit")
             hero = cut.section_strip(scene, "02 Hero")
             px_folder = bpy.path.abspath(hero.directory)

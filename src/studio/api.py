@@ -1119,7 +1119,8 @@ def cut_export(edl=False, format=None, quality=None, size=None, range=None, musi
     scene = _cut_scene()
     rq = scene.studio
     for prop, value in (("cut_export_format", format), ("cut_export_quality", quality),
-                        ("cut_export_size", None if size is None else str(int(size))),
+                        ("cut_export_size", None if size is None else
+                         (size if size == "FRAMES" else str(int(size)))),
                         ("cut_export_range", range), ("cut_export_music", music), ("cut_export_name", name),
                         ("cut_export_split", split)):
         if value is not None:
@@ -1145,15 +1146,18 @@ def farm_report(hours=24):
 
 
 def cut_export_when_ready(sections=None, split=None, format=None, quality=None, size=None, folder=None,
-                          name=None, frames='HIGH'):
+                          name=None, frames='HIGH', names=None):
     """Export by itself once every frame of these sections (names; None = as chosen in Export) is rendered
     and up to date in the quality `frames` ('HIGH' / 'ANY'): the farm or this Mac may still be rendering.
     split / format / quality / size like cut_export (None: the Export settings); folder + name: the result
-    is copied there under that name (e.g. a FINAL folder). Survives a restart; one export at a time; tried
-    again twice if it fails; done and failed are told in the chat. Use this, never an own timer.
+    is copied there under that name (e.g. a FINAL folder); names={section: file name} with split="EACH":
+    each section its own name in one go. frames='EXISTING': export the frames that are there as soon as
+    nothing renders for them (no up-to-date check); size='FRAMES': the frames' own size (no upscaling).
+    Survives a restart; one export at a time (a direct export waits for a running one too); tried again
+    twice if it fails; cut_export_waiting() says what it waits for. Use this, never an own timer.
     Returns the wish (its id cancels it: cut_export_cancel)."""
     from . import cut_auto
-    return cut_auto.add(_cut_scene(), sections, split, format, quality, size, folder, name, frames)
+    return cut_auto.add(_cut_scene(), sections, split, format, quality, size, folder, name, frames, names)
 
 
 def cut_export_waiting():
@@ -1164,7 +1168,7 @@ def cut_export_waiting():
     out = []
     for item in cut_auto.load():
         have, total = cut_auto.progress(scene, item)
-        out.append(dict(item, frames_there=have, frames_all=total))
+        out.append(dict(item, frames_there=have, frames_all=total, waits_for=cut_auto.waits_for(scene, item)))
     return out
 
 

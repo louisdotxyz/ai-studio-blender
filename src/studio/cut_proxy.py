@@ -30,7 +30,7 @@ SETTLE = 2.0                   # a frame younger than this may still be written
 PRUNE_AFTER = 30 * 86400
 _lock = threading.Lock()
 _wake = threading.Event()
-_want = {"folders": [], "on": True}         # [(folder, (names …))] in the order to make them
+_want = {"folders": [], "on": True, "size": SIZE}   # [(folder, (names …))] in the order to make them; size %
 _changed = set()                            # folders whose previews went (Blender reads them again)
 _status = {"left": 0, "made": 0, "error": ""}
 _thread = [None]
@@ -50,7 +50,7 @@ def folder_for(directory):
 
 
 def target(directory, name):
-    return os.path.join(folder_for(directory), "images", str(SIZE), name + "_proxy.jpg")
+    return os.path.join(folder_for(directory), "images", str(_want["size"]), name + "_proxy.jpg")
 
 
 def png_size(path):
@@ -70,7 +70,8 @@ def make(src, dst):
     size = png_size(src)
     if not size:
         return False
-    w, h = max(1, size[0] * SIZE // 100), max(1, size[1] * SIZE // 100)
+    pct = _want["size"]
+    w, h = max(1, size[0] * pct // 100), max(1, size[1] * pct // 100)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     tmp = dst + ".part.jpg"
     try:
@@ -106,15 +107,10 @@ def _scan(folders):
                 d = os.stat(dst).st_mtime
             except OSError:
                 d = None
-            if d is not None and d >= s:
-                ready.add(name)
-                continue
-            if d is not None:                      # the frame was rendered again: no old preview meanwhile
-                try:
-                    os.remove(dst)
-                    gone.add(folder)
-                except OSError:
-                    pass
+            if d is not None:                      # there (also an older one of a frame rendered again: it
+                ready.add(name)                    # stays until the new one replaces it – never the 4K PNG)
+                if d >= s:
+                    continue
             todo.append((src, dst))
         with _lock:
             if _ready.get(folder) != ready:
@@ -128,7 +124,7 @@ def _loop():
     pool = ThreadPoolExecutor(max_workers=WORKERS, thread_name_prefix="ai-studio-proxy")
     pruned = 0.0
     while True:
-        _wake.wait(4.0)
+        _wake.wait(2.0)                            # new frames get their preview within seconds
         _wake.clear()
         with _lock:
             folders, on = list(_want["folders"]), _want["on"]
@@ -148,7 +144,8 @@ def _loop():
             if _wake.is_set():                     # new frames or another order: look again first
                 break
             batch = todo[start:start + WORKERS * 4]
-            for (src, dst), ok in zip(batch, pool.map(lambda pair: make(*pair), batch)):
+            before = [os.path.exists(dst) for _src, dst in batch]
+            for (src, dst), was, ok in zip(batch, before, pool.map(lambda pair: make(*pair), batch)):
                 _status["made"] += 1 if ok else 0
                 _status["left"] = max(0, _status["left"] - 1)
                 if ok:
@@ -156,6 +153,8 @@ def _loop():
                     with _lock:
                         _ready.setdefault(folder, set()).add(os.path.basename(src))
                         _new_ready.add(folder)
+                        if was:
+                            _changed.add(folder)   # replaced a preview: Blender reads it again
         if time.time() - pruned > 6 * 3600:
             pruned = time.time()
             prune()
@@ -240,9 +239,12 @@ def _setup(strip, directory, on):
     proxy = getattr(strip, "proxy", None)
     if proxy is None:
         return
-    for size in (25, 75, 100):
+    pct = _want["size"]
+    for size in (25, 50, 75, 100):
+        if size == pct:
+            continue
         _set(proxy, "build_%d" % size, False)
-    _set(proxy, "build_50", True)
+    _set(proxy, "build_%d" % pct, True)
     _set(proxy, "use_overwrite", False)
     _set(proxy, "use_proxy_custom_directory", True)
     _set(proxy, "directory", folder)
@@ -256,6 +258,12 @@ def tick(on=None):
     if on is None:
         on = getattr(bpy.context.window_manager, "studio_cut_fast", True)
     on = bool(on) and available()
+    pct = 25 if getattr(bpy.context.window_manager, "studio_cut_preview_size", '50') == '25' else 50
+    if pct != _want["size"]:                       # another preview size: its own previews (made anew)
+        with _lock:
+            _want["size"] = pct
+            _ready.clear()
+        _applied.clear()
     folders = []
     for ed in [s for s in bpy.data.scenes if s.get(cut.FILM_KEY)]:
         film = cut.film_scene(ed)
@@ -273,9 +281,9 @@ def tick(on=None):
             folders.append((directory, names))
     for space in _spaces():
         if on:
-            _set(space, "proxy_render_size", 'PROXY_50')
+            _set(space, "proxy_render_size", 'PROXY_%d' % _want["size"])
             _set(space, "use_proxies", True)
-        elif getattr(space, "proxy_render_size", "") == 'PROXY_50':
+        elif getattr(space, "proxy_render_size", "") in {'PROXY_25', 'PROXY_50'}:
             _set(space, "proxy_render_size", 'SCENE')
     with _lock:
         if _want["folders"] != folders or _want["on"] != on:
@@ -287,7 +295,7 @@ def tick(on=None):
         for ed in [s for s in bpy.data.scenes if s.get(cut.FILM_KEY)]:
             for strip in cut.ours(cut.film_scene(ed)):
                 try:
-                    if strip.type == 'IMAGE' and bpy.path.abspath(strip.directory) in changed:
+                    if strip.type == 'IMAGE' and os.path.normpath(bpy.path.abspath(strip.directory)) in changed:
                         strip.invalidate_cache('RAW')
                 except (AttributeError, ReferenceError, RuntimeError):
                     pass

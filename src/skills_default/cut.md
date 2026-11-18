@@ -30,6 +30,12 @@ Sections render as frames (animation/Frames/<section>/); every section is an ima
   split="EACH", quality="HIGH", folder=None, name=None) – it waits, survives a restart, exports, copies
   into folder under name and tells the chat. api.cut_export_waiting() shows how far, api.cut_export_cancel(id).
   Never write an own bpy.app.timers watcher for renders or exports.
+- Channels of the cut (keep them): 4 Effect (fades, dips; looks and bars above), 3 New (new versions and new
+  sections land here), 2 Current (what is valid), 1 Out (muted: old versions, sections that were renamed or
+  split go here). The export takes only what is in the picture (Current and New, never Out).
+- Export options: size="FRAMES" (the frames' own size, no upscaling), cut_export_when_ready(frames="EXISTING")
+  exports the frames that are there once nothing renders for them, names={section: file} with split="EACH"
+  gives each section its own file name (e.g. into FINAL). cut_export_waiting() says what a wish waits for.
 - Where it renders: stills and short previews (up to 30 frames) always on this Mac, longer films on the farm
   when it is on – two queues, neither waits for the other. Only when Louis says so: section_render(farm=True)
   or farm=False.

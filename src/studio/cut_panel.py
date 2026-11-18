@@ -287,6 +287,43 @@ def _boundaries(scene):
     return out
 
 
+class STUDIO_OT_cut_orphans(Operator):
+    bl_idname = "studio.cut_orphans"
+    bl_label = "Remove Old Cut"
+    bl_description = ("Removes cut scenes whose film is gone (left behind when the film's scene was renamed "
+                      "before AI Studio 4.27). Your film and its cut stay")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, context):
+        gone = [s.name for s in cut.orphan_cuts()]
+        for name in gone:
+            scene = bpy.data.scenes.get(name)
+            if scene is not None and all(w.scene != scene for w in context.window_manager.windows):
+                bpy.data.scenes.remove(scene)
+        self.report({'INFO'}, "Removed: %s" % (", ".join(gone) or "nothing"))
+        return {'FINISHED'}
+
+
+class STUDIO_PT_cut_renders(Panel):
+    """The render queue next to the timeline: what renders, what is new, on this Mac and on the farm."""
+    bl_space_type = 'SEQUENCE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category = "Renders"
+    bl_label = "Renders"
+
+    @classmethod
+    def poll(cls, context):
+        view = getattr(getattr(context, "space_data", None), "view_type", "")
+        return view == 'SEQUENCER' and bool(cut.sections_of(cut._scene(context)))
+
+    def draw(self, context):
+        from . import tab_queue
+        tab_queue.draw_queue(self.layout, context, buttons=True)
+
+
 class STUDIO_PT_cut_queue(Panel):
     """Everything in the queue (films of this Mac and the farm's jobs), each with its buttons."""
     bl_space_type = 'SEQUENCE_EDITOR'
@@ -416,16 +453,32 @@ def _draw_clips(layout, scene, context, strip):
             row.prop(strip, "frame_offset_start", text="Trim In")
             row.prop(strip, "frame_offset_end", text="Trim Out")
             row.operator(STUDIO_OT_cut_clip.bl_idname, text="", icon='TRASH').action = 'REMOVE'
+    old = cut.orphan_cuts()
+    if old:
+        row = layout.row(align=True)
+        row.alert = True
+        row.label(text="Unused old cut: %s" % ", ".join(s.name for s in old), icon='ERROR', translate=False)
+        row.operator(STUDIO_OT_cut_orphans.bl_idname, text="", icon='TRASH')
     row = layout.row(align=True)
     row.operator(STUDIO_OT_cut_import.bl_idname, text="Import", icon='IMPORT')
     row.operator(cut.STUDIO_OT_cut.bl_idname, text="Build Again", icon='FILE_REFRESH').action = 'BUILD'
     from . import cut_proxy
+    row = layout.row(align=True)                     # how the timeline plays: preview size, read-ahead
+    row.prop(bpy.context.window_manager, "studio_cut_preview_size", expand=True)
+    cache = row.row(align=True)
+    cache.ui_units_x = 5
+    cache.prop(bpy.context.preferences.system, "memory_cache_limit", text="Cache")
     if cut_proxy.left():
         _hint(layout, "Fast preview: %d frames still to prepare" % cut_proxy.left(), 'MOD_TIME')
 
 
-def _short(name):
-    return name.split(" ", 1)[0] if name[:2].isdigit() else name[:8]
+def _short(name, others=()):
+    """A section's short name: its number ("03"), the whole name (cut) when several share the number
+    (02 Orbit, 02 Orbit Ein, 02 Orbit Loop …)."""
+    number = name.split(" ", 1)[0] if name[:2].isdigit() else name[:8]
+    if sum(1 for o in others if o.split(" ", 1)[0] == number) > 1:
+        return name[:14]
+    return number
 
 
 def _kind_buttons(row, section, current):
@@ -461,7 +514,7 @@ def _draw_transitions(layout, scene, context, strip):
         row = col.row(align=True)
         label = row.row(align=True)
         label.ui_units_x = 3.2
-        label.label(text="%s → %s" % (_short(name), _short(after)), translate=False)
+        label.label(text="%s → %s" % (_short(name, order), _short(after, order)), translate=False)
         kinds = row.row(align=True)
         _kind_buttons(kinds, name, item.transition if item is not None else 'CUT')
         frames = row.row(align=True)
@@ -579,11 +632,14 @@ def _draw_export(layout, scene):
     found = cut.sections_of(scene)
     skip = cut.export_left_out(scene)
     if found:
-        picks = layout.grid_flow(row_major=True, columns=min(6, len(found)), even_columns=True, align=True)
-        for name, _s, _e, _m in found:
-            number = name.split(" ", 1)[0] if name[:2].isdigit() else name[:6]
-            picks.operator(STUDIO_OT_cut_export_pick.bl_idname, text=number, depress=name not in skip,
-                           translate=False).section = name
+        every = [n for n, _s, _e, _m in found]
+        current = {n for n, _a, _b in cut.export_sections(scene)}
+        picks = layout.grid_flow(row_major=True, columns=min(4, len(found)), even_columns=True, align=True)
+        for name in every:
+            cell = picks.row(align=True)
+            cell.enabled = name in current               # only what is in the picture (Current / New)
+            cell.operator(STUDIO_OT_cut_export_pick.bl_idname, text=_short(name, every), depress=name not in skip
+                          and name in current, translate=False).section = name
     layout.row(align=True).prop(rq, "cut_export_split", expand=True)
     row = layout.row(align=True)
     row.prop(rq, "cut_export_format", text="")
@@ -625,10 +681,12 @@ def _draw_when_ready(layout, scene):
                  icon='TIME').action = 'ADD'
     for item in cut_auto.load()[-3:]:
         row = layout.row(align=True)
-        text = " + ".join(_short(s) for s in item["sections"])
+        every = [n for n, _s, _e, _m in cut.sections_of(scene)]
+        text = " + ".join(_short(s, every) for s in item["sections"])
         if item["state"] == 'WAITING':
             have, total = cut_auto.progress(scene, item)
-            text += " · %d / %d frames" % (have, total)
+            why = cut_auto.waits_for(scene, item)
+            text += " · %d / %d" % (have, total) + (" · waits: " + why if why else " · starts")
         elif item["state"] == 'EXPORTING':
             text += " · exports"
         elif item["state"] == 'DONE':
@@ -700,7 +758,8 @@ class STUDIO_PT_cut(Panel):
 
 
 classes = (STUDIO_OT_cut_export_pick, STUDIO_OT_cut_import, STUDIO_OT_cut_clip, STUDIO_OT_cut_look,
-           STUDIO_OT_cut_transition, STUDIO_OT_cut_auto, STUDIO_PT_cut_queue, STUDIO_PT_cut)
+           STUDIO_OT_cut_transition, STUDIO_OT_cut_auto, STUDIO_OT_cut_orphans, STUDIO_PT_cut_queue,
+           STUDIO_PT_cut_renders, STUDIO_PT_cut)
 
 
 def _compare_changed(wm, context):

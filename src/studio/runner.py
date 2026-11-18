@@ -889,11 +889,13 @@ class Runner:
             variant = V.plan(item.variant)
         overrides = plan.as_list()
         own = []                       # this job's own size and samples (the scene stays as it is)
-        if getattr(item, "job_width", 0) > 0 and getattr(item, "job_height", 0) > 0:
-            own += [["render.resolution_x", item.job_width], ["render.resolution_y", item.job_height],
-                    ["render.resolution_percentage", 100]]
+        low = self.quality == 'LOW'     # a Low Quality preview of a job with its own size and samples
+        if getattr(item, "job_width", 0) > 0 and getattr(item, "job_height", 0) > 0:   # (a 4K version) stays
+            own += [["render.resolution_x", item.job_width], ["render.resolution_y", item.job_height],   # low:
+                    ["render.resolution_percentage", max(1, round(low_res)) if low else 100]]   # it came in 4K
         if getattr(item, "job_samples", 0) > 0 and scene.render.engine == 'CYCLES':
-            own += [["cycles.samples", item.job_samples]]
+            own += [["cycles.samples", max(1, round(item.job_samples * low_samples / 100)) if low
+                     else item.job_samples]]
         if own:
             paths = {o[0] for o in own}
             overrides = core.camera_last([o for o in overrides if o[0] not in paths] + own)
