@@ -571,7 +571,7 @@ class STUDIO_OT_photo_send(Operator):
                       "renders it again")
     bl_options = {'INTERNAL'}
 
-    path: bpy.props.StringProperty(options={'SKIP_SAVE'})
+    path: bpy.props.StringProperty()
 
     def execute(self, context):
         window = context.window

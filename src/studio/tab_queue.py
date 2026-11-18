@@ -1367,10 +1367,11 @@ class STUDIO_PT_review(Panel):
         scene = context.scene
         wm = context.window_manager
         tab = wm.studio_photo_tab
-        head = layout.row(align=True)                    # the four steps, and the view's buttons
+        head = layout.row(align=True)                    # the four steps (their names in full) ...
         head.scale_y = 1.3
         head.prop(wm, "studio_photo_tab", expand=True)
-        tools = head.row(align=True)
+        tools = layout.row(align=True)                   # ... and the view's buttons under them, right
+        tools.alignment = 'RIGHT'
         tools.operator(photo_view.STUDIO_OT_photo_fit.bl_idname, text="", icon='ZOOM_ALL')
         op = tools.operator(photo_view.STUDIO_OT_photo_layout.bl_idname, text="", icon='NODE_COMPOSITING',
                             depress=photo_view.compositor_open(context.screen))
