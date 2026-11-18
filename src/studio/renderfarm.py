@@ -560,9 +560,27 @@ def enabled(scene):
     return bool(getattr(scene.studio, "farm_on", False))
 
 
+SHORT = 30                # frames: a preview this short renders on this Mac (sending would take longer)
+
+
+def frames_of(item):
+    if item.frame_end > 0 and item.frame_end >= item.frame_start:
+        return item.frame_end - item.frame_start + 1
+    return 0
+
+
 def takes(scene, item):
-    """The render farm renders this queue item (on, share there, no material variant)."""
-    return enabled(scene) and connected() and not getattr(item, "variant", "")
+    """The render farm renders this queue item: only when asked for (where 'FARM'), or a film longer
+    than SHORT frames with the farm on. Stills and short previews stay on this Mac (Louis: always local
+    unless he says so). Never a material variant; never without the share."""
+    where = getattr(item, "where", "") or 'AUTO'
+    if where == 'LOCAL' or getattr(item, "variant", ""):
+        return False
+    if where == 'FARM':
+        return connected()
+    if item.mode != 'ANIM' or not enabled(scene) or not connected():
+        return False
+    return frames_of(item) == 0 or frames_of(item) > SHORT
 
 
 def active():

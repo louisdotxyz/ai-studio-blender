@@ -1059,7 +1059,8 @@ def farm_share_status():
     return out
 
 
-def section_render(section=None, quality=None, frames=None, force=False, resolution=None, samples=None, version=None):
+def section_render(section=None, quality=None, frames=None, force=False, resolution=None, samples=None, version=None,
+                   farm=None, preview=True):
     """Render a section's frames (None: every section that needs it) into animation/Frames/<section>/;
     they come into the Video Editor by themselves. quality None = by itself (Low first, High once nothing
     changed), else 'LOW' / 'HIGH'. frames=(a, b): only those frames again; else frames there in that quality
@@ -1068,12 +1069,18 @@ def section_render(section=None, quality=None, frames=None, force=False, resolut
     again stops its older render. resolution=(w, h) / samples=N: only for this job, the scene stays as it is
     (e.g. one section in 4K with 512 samples; implies force for that section). version="4K": a version of its
     own into Frames/<section> 4K (the section's frames and its strip in the film stay; nothing is stopped).
-    With the render farm on (scene.studio.farm_on) the sections render there. Returns what was queued."""
+    Where: with the render farm on, films longer than 30 frames go there; short previews and stills stay on
+    this Mac. farm=True: on the farm anyway, farm=False: on this Mac anyway (only when Louis asks for it).
+    High Quality always after a video preview: quality='HIGH' without an up-to-date preview renders the Low
+    Quality preview first and High Quality follows by itself (preview=False: HQ at once, only when asked).
+    Returns what was queued."""
     scene = _cut_scene()                          # the film's scene, also when the Video Editor's is active
     before = {i.uid for i in scene.studio.items}
     result = bpy.ops.studio.add(mode='ANIM', section=section or "", quality=quality or 'DEFAULT',
                                 frames="%d-%d" % tuple(frames) if frames else "",
-                                force=bool(force or resolution or samples or version), folder=version or "")
+                                force=bool(force or resolution or samples or version), folder=version or "",
+                                where='AUTO' if farm is None else ('FARM' if farm else 'LOCAL'),
+                                no_preview=not preview)
     for item in scene.studio.items:
         if item.uid not in before and item.mode == 'ANIM':
             if resolution:

@@ -122,7 +122,7 @@ def _queue(args):
         quality = args["quality"] if args.get("quality") in ('LOW', 'HIGH') else 'DEFAULT'
         scene.camera = cam
         ensure_uids(rq)
-        bpy.ops.studio.add(quality=quality)
+        bpy.ops.studio.add(quality=quality, where='FARM' if args.get("farm") else 'AUTO')   # stills: here
         added = rq.items[-1].quality if len(rq.items) else quality
         return f"Added {cam.name} ({added}) to the queue; it renders automatically if enabled."
     if action == "start":

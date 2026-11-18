@@ -97,6 +97,14 @@ class STUDIO_OT_add(Operator):
                 return "Render the camera now: %s. Shift-click: the other quality" % autoquality.describe(quality)
         return "Render the camera as it is now (⌘R an image, ⌘E the film, ⇧⌘R an image in Low Quality)"
 
+    where: EnumProperty(
+        items=(('AUTO', "Automatic", "Stills and short previews on this Mac, longer films on the render farm "
+                                     "(when on)"),
+               ('LOCAL', "This Mac", "On this Mac, also with the render farm on"),
+               ('FARM', "Render Farm", "On the render farm (also a still or a short preview)")),
+        default='AUTO', options={'SKIP_SAVE', 'HIDDEN'})
+    no_preview: BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})   # High Quality at once (only when asked for)
+
     def invoke(self, context, event):
         if self.force:                                # render again: the frames there go to archiv
             return context.window_manager.invoke_confirm(self, event)
@@ -160,6 +168,7 @@ class STUDIO_OT_add(Operator):
         item.percentage = scene.render.resolution_percentage
         item.frame_start, item.frame_end = scene.frame_start, scene.frame_end
         item.parts = 1
+        item.where = self.where
         return item
 
     def _start(self, context, scene=None):
@@ -218,6 +227,10 @@ class STUDIO_OT_add(Operator):
             if quality is None:
                 skipped.append(name)
                 continue
+            if quality == 'HIGH' and not self.no_preview and not autoquality.clean(scene, key) \
+                    and not (keep and st["quality"] == 'HIGH'):
+                quality = 'LOW'                     # a video preview first, High Quality follows by itself
+                autoquality.follow_with_hq(scene, name, self.where)   # once nothing changed since
             item = self._item(scene, cam, quality, 'ANIM')
             item.section, item.keep_frames, item.redo = name, keep, bool(self.force)
             item.job_folder = self.folder
@@ -1035,6 +1048,31 @@ def _draw_renders(layout, context, review):
     _draw_overview(layout, context, images, path)
 
 
+def _queue_head(col, text, icon):
+    row = col.row()
+    row.active = False
+    row.scale_y = 0.8
+    row.label(text=text, icon=icon)
+
+
+def _queue_row(col, scene, i, item, rendering, buttons, waits="waits"):
+    row = col.row(align=True)
+    label = runner.item_label(scene, item)
+    if item.batch:
+        label = "%s · %s" % (item.batch, label)
+    if rendering:
+        row.progress(factor=RUN.render_progress, type='BAR', text="%s · %s" % (label, _item_progress_text()))
+        if buttons:
+            row.label(text="", icon='BLANK1')
+            row.operator(STUDIO_OT_cancel.bl_idname, text="", icon='X', emboss=False)
+    else:
+        row.progress(factor=0.0, type='BAR', text="%s · %s" % (label, waits))
+        if buttons:
+            up = row.operator(STUDIO_OT_move.bl_idname, text="", icon='TRIA_UP', emboss=False)
+            up.index, up.direction = i, -1
+            row.operator(STUDIO_OT_remove.bl_idname, text="", icon='X', emboss=False).index = i
+
+
 def draw_queue(layout, context, buttons=True):
     """The one queue: what renders now and what waits, on this Mac (images, films) and on the render farm.
     A bar per entry with its progress and time left; ▲ renders it earlier, ✕ takes it out. Returns
@@ -1065,26 +1103,20 @@ def draw_queue(layout, context, buttons=True):
         right.alignment = 'RIGHT'
         right.active = False
         right.label(text="~%s left" % runner.format_time(secs), translate=False)
+    farm_items = [(i, item) for i, item in waiting if renderfarm.takes(scene, item)]
+    to_farm = {item.uid for _i, item in farm_items}
+    local_items = [(i, item) for i, item in waiting if item.uid not in to_farm]
+    if films or preview or local_items:              # two queues: this Mac and the farm (neither waits for
+        _queue_head(col, "This Mac", 'DESKTOP')       # the other)
     film.draw(col, buttons)
     if preview:
         col.progress(factor=RUN.render_progress, type='BAR', text=_queue_progress_text())
-    for i, item in waiting:
-        row = col.row(align=True)
-        rendering = item.uid == current
-        label = runner.item_label(scene, item)
-        if item.batch:
-            label = "%s · %s" % (item.batch, label)
-        if rendering:
-            row.progress(factor=RUN.render_progress, type='BAR', text="%s · %s" % (label, _item_progress_text()))
-            if buttons:
-                row.label(text="", icon='BLANK1')
-                row.operator(STUDIO_OT_cancel.bl_idname, text="", icon='X', emboss=False)
-        else:
-            row.progress(factor=0.0, type='BAR', text="%s · waits" % label)
-            if buttons:
-                up = row.operator(STUDIO_OT_move.bl_idname, text="", icon='TRIA_UP', emboss=False)
-                up.index, up.direction = i, -1
-                row.operator(STUDIO_OT_remove.bl_idname, text="", icon='X', emboss=False).index = i
+    for i, item in local_items:
+        _queue_row(col, scene, i, item, item.uid == current, buttons)
+    if mine or other or farm_items:
+        _queue_head(col, "Render Farm", 'NETWORK_DRIVE')
+    for i, item in farm_items:
+        _queue_row(col, scene, i, item, False, buttons, "goes to the farm")
     renderfarm.draw_rows(col, buttons)
     if buttons and not RUN.busy and waiting:   # left over after a cancel
         col.operator(STUDIO_OT_render_queue.bl_idname, text="Render the Rest (%d)" % len(waiting), icon='PLAY')

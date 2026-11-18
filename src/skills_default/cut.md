@@ -30,6 +30,11 @@ Sections render as frames (animation/Frames/<section>/); every section is an ima
   split="EACH", quality="HIGH", folder=None, name=None) – it waits, survives a restart, exports, copies
   into folder under name and tells the chat. api.cut_export_waiting() shows how far, api.cut_export_cancel(id).
   Never write an own bpy.app.timers watcher for renders or exports.
+- Where it renders: stills and short previews (up to 30 frames) always on this Mac, longer films on the farm
+  when it is on – two queues, neither waits for the other. Only when Louis says so: section_render(farm=True)
+  or farm=False.
+- High Quality always after a video preview: quality="HIGH" without an up-to-date preview renders the Low
+  Quality preview first and High Quality follows by itself; preview=False only when he asks for HQ at once.
 - The render farm slow, Macs gone, frames not coming: api.farm_report(hours=24) first – good and poor
   hours, why each Mac ended (from its log book) and what was learned.
 - Strip colours: green = all High Quality, orange = rendered (Low Quality or not all), grey = draft only;

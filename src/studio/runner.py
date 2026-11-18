@@ -614,10 +614,61 @@ class Runner:
         tag_redraw()
 
     def _next_item(self, scene):
+        """The next entry for this Mac (the farm's entries go their own way: _send_farm_items)."""
+        from . import renderfarm
         for item in scene.studio.items:
-            if item.uid not in self.processed and item.camera is not None:
+            if item.uid not in self.processed and item.camera is not None and not renderfarm.takes(scene, item):
                 return item
         return None
+
+    def _send_farm_items(self, scene):
+        """The farm's queue: its entries are sent at once, also while this Mac renders (two queues: a long
+        film on the farm never waits for a still here, and the other way round)."""
+        from . import renderfarm
+        for item in list(scene.studio.items):
+            if item.uid in self.processed or item.camera is None or not renderfarm.takes(scene, item):
+                continue
+            keep = (self.quality, self.animation, self.current, self.phase)
+            label = item_label(scene, item)
+            try:
+                self._prepare(scene, item)
+                renderfarm.submit_item(scene, item, self._farm_job, self.animation, self._farm_path, item.camera,
+                                       self.quality)
+                log("render farm: %s" % label)
+                animation = self.animation
+                self.processed.add(item.uid)
+                remove_item(scene, item.uid)
+                self.done += 1
+                if animation:
+                    from . import cut
+                    cut.on_film_done(scene.name)
+            except Exception as ex:
+                log("not sent to the render farm: %s" % ex)
+                self.failed.append(label)
+                self.processed.add(item.uid)
+                remove_item(scene, item.uid)
+            finally:
+                self.quality, self.animation, self.current, self.phase = keep
+
+    def _prepare(self, scene, item):
+        """(farm) The entry's job without touching what this Mac renders now."""
+        root, low_res, low_samples = settings_from_prefs()
+        rq = scene.studio
+        self.quality = item.quality if item.quality in {'LOW', 'HIGH'} else (self.default_quality or rq.quality)
+        self.animation = item.mode == 'ANIM' if item.mode in {'STILL', 'ANIM'} else bool(self.default_animation)
+        if self.animation:
+            from . import cut
+            path = cut.frames_folder((item.section or cut.WHOLE) + (" " + item.job_folder if getattr(
+                item, "job_folder", "") else ""))
+            output = os.path.join(path, cut.frame_stem(item.section or cut.WHOLE) + "_")
+        elif item.batch:
+            path = output = core.batch_path(root, item.camera.name, self.quality, item.batch, rq.output_name,
+                                            ext=core.still_ext(rq))
+        else:
+            path = output = core.job_path(root, item.camera.name, self.quality, rq.output_name, ext=core.still_ext(rq))
+        os.makedirs(os.path.dirname(path) if not self.animation else path, exist_ok=True)
+        self._farm_path = path
+        self._farm_job = self._job(scene, item, item.camera, output, low_res, low_samples)
 
     def _is_film(self, scene, item):
         if item.mode in {'STILL', 'ANIM'}:
@@ -630,6 +681,8 @@ class Runner:
 
     def _tick(self):
         scene = self._scene()
+        if not self.stop_requested:
+            self._send_farm_items(scene)    # the farm's queue, also while this Mac renders
         if self.phase == 'START':
             if self.stop_requested:
                 self._finish("Cancelled, %d saved" % self.done)

@@ -704,6 +704,7 @@ def _marks_now():
 
 
 _proxied = [0.0]
+_followed = [0.0]
 
 
 def _keep_window_scene():
@@ -725,6 +726,11 @@ def _keep_window_scene():
             cut_proxy.tick()
         from . import cut_auto
         cut_auto.tick()                               # exports waiting for their frames (every 10 s)
+        if time.monotonic() - _followed[0] > 10.0:    # previews done: their High Quality follows
+            _followed[0] = time.monotonic()
+            from . import autoquality
+            for scene in [s for s in bpy.data.scenes if s.get(autoquality.FOLLOW_KEY)]:
+                autoquality.check_follow(scene)
         for space in bpy.data.workspaces:          # the Video Editor shows the cut, never the 3D scene
             shown = getattr(space, "sequencer_scene", None)
             if shown is None or shown.get(FILM_KEY) or not _is_cut_space(space):

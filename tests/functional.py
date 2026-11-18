@@ -2982,6 +2982,17 @@ def render_farm_folder():
     check("farm: a hung look shows, Reconnect gives it up and looks again", hung and farm._view["gen"] > keep_view["gen"],
           farm._view)
     farm._view.update(keep_view)
+    from types import SimpleNamespace as _NS
+    keep_en, keep_conn_fn = farm.enabled, farm.connected
+    farm.enabled, farm.connected = (lambda scene: True), (lambda root=None: True)
+    def _it(mode, a, b, where='AUTO'):
+        return _NS(mode=mode, frame_start=a, frame_end=b, where=where, variant="")
+    routes = [farm.takes(None, _it('STILL', 1, 1)), farm.takes(None, _it('ANIM', 1, 20)),
+              farm.takes(None, _it('ANIM', 1, 300)), farm.takes(None, _it('ANIM', 1, 300, 'LOCAL')),
+              farm.takes(None, _it('STILL', 1, 1, 'FARM'))]
+    farm.enabled, farm.connected = keep_en, keep_conn_fn
+    check("two queues: stills and short previews here, long films on the farm, unless asked otherwise",
+          routes == [False, False, True, False, True], routes)
     import importlib
     flog = importlib.import_module(PKG + ".studio.farm_log")
     keep_local = flog._local

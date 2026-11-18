@@ -64,6 +64,50 @@ def next_quality(scene, key, done=True):
     return 'HIGH' if done and clean(scene, key) else 'LOW'
 
 
+FOLLOW_KEY = "studio_hq_after"     # on the film scene: {section: where} – High Quality after its preview
+
+
+def follow_with_hq(scene, section, where='AUTO'):
+    """The section's preview (Low Quality) renders first; High Quality follows by itself once it is done and
+    nothing changed since (Louis: a video preview always before High Quality)."""
+    wanted = dict(scene.get(FOLLOW_KEY) or {})
+    wanted[section] = where or 'AUTO'
+    scene[FOLLOW_KEY] = wanted
+
+
+def check_follow(scene):
+    """(main thread, the Video Editor's timer) Previews done → their High Quality is queued; a change since
+    the preview → the High Quality waits for a new preview (it is dropped, the next render starts with one)."""
+    wanted = dict(scene.get(FOLLOW_KEY) or {})
+    if not wanted:
+        return []
+    from . import cut_auto
+    started = []
+    for section, where in list(wanted.items()):
+        if any(i.section == section and i.mode == 'ANIM' for i in scene.studio.items):
+            continue                                  # its preview still waits in the queue
+        ok, have, total = cut_auto.ready(scene, section, 'ANY')
+        if not total:
+            wanted.pop(section)
+            continue
+        if not ok:
+            continue
+        wanted.pop(section)
+        if clean(scene, section_key(section)):
+            try:
+                result = bpy.ops.studio.add(mode='ANIM', section=section, quality='HIGH', where=str(where),
+                                            no_preview=True)
+                if 'FINISHED' in result:
+                    started.append(section)
+            except RuntimeError as ex:
+                print("AI Studio: High Quality after the preview:", ex)
+    scene[FOLLOW_KEY] = wanted
+    if started:
+        from . import runner
+        runner.notify("Preview done: %s now renders in High Quality" % ", ".join(started))
+    return started
+
+
 def describe(quality):
     return ("High Quality (a Low Quality is there and nothing changed since)" if quality == 'HIGH'
             else "Low Quality to check it (Render again without changes: High Quality)")

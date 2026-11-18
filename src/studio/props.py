@@ -256,6 +256,9 @@ class STUDIO_Item(PropertyGroup):
     job_height: IntProperty(options={'HIDDEN'})
     job_samples: IntProperty(options={'HIDDEN'})
     job_folder: StringProperty(options={'HIDDEN'})   # a version of its own: Frames/<section> <this>
+    # where it renders: AUTO = stills and short previews on this Mac, longer films on the farm (when on);
+    # LOCAL / FARM only when asked for
+    where: StringProperty(default='AUTO', options={'HIDDEN'})
 
 
 def _pin_changed(self, context):
