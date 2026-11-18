@@ -232,14 +232,18 @@ def _setup(strip, directory, on):
         _applied.pop(key, None)
         return
     folder = folder_for(directory) + os.sep
-    if _applied.get(key) == folder and getattr(strip, "use_proxy", False):
-        return
+    pct = _want["size"]
+    proxy = getattr(strip, "proxy", None)
+    if _applied.get(key) == folder and getattr(strip, "use_proxy", False) and (
+            proxy is None or (getattr(proxy, "build_%d" % pct, False)
+                              and getattr(proxy, "use_proxy_custom_directory", False)
+                              and getattr(proxy, "directory", "") == folder)):
+        return                                     # set up and still so (a rebuild or sync can switch it off)
     cut.quiet(strip)
     _set(strip, "use_proxy", True)
     proxy = getattr(strip, "proxy", None)
     if proxy is None:
         return
-    pct = _want["size"]
     for size in (25, 50, 75, 100):
         if size == pct:
             continue

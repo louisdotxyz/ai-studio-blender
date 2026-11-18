@@ -2617,6 +2617,11 @@ def motion_sections():
                   and (not cp.available() or (hero.use_proxy and px is not None and px.build_50
                                               and not px.build_25 and px.use_proxy_custom_directory)),
                   (px_made, cp.available(), hero.use_proxy, px and px.directory))
+            if cp.available() and px is not None:
+                px.build_50 = False                    # a rebuild or sync switched it off: the next tick again
+                cp.tick(True)
+                check("fast preview: a strip whose 50 % preview was switched off gets it back", px.build_50,
+                      px.build_50)
             if cp.available():
                 px_real = [e.filename for e in hero.elements]
                 keep_ready = dict(cp._ready)
