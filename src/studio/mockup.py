@@ -1495,12 +1495,36 @@ def draw(layout, context, compact=False):
 
 
 class STUDIO_PT_mockup(Panel):
+    """In a studio scene: closed, one button to start a mockup."""
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Studio"
     bl_label = "Mockup"
     bl_order = 1
     bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        return not is_mockup(context.scene)
+
+    def draw_header(self, context):
+        self.layout.label(text="", icon='IMAGE_REFERENCE')
+
+    def draw(self, context):
+        draw(self.layout, context)
+
+
+class STUDIO_PT_mockup_on(Panel):
+    """In a mockup scene: open, all its controls."""
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Studio"
+    bl_label = "Mockup"
+    bl_order = 1
+
+    @classmethod
+    def poll(cls, context):
+        return is_mockup(context.scene)
 
     def draw_header(self, context):
         self.layout.label(text="", icon='IMAGE_REFERENCE')
@@ -1511,7 +1535,7 @@ class STUDIO_PT_mockup(Panel):
 
 classes = (StudioMockup, STUDIO_OT_mockup_new, STUDIO_OT_mockup_go, STUDIO_OT_mockup_place, STUDIO_OT_mockup_render,
            STUDIO_OT_mockup_fspy, STUDIO_OT_mockup_front, STUDIO_OT_mockup_krea, STUDIO_OT_mockup_ask,
-           STUDIO_PT_mockup)
+           STUDIO_PT_mockup, STUDIO_PT_mockup_on)
 
 
 def register():

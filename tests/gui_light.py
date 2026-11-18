@@ -222,6 +222,38 @@ def finish_shot():
     shot("8_panel_finish.png")
 
 
+def mockup_make():
+    """The product (the cube) in a photo: the mockup scene, its panel and the photo behind the camera."""
+    import numpy as np
+    shot("8_panel_finish.png")
+    photo = os.path.join(OUT, "photo.png")
+    img = bpy.data.images.new("gui photo", 900, 600)
+    px = np.zeros((600, 900, 4), dtype=np.float32)
+    px[..., 0] = np.linspace(0.25, 0.55, 600)[:, None]
+    px[..., 1] = np.linspace(0.3, 0.5, 900)[None, :]
+    px[..., 2], px[..., 3] = 0.45, 1.0
+    px[290:296] = (0.9, 0.9, 0.9, 1.0)                 # a horizon to line the grid up with
+    img.pixels.foreach_set(px.reshape(-1))
+    img.filepath_raw, img.file_format = photo, 'PNG'
+    img.save()
+    with override():
+        scene = mod("studio.mockup").create(bpy.context, photo)
+        mod("studio.mockup").set_values(scene, on_ground=True, pos_x=0.4, pos_y=0.3, horizon=0.49, turn=25)
+    state["mockup"] = scene.name
+
+
+def mockup_shot():
+    shot("9_mockup.png")
+    win, area, _region = view()
+    scene = win.scene
+    check("mockup: the window shows its scene through its camera, the panel draws",
+          scene.name == state.get("mockup") and area.spaces.active.region_3d.view_perspective == 'CAMERA', scene.name)
+    with override():
+        back = bpy.data.scenes.get(scene.get("studio_mockup_of", ""))
+        mod("studio.mockup").show(bpy.context, back)
+        mod("studio.mockup").remove(scene)
+
+
 def idle():
     """One tick for Blender to draw what the step before changed."""
     for area in view()[0].screen.areas:
@@ -230,7 +262,7 @@ def idle():
 
 STEPS = [splash_away, splash_gone, setup, tool_on, tool_hover, click_press, click_release, placed, ctrl_press,
          ctrl_release, new_light, studio_tab, studio_tab_press, studio_tab_release, idle, panel, idle, camera_tab,
-         idle, idle, camera_shot, idle, idle, material_shot, idle, idle, finish_shot, finish]
+         idle, idle, camera_shot, idle, idle, material_shot, idle, idle, mockup_make, idle, idle, idle, mockup_shot, finish]
 
 
 def tick():
