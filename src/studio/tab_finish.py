@@ -412,17 +412,17 @@ class STUDIO_OT_krea_reference(Operator):
         return {'FINISHED'}
 
 
-def _choices(prompt, model, environment, zoom, view, protect):
+def _choices(prompt, model, environment, zoom, view, protect, region=None):
     """The tab's choices where an argument is None, the model Auto picks, the render and its size.
     environment: the reference pictures (a list, a path or None for the tab's)."""
     wm = bpy.context.window_manager
     refs = references(wm) if environment is None else krea._refs(environment)
     refs = [bpy.path.abspath(r) if not r.startswith("http") else r for r in refs]
-    zoom = krea.zoom_key(zoom or wm.studio_krea_zoom)
-    view = krea.view_key(view or wm.studio_krea_view)
+    zoom = krea.zoom_key(zoom or 'KEEP')          # the camera moves in Blender (Adjust › Camera), not in Krea
+    view = krea.view_key(view or 'KEEP')
     protect = wm.studio_krea_protect if protect is None else bool(protect)
     room = wm.studio_krea_room or has_environment(wm) or environment is not None   # a place to go into
-    used = krea.pick_model((model or wm.studio_krea_model).upper(), bool(refs) and room, zoom, view)
+    used = krea.pick_model((model or wm.studio_krea_model).upper(), bool(refs) and room, zoom, view, region)
     source = current_image(bpy.context.scene)
     if not source or not os.path.isfile(source):
         raise ValueError("Render an image first")
@@ -431,6 +431,26 @@ def _choices(prompt, model, environment, zoom, view, protect):
             raise ValueError("The picture is missing: %s" % path)
     width, height = krea.image_size(source)
     return prompt, used, refs, zoom, view, protect, source, width, height, room
+
+
+def _touches_product(wm):
+    """A hand or a person with the product: they may cover it, so it is not pasted back over them."""
+    return any(getattr(wm, "studio_krea_" + key) for key, _l, _t, protect in krea.SCENE if not protect)
+
+
+def _plan_secure(scene, source, used, protect):
+    """Nano paints the whole picture anew: with "Keep Product" the product is put back from the render."""
+    wm = bpy.context.window_manager
+    mask = ""
+    if used == 'NANO' and protect and not _touches_product(wm):
+        try:
+            folder = os.path.dirname(krea_scene.mask_path())
+            mask = krea_scene.render_mask(scene, source, os.path.join(
+                folder, "secure_%08x.png" % (hash(os.path.normpath(source)) & 0xffffffff)))
+        except (ValueError, OSError, RuntimeError) as exc:
+            print("ID Toolkit: product mask:", exc)
+            mask = ""
+    krea.plan_secure(source, mask)
 
 
 def _scale_and_mask(scene, source, width, height, used, zoom, view, protect):
@@ -446,41 +466,49 @@ def _scale_and_mask(scene, source, width, height, used, zoom, view, protect):
     return scale, mask
 
 
-def refine(scene, prompt, model=None, environment=None, zoom=None, view=None, protect=None):
+def refine(scene, prompt, model=None, environment=None, zoom=None, view=None, protect=None, region=None):
     """Refines the render shown in the Refine tab with the API token; the choices of the tab where an
     argument is None. Returns (result path, model used, width, height)."""
     prompt, used, refs, zoom, view, protect, source, width, height, room = _choices(
-        prompt, model, environment, zoom, view, protect)
+        prompt, model, environment, zoom, view, protect, region)
     if not krea.token():
         raise ValueError("Add your Krea API token in Preferences › Studio (or refine with Claude: Krea plan)")
     if krea.busy():
         raise ValueError("Krea is still working on the last image")
     scale, mask = _scale_and_mask(scene, source, width, height, used, zoom, view, protect)
-    target, used = krea.start(used, prompt, source, width, height, refs, zoom, view, scale, mask, room)
+    _plan_secure(scene, source, used, protect)
+    target, used = krea.start(used, prompt, source, width, height, refs, zoom, view, scale, mask, room, region)
     return target, used, width, height
 
 
 _plan = {}     # the run being prepared with Claude: source, model, size
+_plan_region = {"box": None}     # the marks' box when "With Krea" was sent from the Adjust tab
 
 
-def prepare(scene, prompt, upload_url, model=None, environment=None, zoom=None, view=None, protect=None):
+def prepare(scene, prompt, upload_url, model=None, environment=None, zoom=None, view=None, protect=None,
+            region=None):
     """For Claude with the Krea connector: the full prompt (with the product's true scale), the render, the
     mask and the reference pictures uploaded to `upload_url` (from the connector's get_upload_url).
     Returns {"model": Krea model id, "input": for generate_image, "credits_about", "scale", "size"}."""
+    if region is None:
+        region = _plan_region.get("box")         # the marks of the Adjust tab, when sent from there
     prompt, used, refs, zoom, view, protect, source, width, height, room = _choices(
-        prompt, model, environment, zoom, view, protect)
+        prompt, model, environment, zoom, view, protect, region)
     if not prompt.strip() and not refs and zoom == 'KEEP' and view == 'KEEP':
         raise ValueError("Write what Krea should change")
     scale, mask = _scale_and_mask(scene, source, width, height, used, zoom, view, protect)
     image_url = krea.upload_to(upload_url, source)
     ref_urls = [r if r.startswith("http") else krea.upload_to(upload_url, r) for r in refs[:krea.MAX_REFERENCES]]
     mask_url = krea.upload_to(upload_url, mask) if mask else ""
-    body = krea.request_body(used, prompt, image_url, width, height, ref_urls, zoom, view, scale, mask_url, room)
+    _plan_secure(scene, source, used, protect)
+    body = krea.request_body(used, prompt, image_url, width, height, ref_urls, zoom, view, scale, mask_url, room,
+                             region)
     _plan.clear()
     _plan.update(source=source, model=used, size=[width, height])
     krea.job.update(state="", text="", quote=None)
     return {"model": krea.model_path(used), "key": used, "input": body, "credits_about": krea.UNITS.get(used),
-            "scale": scale, "size": [width, height], "keeps_product": bool(mask)}
+            "scale": scale, "size": [width, height], "keeps_product": bool(mask) or used == 'NANO' and protect,
+            "only_marked": bool(region)}
 
 
 _variants = {"left": 0, "scene": "", "wish": ""}
@@ -500,7 +528,7 @@ def _next_variant():
         return None
     _variants["left"] -= 1
     try:
-        refine(scene, _variants["wish"])
+        refine(scene, _variants["wish"], region=_variants.get("region"))
     except (ValueError, OSError, RuntimeError) as exc:
         print("ID Toolkit: Krea variant:", exc)
         _variants["left"] = 0
@@ -608,6 +636,40 @@ class STUDIO_MT_krea_presets(Menu):
             op.action, op.name = 'DELETE', wm.studio_krea_preset
 
 
+def marks_region(context):
+    """The box of the marks drawn on the picture, when the Adjust tab sends to Krea; else None."""
+    wm = context.window_manager
+    if getattr(wm, "studio_adjust_target", 'BLENDER') != 'KREA' or context.window is None:
+        return None
+    from . import photo_view
+    return photo_view.marks_box(context.window)
+
+
+def estimate(context):
+    """(model Krea will use, about how many credits this click costs)."""
+    wm = context.window_manager
+    refs = references(wm)
+    room = wm.studio_krea_room or has_environment(wm)
+    used = krea.pick_model(wm.studio_krea_model, bool(refs) and room, 'KEEP', 'KEEP', marks_region(context))
+    return used, krea.UNITS.get(used, 150) * max(1, wm.studio_krea_count)
+
+
+def _ask_price(operator, context, event):
+    """More than krea.ASK_ABOVE credits for one click: asked first, with the price."""
+    used, cost = estimate(context)
+    if cost <= krea.ASK_ABOVE:
+        return operator.execute(context)
+    name = dict((k, n) for k, _p, n, _d in krea.MODELS).get(used, used)
+    try:
+        return context.window_manager.invoke_confirm(
+            operator, event, title="Krea: about %d credits" % cost, confirm_text="Make it", icon='WARNING',
+            message="%s%s. Cheaper: Auto with 1 variant (~%d)." % (
+                name, " · %d variants" % context.window_manager.studio_krea_count
+                if context.window_manager.studio_krea_count > 1 else "", krea.UNITS['NANO']))
+    except TypeError:
+        return context.window_manager.invoke_confirm(operator, event)
+
+
 class STUDIO_OT_krea_refine(Operator):
     bl_idname = "studio.krea_refine"
     bl_label = "Refine with Krea"
@@ -618,13 +680,18 @@ class STUDIO_OT_krea_refine(Operator):
     def poll(cls, context):
         return not krea.busy()
 
+    def invoke(self, context, event):
+        return _ask_price(self, context, event)
+
     def execute(self, context):
         wm = context.window_manager
-        _variants.update(left=max(0, wm.studio_krea_count - 1), scene=context.scene.name, wish=wish(wm))
+        region = marks_region(context)
+        _variants.update(left=max(0, wm.studio_krea_count - 1), scene=context.scene.name, wish=wish(wm),
+                         region=region)
         if _variants["left"] and not bpy.app.timers.is_registered(_next_variant):
             bpy.app.timers.register(_next_variant, first_interval=2.0)
         try:
-            target, used, width, height = refine(context.scene, wish(context.window_manager))
+            target, used, width, height = refine(context.scene, wish(context.window_manager), region=region)
         except (ValueError, OSError, RuntimeError) as exc:
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
@@ -644,6 +711,9 @@ class STUDIO_OT_krea_claude(Operator):
     def poll(cls, context):
         return not krea.busy()
 
+    def invoke(self, context, event):
+        return _ask_price(self, context, event)
+
     def execute(self, context):
         wm = context.window_manager
         source = current_image(context.scene)
@@ -652,7 +722,9 @@ class STUDIO_OT_krea_claude(Operator):
             return {'CANCELLED'}
         text_wish = wish(wm)
         refs = references(wm)
-        if not text_wish and not refs and wm.studio_krea_zoom == 'KEEP' and wm.studio_krea_view == 'KEEP':
+        region = marks_region(context)
+        _plan_region["box"] = region
+        if not text_wish and not refs:
             self.report({'WARNING'}, "Write what should change, or press a button above")
             return {'CANCELLED'}
         from .. import core
@@ -670,14 +742,16 @@ class STUDIO_OT_krea_claude(Operator):
                     ", keep it" if wm.studio_krea_scale else ", size may change", width, height))
         except (OSError, ValueError):
             pass
-        lines.append("Keep the product untouched (mask): %s" % ("yes" if wm.studio_krea_protect else "no"))
+        lines.append("Keep the product exactly (put back from the render afterwards): %s"
+                     % ("yes" if wm.studio_krea_protect else "no"))
+        if region:
+            lines.append("Only inside the region I marked on the picture (box %s from the top left, 0-1): "
+                         "api.krea_prepare uses it by itself (Krea 3, regional edit)" % ", ".join("%g" % v for v in region))
         labels = dict((r[0], r[3]) for r in ROLES)
         for role, path in references_with_roles(wm):
             lines.append("Picture (%s): %s" % (labels[role], path))
         if wm.studio_krea_count > 1:
             lines.append("Make %d variants (one after another), each saved next to the render." % wm.studio_krea_count)
-        if wm.studio_krea_zoom != 'KEEP' or wm.studio_krea_view != 'KEEP':
-            lines.append("Camera: framing %s, height %s" % (wm.studio_krea_zoom, wm.studio_krea_view))
         if wm.studio_krea_model != 'AUTO':
             lines.append("Model: %s" % wm.studio_krea_model)
         try:
@@ -821,98 +895,34 @@ def _cost_lines(layout, used, names):
     sub.label(text=text, translate=False)
 
 
-def _draw_krea(layout, context, path):
-    """Refine with Krea, in the order of the work: a preset, then 1 What (the wish, style, what to add),
-    2 Pictures (by what they are for), 3 Camera & Product, 4 Make it (model, variants, price, go)."""
-    wm = context.window_manager
-    row = layout.row(align=True)
-    row.scale_y = 1.2
-    row.menu(STUDIO_MT_krea_presets.bl_idname, text=wm.studio_krea_preset or "Preset", icon='PRESET')
+FAVOURITE_STYLES = ('night', 'outdoor', 'studio', 'lifestyle')     # in the row; the others under "More"
 
-    # 1  What should change
-    box, _head, is_open = section(layout, "krea_what", "1  What", 'TEXT')
-    if is_open:
-        row = box.row(align=True)
-        row.scale_y = 1.3
-        row.prop(wm, "studio_krea_prompt", text="", placeholder="What should change?")
-        col = box.column(align=True)
-        sub = col.row()
-        sub.active = False
-        sub.label(text="Style")
-        grid = col.grid_flow(row_major=True, columns=4, even_columns=True, align=True)
+
+class STUDIO_MT_krea_more(Menu):
+    bl_idname = "STUDIO_MT_krea_more"
+    bl_label = "More for Krea"
+
+    def draw(self, context):
+        layout = self.layout
+        wm = context.window_manager
+        layout.label(text="Style")
         for key, label, _text in STYLES:
-            grid.prop(wm, "studio_krea_style_" + key, text=label, toggle=True)
-        col = box.column(align=True)
-        sub = col.row()
-        sub.active = False
-        sub.label(text="Add to the picture")
-        row = col.row(align=True)
+            if key not in FAVOURITE_STYLES:
+                layout.prop(wm, "studio_krea_style_" + key, text=label)
+        layout.separator()
+        layout.label(text="Add to the picture")
         for key, label, _text, _protect in krea.SCENE:
-            row.prop(wm, "studio_krea_" + key, text=label, toggle=True)
-
-    # 2  Pictures, by what they are for
-    items = references_with_roles(wm)
-    box, head, is_open = section(layout, "krea_pictures", "2  Pictures", 'IMAGE_DATA', default_open=bool(items))
-    if items:
-        sub = head.row()
-        sub.active = False
-        sub.label(text=str(len(items)))
-    if is_open:
-        grid = box.grid_flow(row_major=True, columns=2, even_columns=True, align=True)
+            layout.prop(wm, "studio_krea_" + key, text=label)
+        layout.separator()
+        layout.label(text="A picture for Krea")
         for role, label, icon, _text in ROLES:
-            grid.operator(STUDIO_OT_krea_reference.bl_idname, text=label, icon=icon).role = role
-        if items:
-            from . import render_review
-            roles = dict((r[0], (r[1], r[2])) for r in ROLES)
-            listing = box.column(align=True)
-            for index, (role, ref) in enumerate(items):
-                line = listing.row(align=True)
-                thumb = render_review.thumb(ref)
-                if thumb:
-                    line.label(text="", icon_value=thumb)
-                else:
-                    line.label(text="", icon=roles[role][1])
-                line.label(text="%s · %s" % (roles[role][0], os.path.basename(ref)), translate=False)
-                line.operator(STUDIO_OT_krea_reference.bl_idname, text="", icon='X', emboss=False).remove = index
-        else:
-            sub = box.row()
-            sub.active = False
-            sub.label(text="A place, a mood, the light or product details", icon='INFO')
+            layout.operator(STUDIO_OT_krea_reference.bl_idname, text=label, icon=icon).role = role
 
-    # 3  Camera & Product
-    box, _head, is_open = section(layout, "krea_frame", "3  Camera & Product", 'CAMERA_DATA', default_open=False)
-    if is_open:
-        col = box.column(align=True)
-        row = _labeled(col, "Camera")
-        for target, value, label in (("zoom", 'CLOSER', "Closer"), ("zoom", 'WIDER', "Wider"),
-                                     ("view", 'HIGHER', "Higher"), ("view", 'LOWER', "Lower")):
-            op = row.operator(STUDIO_OT_krea_frame.bl_idname, text=label,
-                              depress=getattr(wm, "studio_krea_" + target) == value)
-            op.target, op.value = target, value
-        row = _labeled(col, "Product")
-        row.prop(wm, "studio_krea_protect", text="Keep Product", toggle=True, icon='MOD_MASK')
-        row.prop(wm, "studio_krea_scale", text="True Size", toggle=True,
-                 icon='LOCKED' if wm.studio_krea_scale else 'UNLOCKED')
-        row.operator(STUDIO_OT_krea_product.bl_idname, text="", icon='RESTRICT_SELECT_OFF',
-                     depress=krea_scene.is_marked(context.scene))
-        _product_info(col, context, path)
 
-    # 4  Make it: model, variants, price, go
-    refs = references(wm)
-    used = krea.pick_model(wm.studio_krea_model, bool(refs) and (wm.studio_krea_room or has_environment(wm)),
-                           wm.studio_krea_zoom, wm.studio_krea_view)
-    names = dict((k, n) for k, _p, n, _d in krea.MODELS)
-    box, _head, _open = section(layout, "krea_make", "4  Make it", 'PLAY')
-    col = box.column(align=True)
-    row = _labeled(col, "Model")
-    row.prop(wm, "studio_krea_model", expand=True)
-    row = _labeled(col, "Variants")
-    for n in (1, 2, 4):
-        row.prop_enum(wm, "studio_krea_count_enum", str(n))
-    _cost_lines(box, used, names)
+def _krea_status(layout):
     state = krea.job["state"]
     if state:
-        line = box.row()
+        line = layout.row()
         line.active = state != "error"
         if krea.busy():
             import time
@@ -926,9 +936,68 @@ def _draw_krea(layout, context, path):
     from .. import core
     status, reply = core.studio_reply('FINISH')
     if status:
-        sub = box.row()
+        sub = layout.row()
         sub.active = False
         sub.label(text=reply[:90], icon='TIME' if status == "working" else 'OUTLINER_DATA_GP_LAYER', translate=False)
+
+
+def _draw_krea(layout, context, path):
+    """Krea, short: the wish, four styles (the rest and "add to the picture" under More), pictures, the
+    product kept, then the price and go. Model and variants under Advanced; the camera moves in Blender
+    (Adjust › Camera), not here. Marks drawn on the picture (Adjust): Krea changes only there."""
+    wm = context.window_manager
+    box = layout.box()
+    head = box.row(align=True)
+    head.label(text="With Krea", icon='BRUSHES_ALL')
+    head.menu(STUDIO_MT_krea_presets.bl_idname, text=wm.studio_krea_preset or "", icon='PRESET')
+    row = box.row(align=True)
+    row.scale_y = 1.3
+    try:
+        row.prop(wm, "studio_krea_prompt", text="", placeholder="What should Krea change?")
+    except TypeError:
+        row.prop(wm, "studio_krea_prompt", text="")
+    row = box.row(align=True)
+    for key, label, _text in STYLES:
+        if key in FAVOURITE_STYLES:
+            row.prop(wm, "studio_krea_style_" + key, text=label, toggle=True)
+    on = [label for key, label, _t in STYLES if key not in FAVOURITE_STYLES and getattr(wm, "studio_krea_style_" + key)]
+    on += [label for key, label, _t, _p in krea.SCENE if getattr(wm, "studio_krea_" + key)]
+    row.menu(STUDIO_MT_krea_more.bl_idname, text="+%d" % len(on) if on else "More", icon='DOWNARROW_HLT')
+    items = references_with_roles(wm)
+    if items:
+        from . import render_review
+        roles = dict((r[0], (r[1], r[2])) for r in ROLES)
+        listing = box.column(align=True)
+        for index, (role, ref) in enumerate(items):
+            line = listing.row(align=True)
+            thumb = render_review.thumb(ref)
+            line.label(text="", icon_value=thumb) if thumb else line.label(text="", icon=roles[role][1])
+            line.label(text="%s · %s" % (roles[role][0], os.path.basename(ref)), translate=False)
+            line.operator(STUDIO_OT_krea_reference.bl_idname, text="", icon='X', emboss=False).remove = index
+    row = box.row(align=True)
+    row.prop(wm, "studio_krea_protect", text="Keep Product", toggle=True, icon='MOD_MASK')
+    row.prop(wm, "studio_krea_scale", text="True Size", toggle=True,
+             icon='LOCKED' if wm.studio_krea_scale else 'UNLOCKED')
+    row.operator(STUDIO_OT_krea_product.bl_idname, text="", icon='RESTRICT_SELECT_OFF',
+                 depress=krea_scene.is_marked(context.scene))
+    if subsection(box, "krea_advanced", "Advanced", default_open=False):
+        col = box.column(align=True)
+        _labeled(col, "Model").prop(wm, "studio_krea_model", expand=True)
+        row = _labeled(col, "Variants")
+        for n in (1, 2, 4):
+            row.prop_enum(wm, "studio_krea_count_enum", str(n))
+        _product_info(col, context, path)
+    used, cost = estimate(context)
+    names = dict((k, n) for k, _p, n, _d in krea.MODELS)
+    line = box.row()
+    line.active = False
+    what = {"REGION": "only in your marks", "NANO": "whole picture, your product put back",
+            "PRECISE": "in place, product masked"}.get(used, "")
+    balance = krea.last_balance()
+    line.label(text="%s · ~%d credits%s%s" % (names.get(used, used), cost, " · %s" % what if what else "",
+                                              " · %g left" % round(balance) if balance is not None else ""),
+               icon='ERROR' if cost > krea.ASK_ABOVE else 'NONE', translate=False)
+    _krea_status(box)
     row = box.row(align=True)
     row.scale_y = 1.5
     row.enabled = bool(path)
@@ -1029,7 +1098,7 @@ classes = (STUDIO_OT_look_saved, STUDIO_OT_look_save, STUDIO_MT_look_presets, ST
            STUDIO_OT_edit_saved, STUDIO_OT_edit_look, STUDIO_OT_edit_save_preset, STUDIO_MT_edit_presets, STUDIO_OT_edit_export, STUDIO_OT_krea_product,
            STUDIO_OT_krea_frame, STUDIO_OT_krea_reference,
            STUDIO_OT_krea_refine, STUDIO_OT_krea_claude,  STUDIO_OT_krea_usage, STUDIO_OT_krea_token,
-           STUDIO_OT_krea_preset, STUDIO_MT_krea_presets,
+           STUDIO_OT_krea_preset, STUDIO_MT_krea_presets, STUDIO_MT_krea_more,
            STUDIO_PT_finish_settings, STUDIO_PT_finish)
 
 

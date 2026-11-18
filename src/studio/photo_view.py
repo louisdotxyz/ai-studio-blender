@@ -408,6 +408,28 @@ def marks(window):
     return data, count
 
 
+def marks_box(window, pad=0.04):
+    """The box around the marks on the picture: (x, y from the TOP, width, height), 0-1 of the picture
+    (Krea's regions); None without marks. Marks are stored in the picture's own coordinates (0-1)."""
+    data, count = marks(window)
+    if not count:
+        return None
+    xs, ys = [], []
+    for layer in data.layers:
+        for frame in layer.frames:
+            for stroke in frame.strokes:
+                for point in stroke.points:
+                    xs.append(point.co[0])
+                    ys.append(point.co[1])
+    if not xs:
+        return None
+    x0, x1 = max(0.0, min(xs) - pad), min(1.0, max(xs) + pad)
+    y0, y1 = max(0.0, min(ys) - pad), min(1.0, max(ys) + pad)
+    if x1 - x0 < 0.01 or y1 - y0 < 0.01:
+        return None
+    return tuple(round(v, 4) for v in (x0, 1.0 - y1, x1 - x0, y1 - y0))
+
+
 def clear_marks(window):
     data, _count = marks(window)
     if data is not None:
@@ -440,6 +462,9 @@ class STUDIO_OT_photo_draw(Operator):
             space = area.spaces.active
             if space.ui_mode != 'VIEW':
                 space.ui_mode = 'VIEW'
+            ts = context.scene.tool_settings
+            if hasattr(ts, "annotation_stroke_placement_image_editor"):
+                ts.annotation_stroke_placement_image_editor = 'IMAGE'    # marks stay on the picture
             with _override(window, area):
                 # off: back to the Image Editor's own tool of the view mode (there is no Select Box there,
                 # so "Stop Drawing" did nothing before)
@@ -604,7 +629,7 @@ class STUDIO_OT_photo_send(Operator):
         return {'FINISHED'}
 
 
-def draw_adjust_bar(layout, context, path):
+def draw_adjust_bar(layout, context, path, send=True):
     """Adjust: one bar of icons – [✎ draw] [undo] [clear] [color] [send the marks] – the chat below."""
     _data, count = marks(context.window)
     row = layout.row(align=True)
@@ -624,9 +649,10 @@ def draw_adjust_bar(layout, context, path):
     info = row.row(align=True)
     info.active = False
     info.label(text="%d marks" % count if count else ("Draw on the picture" if on else ""))
-    send = row.row(align=True)
-    send.enabled = count > 0 and not _send["step"]
-    send.operator(STUDIO_OT_photo_send.bl_idname, text="", icon='EXPORT').path = path or ""
+    if send:
+        button = row.row(align=True)
+        button.enabled = count > 0 and not _send["step"]
+        button.operator(STUDIO_OT_photo_send.bl_idname, text="", icon='EXPORT').path = path or ""
 
 
 def draw_notes(layout, context, path):
@@ -664,6 +690,115 @@ def draw_notes(layout, context, path):
     row.operator(STUDIO_OT_photo_send.bl_idname, icon='EXPORT').path = path or ""
 
 
+# ------------------------------------------------------------------ camera: in Blender, then a new preview
+
+CAMERA_MOVES = (('CLOSER', "Closer", "The camera nearer to the product (15 %)", 'ZOOM_IN'),
+                ('WIDER', "Wider", "The camera further from the product (15 %)", 'ZOOM_OUT'),
+                ('HIGHER', "Higher", "The camera higher around the product, looking down a little more (8°)", 'TRIA_UP'),
+                ('LOWER', "Lower", "The camera lower around the product, looking up a little more (8°)", 'TRIA_DOWN'),
+                ('LEFT', "Left", "The camera around the product to the left (10°)", 'TRIA_LEFT'),
+                ('RIGHT', "Right", "The camera around the product to the right (10°)", 'TRIA_RIGHT'))
+
+
+def product_center(scene):
+    from . import krea_scene
+    from mathutils import Vector
+    bounds = krea_scene.product_bounds(scene)
+    return (bounds[0] + bounds[1]) / 2 if bounds else Vector((0.0, 0.0, 0.0))
+
+
+def move_camera(camera, center, move):
+    """Moves the real camera (Blender, not Krea): nearer / further along its view to the product, or around
+    the product up, down, left, right, still looking at the same point of it."""
+    from math import radians
+    from mathutils import Matrix, Vector
+    from . import orbit
+    world = camera.matrix_world.copy()
+    pos = world.translation.copy()
+    forward = -(world.to_3x3() @ Vector((0.0, 0.0, 1.0))).normalized()
+    # the point of the product the camera looks at (nearest point on its view line to the product's middle)
+    aim = pos + forward * max(0.05, (center - pos).dot(forward))
+    offset = pos - aim
+    if move in {'CLOSER', 'WIDER'}:
+        moved = offset * (0.85 if move == 'CLOSER' else 1.0 / 0.85)
+        matrix = Matrix.Translation(moved - offset) @ world
+    else:
+        if move in {'HIGHER', 'LOWER'}:
+            axis = (world.to_3x3() @ Vector((1.0, 0.0, 0.0))).normalized()
+            angle = radians(8.0)
+            if ((Matrix.Rotation(angle, 3, axis) @ offset).z > offset.z) != (move == 'HIGHER'):
+                angle = -angle
+        else:
+            axis = Vector((0.0, 0.0, 1.0))
+            angle = radians(10.0) * (-1 if move == 'LEFT' else 1)
+        moved = Matrix.Rotation(angle, 3, axis) @ offset
+        if abs(moved.normalized().z) > 0.985:            # never straight over or under the product
+            return False
+        # turned around the point it looks at: the framing and the camera's own roll stay
+        matrix = Matrix.Translation(aim) @ Matrix.Rotation(angle, 4, axis) @ Matrix.Translation(-aim) @ world
+    orbit.put(camera, matrix, moved.length)
+    return True
+
+
+class STUDIO_OT_photo_camera(Operator):
+    bl_idname = "studio.photo_camera"
+    bl_label = "Camera"
+    bl_description = "Moves this render's camera in Blender (the product stays exactly yours) and renders a preview"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    move: EnumProperty(items=[(k, n, d, i, n_) for n_, (k, n, d, i) in enumerate(CAMERA_MOVES)])
+    path: bpy.props.StringProperty()
+
+    @classmethod
+    def description(cls, _context, props):
+        return next((d for k, _n, d, _i in CAMERA_MOVES if k == props.move), cls.bl_description) + \
+            ", then a new preview of it"
+
+    def execute(self, context):
+        from . import krea_scene
+        scene = context.scene
+        camera = krea_scene.render_camera(scene, self.path) if self.path else scene.camera
+        if camera is None:
+            self.report({'ERROR'}, "No camera for this picture")
+            return {'CANCELLED'}
+        move_camera(camera, product_center(scene), self.move)
+        try:
+            bpy.ops.studio.add(camera=camera.name, quality='LOW')
+        except RuntimeError as ex:
+            self.report({'WARNING'}, "Camera moved; render: %s" % ex)
+        return {'FINISHED'}
+
+
+def draw_adjust(layout, context, path):
+    """Adjust: [In Blender | With Krea], marks on the picture, the camera (Blender), and for Krea its few
+    settings. In Blender the chat below takes what you write; with Krea the marks are where it may change."""
+    wm = context.window_manager
+    row = layout.row(align=True)
+    row.scale_y = 1.2
+    row.prop(wm, "studio_adjust_target", expand=True)
+    krea_on = wm.studio_adjust_target == 'KREA'
+    draw_adjust_bar(layout, context, path, send=not krea_on)
+    _data, count = marks(context.window)
+    hint = layout.row()
+    hint.active = False
+    if krea_on:
+        hint.label(text="Krea changes only inside your marks" if count else
+                   "No marks: Krea makes the whole picture, your product stays", icon='INFO')
+    else:
+        hint.label(text="Mark it, write below what should change (free)" if not count else
+                   "%d marks: write below, or send them ⤴" % count, icon='INFO')
+    box = layout.box()
+    head = box.row()
+    head.label(text="Camera (in Blender, then a preview)", icon='CAMERA_DATA')
+    grid = box.grid_flow(row_major=True, columns=3, even_columns=True, align=True)
+    for key, label, _d, icon in CAMERA_MOVES:
+        op = grid.operator(STUDIO_OT_photo_camera.bl_idname, text=label, icon=icon)
+        op.move, op.path = key, path or ""
+    if krea_on:
+        from . import tab_finish
+        tab_finish._draw_krea(layout, context, path)
+
+
 # ------------------------------------------------------------------ export
 
 SIZES = [('ORIGINAL', "Original", "As it is"), ('3840', "4K", "Longest side 3840 px"),
@@ -695,6 +830,50 @@ def export(paths, fmt='JPEG', size='ORIGINAL', quality=92):
     return written
 
 
+def export_set(paths, folder, size=2560):
+    """The good pictures as one set for a presentation: 01_name.jpg, 02_… (longest side `size`) into
+    `folder`, and an overview of all of them (00_overview.jpg). Returns the files written."""
+    import numpy as np
+    from . import image_edit, mockup_image
+    os.makedirs(folder, exist_ok=True)
+    written, thumbs = [], []
+    for number, path in enumerate([p for p in paths if p and os.path.isfile(p)], 1):
+        stem = os.path.splitext(os.path.basename(path))[0]
+        target = os.path.join(folder, "%02d_%s.jpg" % (number, stem))
+        image = bpy.data.images.load(path, check_existing=False)
+        try:
+            w, h = image.size
+            if max(w, h) > size:
+                f = size / max(w, h)
+                image.scale(max(1, round(w * f)), max(1, round(h * f)))
+            image.file_format = 'JPEG'
+            image.save(filepath=target, quality=92)
+            written.append(target)
+        finally:
+            bpy.data.images.remove(image)
+        pixels, (w, h), _f = image_edit._read(path, 640)
+        thumbs.append(pixels.reshape(h, w, 4))
+    if thumbs:                                          # the overview: three in a row on dark grey
+        cols = min(3, len(thumbs))
+        cell_w, cell_h, gap = 640, 400, 24
+        rows = (len(thumbs) + cols - 1) // cols
+        W, H = cols * cell_w + (cols + 1) * gap, rows * cell_h + (rows + 1) * gap
+        sheet = np.full((H, W, 4), 0.03, dtype=np.float32)
+        sheet[..., 3] = 1.0
+        for i, thumb in enumerate(thumbs):
+            h, w = thumb.shape[:2]
+            f = min(cell_w / w, cell_h / h)
+            small = mockup_image.resize(thumb, max(1, int(w * f)), max(1, int(h * f)))
+            r, c = rows - 1 - i // cols, i % cols                 # row 0 at the bottom
+            y = gap + r * (cell_h + gap) + (cell_h - small.shape[0]) // 2
+            x = gap + c * (cell_w + gap) + (cell_w - small.shape[1]) // 2
+            sheet[y:y + small.shape[0], x:x + small.shape[1], :3] = small[..., :3]
+        overview = os.path.join(folder, "00_overview.png")
+        image_edit._write(sheet.reshape(-1), (W, H), overview)
+        written.insert(0, overview)
+    return written
+
+
 class STUDIO_OT_photo_export(Operator):
     bl_idname = "studio.photo_export"
     bl_label = "Export"
@@ -702,13 +881,35 @@ class STUDIO_OT_photo_export(Operator):
                       "size, into the folder \"Export\" next to them (the renders stay as they are)")
     bl_options = {'INTERNAL'}
 
-    which: EnumProperty(items=[('THIS', "This Picture", ""), ('STARS', "Rated", "")], default='THIS',
-                        options={'HIDDEN', 'SKIP_SAVE'})
+    which: EnumProperty(items=[('THIS', "This Picture", ""), ('STARS', "Rated", ""), ('SET', "Set", "")],
+                        default='THIS', options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, _context, props):
+        if props.which == 'SET':
+            return ("The good pictures (✓) as a set for a presentation: numbered JPEGs (2560 px) and an overview, "
+                    "in a folder of their own (Export/Set <date>)")
+        return cls.bl_description
 
     def execute(self, context):
         from . import render_review, runner, tab_queue
         wm = context.window_manager
         images = runner.queue_images(context.scene, limit=400)
+        if self.which == 'SET':
+            import time
+            good = [p for p in images if render_review.rating(p) >= render_review.GOOD]
+            if not good:
+                self.report({'WARNING'}, "Mark the good pictures with ✓ first (Sort)")
+                return {'CANCELLED'}
+            folder = os.path.join(os.path.dirname(good[0]), "Export", "Set %s" % time.strftime("%Y-%m-%d %H%M"))
+            try:
+                written = export_set(list(reversed(good)), folder)    # the oldest first: the order of the work
+            except (OSError, RuntimeError, ValueError) as ex:
+                self.report({'ERROR'}, "Export: %s" % ex)
+                return {'CANCELLED'}
+            self.report({'INFO'}, "Set of %d pictures in %s" % (len(written) - 1, folder))
+            bpy.ops.studio.render_reveal(path=written[0])
+            return {'FINISHED'}
         if self.which == 'THIS':
             paths = [tab_queue._selected_image(images)]
         else:
@@ -738,10 +939,13 @@ def draw_export(layout, context, path):
     sub.operator(STUDIO_OT_photo_export.bl_idname, text="This Picture", icon='EXPORT').which = 'THIS'
     row.operator(STUDIO_OT_photo_export.bl_idname, text="All Rated", icon='SOLO_ON').which = 'STARS'
     row.prop(wm, "studio_export_stars", text="")
+    row = layout.row(align=True)
+    row.scale_y = 1.3
+    row.operator(STUDIO_OT_photo_export.bl_idname, text="Presentation Set (✓)", icon='PRESENTATION').which = 'SET'
 
 
 classes = (STUDIO_OT_photo_layout, STUDIO_OT_photo_compare, STUDIO_OT_photo_export, STUDIO_OT_photo_fit,
-           STUDIO_OT_photo_draw, STUDIO_OT_photo_send)
+           STUDIO_OT_photo_draw, STUDIO_OT_photo_send, STUDIO_OT_photo_camera)
 
 
 def register():
@@ -757,9 +961,17 @@ def register():
     wm.studio_photo_tab = EnumProperty(
         name="Tab", options={'SKIP_SAVE'}, default='SORT',
         items=[('SORT', "Sort", "Rate, sort and compare the renders", 'SORTSIZE', 0),
-               ('ADJUST', "Adjust", "Draw on the picture and write a note: Claude changes the scene", 'GREASEPENCIL', 1),
-               ('LOOK', "Look", "All settings of the look: exposure, colour, glow, effects", 'COLOR', 2),
-               ('MOCKUP', "Mockup", "Krea and the product in a photo", 'IMAGE_REFERENCE', 3)])
+               ('ADJUST', "Adjust", "Mark on the picture what should change: in Blender (free) or with Krea; "
+                "the camera moves in Blender", 'GREASEPENCIL', 1),
+               ('LOOK', "Look", "Light and colour of this picture", 'COLOR', 2),
+               ('MOCKUP', "Mockup", "Your product into a photo of your own: placed, rendered, blended in",
+                'IMAGE_REFERENCE', 3)])
+    wm.studio_adjust_target = EnumProperty(
+        name="Change", options={'SKIP_SAVE'}, default='BLENDER',
+        items=[('BLENDER', "In Blender", "Claude changes the scene and renders again: free, the product stays yours",
+                'BLENDER', 0),
+               ('KREA', "With Krea", "Krea paints the change (credits): only inside your marks, or the whole picture "
+                "with your product put back", 'BRUSHES_ALL', 1)])
     wm.studio_photo_note = bpy.props.StringProperty(
         name="Note", description="What should change (Claude gets it with the picture and your marks)",
         options={'SKIP_SAVE'})
@@ -781,7 +993,7 @@ def unregister():
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
     wm = bpy.types.WindowManager
-    for name in ("studio_compare", "studio_compare_split", "studio_photo_tab", "studio_photo_note",
+    for name in ("studio_compare", "studio_compare_split", "studio_photo_tab", "studio_photo_note", "studio_adjust_target",
                  "studio_export_format", "studio_export_size",
                  "studio_export_stars"):
         delattr(wm, name)

@@ -325,6 +325,50 @@ def _tab(name, picture):
     return step, snap
 
 
+def _image_point(fx, fy):
+    """Window coordinates of a point of the picture (fx, fy: 0-1 from the bottom left)."""
+    win, area = _photo()
+    region = next(r for r in area.regions if r.type == 'WINDOW')
+    x, y = region.view2d.view_to_region(fx, fy, clip=False)
+    return win, region, region.x + x, region.y + y
+
+
+def photo_mark_on():
+    """Adjust › With Krea: the pen on, then a stroke over the middle of the picture (simulated mouse)."""
+    wm = bpy.context.window_manager
+    wm.studio_photo_tab, wm.studio_adjust_target = 'ADJUST', 'KREA'
+    win, area = _photo()
+    region = next(r for r in area.regions if r.type == 'WINDOW')
+    with bpy.context.temp_override(window=win, screen=win.screen, area=area, region=region):
+        bpy.ops.studio.photo_draw(action='PEN')
+    win, _r, x, y = _image_point(0.4, 0.4)
+    win.event_simulate(type='MOUSEMOVE', value='NOTHING', x=int(x), y=int(y))
+
+
+def photo_mark_press():
+    win, _r, x, y = _image_point(0.4, 0.4)
+    win.event_simulate(type='LEFTMOUSE', value='PRESS', x=int(x), y=int(y))
+    for f in (0.45, 0.5, 0.55, 0.6):
+        win, _r, x, y = _image_point(f, f)
+        win.event_simulate(type='MOUSEMOVE', value='NOTHING', x=int(x), y=int(y))
+
+
+def photo_mark_release():
+    win, _r, x, y = _image_point(0.6, 0.6)
+    win.event_simulate(type='LEFTMOUSE', value='RELEASE', x=int(x), y=int(y))
+
+
+def photo_mark_check():
+    win, _area = _photo()
+    pv, tf = mod("studio.photo_view"), mod("studio.tab_finish")
+    box = pv.marks_box(win)
+    with bpy.context.temp_override(window=win, screen=win.screen):
+        used, cost = tf.estimate(bpy.context)
+    check("adjust: a stroke on the picture is Krea's region (only there, ~77 credits)",
+          box is not None and abs(box[0] - 0.36) < 0.06 and abs(box[1] - 0.36) < 0.06 and abs(box[2] - 0.28) < 0.08
+          and used == 'REGION' and cost <= 100, (box, used, cost))
+
+
 def photo_send():
     """Adjust: a note goes to the chat with a screenshot of the picture, without the sidebar."""
     win, area = _photo()
@@ -361,7 +405,8 @@ def idle():
 STEPS = [splash_away, splash_gone, setup, tool_on, tool_hover, click_press, click_release, placed, ctrl_press,
          ctrl_release, new_light, studio_tab, studio_tab_press, studio_tab_release, idle, panel, idle, camera_tab,
          idle, idle, camera_shot, idle, idle, material_shot, idle, idle, mockup_make, idle, idle, idle, mockup_shot, idle, photo_open, idle,
-         photo_tidy, idle, idle, photo_shot, idle, photo_fit, idle, photo_fit_check]
+         photo_tidy, idle, idle, photo_shot, idle, photo_fit, idle, photo_fit_check, photo_mark_on, idle,
+         photo_mark_press, photo_mark_release, idle, photo_mark_check]
 for _name, _pic in (('ADJUST', "11_adjust.png"), ('LOOK', "12_look.png"), ('MOCKUP', "13_mockup.png"),
                     ('SORT', "14_sort.png")):
     _step, _snap = _tab(_name, _pic)

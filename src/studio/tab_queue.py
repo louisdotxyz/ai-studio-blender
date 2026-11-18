@@ -1350,9 +1350,9 @@ def _draw_pick(layout, context, images, path):
 
 class STUDIO_PT_review(Panel):
     """The Photo workspace's one sidebar (Image Editor › Studio); the picked picture is big next to it.
-    Four tabs, the steps of the work: Sort (rate, sort, compare, export) · Adjust (draw on the picture,
-    a note, send it to Claude) · Look (all settings of the look and of this picture) · Mockup (Krea and
-    the product in a photo). The picked picture stays on top in all of them."""
+    Four tabs, the steps of the work: Sort (mark good and bad, sort, compare) · Adjust (mark what should
+    change: in Blender for free, or with Krea; the camera moves in Blender) · Look (light and colour of
+    this picture) · Mockup (the product into a photo of your own). Export is in the top bar."""
     bl_space_type = 'IMAGE_EDITOR'
     bl_region_type = 'UI'
     bl_category = "Studio"
@@ -1388,13 +1388,13 @@ class STUDIO_PT_review(Panel):
             draw_sort_head(layout, context)
             _draw_overview(layout, context, images, path)
         elif tab == 'ADJUST':
-            photo_view.draw_adjust_bar(layout, context, path)     # the chat follows below (ui_panel)
+            photo_view.draw_adjust(layout, context, path)  # In Blender: the chat follows below (ui_panel)
         elif tab == 'LOOK':
             # Only this picture's light and colour: the look of the next renders (compositor) is in the
             # Camera tab of the 3D view – here it changed the viewport, not the picture
             tab_finish._draw_adjust(layout, context, path)
-        else:
-            tab_finish._draw_krea(layout, context, path)
+        else:                                            # the product into a photo of your own
+            mockup.draw(layout.box(), context)
 
 
 class STUDIO_PT_render_queue(_SidebarPanel, Panel):

@@ -1025,6 +1025,65 @@ def photo_workspace_tools():
 
 
 @section
+def photo_adjust_tools():
+    """Adjust and Krea: the camera moves in Blender, Krea only in the marks or with the product put back,
+    a set for a presentation."""
+    import numpy as np
+    from mathutils import Vector
+    pv, mock, krea = mod("studio.photo_view"), mod("studio.mockup"), mod("studio.krea")
+    # the camera: nearer by 15 %, higher around the product, still looking at the same point
+    bpy.ops.object.camera_add(location=(0.0, -4.0, 1.0))
+    cam = bpy.context.active_object
+    cam.rotation_euler = (1.5707963, 0.0, 0.0)
+    center = Vector((0.0, 0.0, 1.0))
+    pv.move_camera(cam, center, 'CLOSER')
+    bpy.context.view_layer.update()
+    near = (cam.matrix_world.translation - center).length
+    pv.move_camera(cam, center, 'HIGHER')
+    bpy.context.view_layer.update()
+    pos = cam.matrix_world.translation
+    forward = -(cam.matrix_world.to_3x3() @ Vector((0.0, 0.0, 1.0))).normalized()
+    check("adjust: Closer brings the camera 15 % nearer, Higher lifts it around the product, still aimed at it",
+          abs(near - 3.4) < 0.01 and pos.z > 1.3 and forward.dot((center - pos).normalized()) > 0.999,
+          (round(near, 3), tuple(round(v, 2) for v in pos)))
+    bpy.data.objects.remove(cam)
+    # Krea: Auto takes Region with marks, else Nano (the cheapest); the requests as the models want them
+    picks = (krea.pick_model('AUTO'), krea.pick_model('AUTO', region=(0.1, 0.2, 0.3, 0.3)), krea.pick_model('PRECISE'))
+    region = krea.request_body('REGION', "a red cap", "https://x/a.png", 1600, 900, region=(0.1, 0.2, 0.3, 0.3))
+    nano = krea.request_body('NANO', "at night", "https://x/a.png", 1600, 900)
+    check("krea: Auto = Nano (~44) or, with marks, only there (Krea 3 regional); requests in the models' fields",
+          picks == ('NANO', 'REGION', 'PRECISE') and region["regional_edit"] and region["regions"][0]["x"] == 0.1
+          and region["aspect_ratio"] == "16:9" and "width" not in nano and nano["thinking_level"] == "minimal"
+          and krea.model_path('NANO') == "google/nano-banana-2.1" and krea.UNITS['NANO'] < krea.ASK_ABOVE,
+          (picks, sorted(nano)))
+    # the product put back after Krea: where the mask is black the render's pixels come back
+    src, res, cut = (os.path.join(TMP, n) for n in ("ka_src.png", "ka_res.png", "ka_mask.png"))
+    base = np.zeros((120, 160, 4), dtype=np.float32)
+    base[..., 3] = 1.0
+    mine = base.copy()
+    mine[40:80, 60:100, :3] = (0.9, 0.2, 0.1)                    # the product: red
+    mine[..., 2] += np.linspace(0, 0.3, 160)[None, :]            # some structure for the alignment
+    theirs = mine.copy()
+    theirs[40:80, 60:100, :3] = (0.1, 0.8, 0.1)                  # Krea painted it green
+    theirs[:30, :, :3] += 0.2                                    # and changed the sky
+    mask = np.ones_like(base)
+    mask[40:80, 60:100, :3] = 0.0
+    for path, arr in ((src, mine), (res, theirs), (cut, mask)):
+        mock._write(arr, path)
+    krea.plan_secure(src, cut)
+    note = krea.secure(src, res)
+    got = mock._read(res)
+    check("krea: after Nano the product is yours again, Krea's change around it stays",
+          got[60, 80, 0] > 0.8 and got[60, 80, 1] < 0.35 and got[10, 10, 0] > 0.15 and note, (note, got[60, 80, :3]))
+    # a set for a presentation: numbered pictures and an overview
+    folder = os.path.join(TMP, "set_test")
+    files = pv.export_set([src, res], folder, size=100)
+    check("export: a presentation set (00_overview, 01_…, 02_…), longest side as chosen",
+          len(files) == 3 and os.path.basename(files[1]).startswith("01_") and max(krea.image_size(files[1])) == 100
+          and os.path.isfile(files[0]), [os.path.basename(f) for f in files])
+
+
+@section
 def mockup_photo():
     """The product in a photo: a scene of its own, the camera moves (never the product), montage, Krea."""
     import numpy as np

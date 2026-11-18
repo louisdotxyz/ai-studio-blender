@@ -31,14 +31,16 @@ TOKENS_URL = "https://www.krea.ai/app/api/tokens"
 USAGE_URL = "https://www.krea.ai/app/api/usage"
 # key: (model path, label, what it is good for)
 MODELS = (
-    ('AUTO', "", "Auto", "Precise when something is added to the picture as it is; Free for a new environment, "
-     "zooming out or another perspective"),
+    ('AUTO', "", "Auto", "Marks on the picture: only there (Region, ~77 credits); else the whole picture anew with "
+     "Nano Banana 2.1 (~44), your product put back exactly afterwards"),
     ('PRECISE', "ideogram/ideogram-4.5-precise", "Precise",
      "Ideogram 4.5 Precise: edits the picture in place; keeps the product, the framing and the size exactly. "
      "Best for a hand, props, a person next to it"),
-    ('NANO', "google/nano-banana-pro", "Free",
-     "Nano Banana Pro: paints the picture anew; can change the environment, zoom out or the perspective. "
-     "The product can shift a little; the result is scaled back to the render's size"),
+    ('NANO', "google/nano-banana-2.1", "Free",
+     "Nano Banana 2.1: paints the picture anew (a new place, mood, light); the product is put back from your "
+     "render afterwards, so it stays exactly yours. The cheapest"),
+    ('REGION', "krea/krea-3", "Region",
+     "Krea 3, only inside what you marked on the picture: the rest stays pixel for pixel"),
 )
 ZOOMS = (('CLOSER', "Closer", "Closer to the product: it fills more of the picture"),
          ('KEEP', "Same", "The same framing"),
@@ -90,9 +92,10 @@ SCENE = (
     ('props', "Props", "Add a few tasteful props around the product, out of focus, matching the existing light.", True),
 )
 # What Krea charges for one picture (its own price list, krea.ai/app/api/pricing); None = not published
-PRICES = {'PRECISE': None, 'NANO': 0.15}
+PRICES = {'PRECISE': None, 'NANO': None, 'REGION': None}
 # Compute units of the plan for one picture (Krea's quotes, Nov 2026); the real price comes from the preflight
-UNITS = {'PRECISE': 163, 'NANO': 111}
+UNITS = {'PRECISE': 163, 'NANO': 44, 'REGION': 77}
+ASK_ABOVE = 100        # credits: more than this for one click is asked first
 KEEP = " Keep the product exactly as it is: same shape, proportions, materials, colors, details and text."
 KEEP_FRAME = " Keep the camera angle and the framing."
 POLL = 2.0
@@ -110,13 +113,13 @@ def model_path(key):
     return next((m[1] for m in MODELS if m[0] == key), MODELS[1][1])
 
 
-def pick_model(key, environment="", zoom='KEEP', view='KEEP'):
-    """environment: True when the product goes into a new place (references with "Room")."""
-    """Auto: Precise edits in place (product and size exact); a new environment, zooming out or another
-    perspective needs the whole picture anew: Free."""
+def pick_model(key, environment="", zoom='KEEP', view='KEEP', region=None):
+    """The model for `key` ('AUTO' chooses). region: the box of the marks drawn on the picture."""
     if key != 'AUTO':
         return key
-    return 'NANO' if environment or zoom_key(zoom) != 'KEEP' or view_key(view) != 'KEEP' else 'PRECISE'
+    # Auto: marks on the picture → only there (Region); else the whole picture anew with the cheapest
+    # model, the product put back from the render afterwards (secure). Precise only when chosen.
+    return 'REGION' if region else 'NANO'
 
 
 def full_prompt(prompt, environment="", zoom='KEEP', view='KEEP', scale="", room=True):
@@ -207,23 +210,34 @@ def result_path(source):
 
 
 def nearest_ratio(width, height):
-    """The aspect ratio Krea's models know that is closest to width : height."""
+    """The aspect ratio Krea's models know that is closest to width : height (Krea 3's list, the shortest)."""
     ratios = ("21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16")
     want = width / max(height, 1)
     return min(ratios, key=lambda r: abs(int(r.split(":")[0]) / int(r.split(":")[1]) - want))
 
 
+REGION_TEXT = (" Change only what is inside the marked region, keeping everything else exactly the same.")
+
+
 def request_body(key, prompt, image_url, width, height, environment_url="", zoom='KEEP', view='KEEP',
-                 scale="", mask_url="", room=True):
+                 scale="", mask_url="", room=True, region=None):
     """The JSON for one model; the render's size goes with it where the model takes one, an environment
     picture as the second image (Free) or as a reference (Precise); the mask (white = Krea may change it,
     the product black) only for Precise, which edits in place."""
     refs = _refs(environment_url)
     text = full_prompt(prompt, bool(refs), zoom, view, scale, room)
+    resolution = "2K" if max(width, height) > 1100 else "1K"
+    if key == 'REGION':                 # Krea 3: only the marked box changes, the rest pixel for pixel
+        x, y, w, h = region or (0.0, 0.0, 1.0, 1.0)
+        return {"prompt": text + REGION_TEXT, "image_urls": [image_url] + refs[:MAX_REFERENCES],
+                "thinking_mode": "fast", "resolution": resolution, "aspect_ratio": nearest_ratio(width, height),
+                "regional_edit": True,
+                "regions": [{"label": "marked", "x": x, "y": y, "width": w, "height": h, "image_idx": 0,
+                             "note": prompt.strip()[:600] or "The change asked for."}]}
     if key == 'NANO':
         return {"prompt": text, "image_urls": [image_url] + refs[:MAX_REFERENCES],
-                "width": width, "height": height, "aspect_ratio": nearest_ratio(width, height),
-                "resolution": "2K" if max(width, height) > 1100 else "1K"}
+                "aspect_ratio": nearest_ratio(width, height), "resolution": resolution,
+                "thinking_level": "minimal"}
     body = {"prompt": text, "image_url": image_url, "quality": "high"}
     if mask_url:
         body["mask_url"] = mask_url
@@ -347,7 +361,8 @@ def run_job(key, path, body, target, model, width, height):
     job.update(state="loaded", result=target)
 
 
-def _work(key, model, prompt, source, width, height, target, environment, zoom, view, scale="", mask="", room=True):
+def _work(key, model, prompt, source, width, height, target, environment, zoom, view, scale="", mask="", room=True,
+          region=None):
     try:
         job["state"] = "upload"
         image_url = upload(key, source)
@@ -355,14 +370,14 @@ def _work(key, model, prompt, source, width, height, target, environment, zoom, 
         mask_url = upload(key, mask) if mask and model == 'PRECISE' else ""
         job["state"] = "working"
         body = request_body(model, prompt, image_url, width, height, environment_url, zoom, view, scale, mask_url,
-                            room)
+                            room, region)
         run_job(key, model_path(model), body, target, model, width, height)
     except Exception as exc:         # everything goes to the panel as text
         job.update(state="error", text=str(exc))
 
 
 def start(model, prompt, source, width, height, environment="", zoom='KEEP', view='KEEP', scale="", mask="",
-          room=True):
+          room=True, region=None):
     """Starts refining `source` (a render file) in the background with the API token. scale: the sentence
     about the product's true size; mask: a mask file (Precise only). Returns (result path, model used)."""
     key = token()
@@ -378,11 +393,11 @@ def start(model, prompt, source, width, height, environment="", zoom='KEEP', vie
             raise ValueError("The picture is missing: %s" % path)
     if not prompt.strip() and not environment and zoom_key(zoom) == 'KEEP' and view_key(view) == 'KEEP':
         raise ValueError("Write what Krea should change")
-    model = pick_model(model, bool(environment) and room, zoom, view)
+    model = pick_model(model, bool(environment) and room, zoom, view, region)
     target = result_path(source)
     job.update(state="upload", text="", source=source, result="", started=time.monotonic(), model=model, quote=None)
     thread = threading.Thread(target=_work, args=(key, model, prompt, source, width, height, target, environment,
-                                                  zoom, view, scale, mask, room), daemon=True)
+                                                  zoom, view, scale, mask, room, region), daemon=True)
     job["thread"] = thread
     thread.start()
     if not bpy.app.timers.is_registered(_finish):
@@ -462,6 +477,52 @@ def image_size(path):
         bpy.data.images.remove(image)
 
 
+# ------------------------------------------------------------------ after Krea: the product, before / after
+
+_secure = {}      # render → its product mask (black = product): the product is put back from the render
+
+
+def plan_secure(source, mask):
+    """After Krea, put the product of `source` back from the render (mask: black = product)."""
+    if mask and os.path.isfile(mask):
+        _secure[os.path.normpath(source)] = mask
+    else:
+        _secure.pop(os.path.normpath(source), None)
+
+
+def secure(source, result):
+    """The product in Krea's picture replaced by the render's (moved back if Krea slid it). Returns a note
+    for the panel ("" when nothing was planned)."""
+    mask = _secure.pop(os.path.normpath(source), "")
+    if not mask or not os.path.isfile(mask):
+        return ""
+    from . import mockup, mockup_image
+    got, mine, cut = mockup._read(result), mockup._read(source), mockup._read(mask)
+    if got.shape != mine.shape or cut.shape[:2] != mine.shape[:2]:
+        return ""
+    product = 1.0 - cut[..., :3].mean(axis=2)
+    picture, info = mockup_image.protect(got, mine, product)
+    mockup._write(picture, result)
+    job["secured"] = info
+    if info.get("restored"):
+        return " · Krea had changed the product: yours is back"
+    if any(info.get("moved") or ()):
+        return " · moved back, product exact"
+    return " · product exact"
+
+
+def before_after(source, result):
+    """Krea's picture next to the render: A = before, B = after, as a wipe in the Photo workspace."""
+    try:
+        from . import tab_queue
+        tab_queue._ab["A"], tab_queue._ab["B"] = source, result
+        wm = bpy.context.window_manager
+        if getattr(wm, "studio_compare", 'WIPE') == 'OFF':
+            wm.studio_compare = 'WIPE'
+    except (AttributeError, TypeError, ImportError):
+        pass
+
+
 def _finish():
     """Timer: when the thread is done, fit the image to the render's size and show it."""
     if busy() and job.get("thread") is None and time.monotonic() - job["started"] > LIMIT + 60:
@@ -478,9 +539,13 @@ def _finish():
             fit_size(job["result"], width, height)
             from . import mockup
             secured = mockup.after_krea(job["source"], job["result"])    # a mockup: cut, the product secured
+            note = ""
             if secured:
                 job["result"] = secured[0]
-            job.update(state="done", text=os.path.basename(job["result"]))
+            else:
+                note = secure(job["source"], job["result"])           # a render: the product put back
+                before_after(job["source"], job["result"])
+            job.update(state="done", text=os.path.basename(job["result"]) + note)
             from . import runner, tab_queue
             runner._images_cache["time"] = 0.0      # list the new image right away
             tab_queue._view["path"] = job["result"]
