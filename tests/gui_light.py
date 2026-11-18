@@ -254,15 +254,43 @@ def mockup_shot():
         mod("studio.mockup").remove(scene)
 
 
+def photo_open():
+    """The Photo workspace: only the big picture and the Studio sidebar."""
+    win = view()[0]
+    with override():
+        bpy.ops.studio.open_review()
+    state["photo"] = win.workspace.name
+
+
+def photo_tidy():
+    win = bpy.context.window_manager.windows[0]
+    with bpy.context.temp_override(window=win, screen=win.screen):
+        mod("studio.photo_view").tidy(win)
+
+
+def photo_shot():
+    win = bpy.context.window_manager.windows[0]
+    with bpy.context.temp_override(window=win, screen=win.screen, area=win.screen.areas[0]):
+        bpy.ops.screen.screenshot(filepath=os.path.join(OUT, "10_photo.png"))
+    kinds = sorted(a.type for a in win.screen.areas)
+    check("photo workspace: only the picture with its sidebar is left", kinds == ['IMAGE_EDITOR'], kinds)
+    with bpy.context.temp_override(window=win, screen=win.screen):
+        opened = mod("studio.photo_view").toggle_compositor(win)
+    kinds = sorted(a.type for a in win.screen.areas)
+    check("photo workspace: the look button brings the compositor under the picture",
+          opened and kinds == ['IMAGE_EDITOR', 'NODE_EDITOR'], kinds)
+
+
 def idle():
     """One tick for Blender to draw what the step before changed."""
-    for area in view()[0].screen.areas:
+    for area in bpy.context.window_manager.windows[0].screen.areas:
         area.tag_redraw()
 
 
 STEPS = [splash_away, splash_gone, setup, tool_on, tool_hover, click_press, click_release, placed, ctrl_press,
          ctrl_release, new_light, studio_tab, studio_tab_press, studio_tab_release, idle, panel, idle, camera_tab,
-         idle, idle, camera_shot, idle, idle, material_shot, idle, idle, mockup_make, idle, idle, idle, mockup_shot, finish]
+         idle, idle, camera_shot, idle, idle, material_shot, idle, idle, mockup_make, idle, idle, idle, mockup_shot, idle, photo_open, idle,
+         photo_tidy, idle, idle, photo_shot, finish]
 
 
 def tick():
