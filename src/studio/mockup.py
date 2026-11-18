@@ -1706,7 +1706,6 @@ def reference_candidates(scene):
     """Collections of the studio scenes that hold meshes and could be the reference (the bike first)."""
     found = []
     for coll in bpy.data.collections:
-        name = coll.name.lower()
         if coll.name.startswith(("Mockup", "ENV |")) or not any(o.type == 'MESH' for o in coll.all_objects):
             continue
         found.append(coll)
