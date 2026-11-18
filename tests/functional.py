@@ -2253,8 +2253,7 @@ def release_1_0():
     bridge = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(bridge)
     del os.environ["AI_STUDIO_LIVE_FILE"]
-    folder = bridge.INSTANCES
-    os.makedirs(folder, exist_ok=True)
+    folder = bridge.INSTANCES = tempfile.mkdtemp(prefix="instances_", dir=TMP)   # never the real ones
     import subprocess
     other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])   # a second "Blender"
     for pid, name, active in ((os.getpid(), "/x/VELO_now.blend", 2.0), (other.pid, "/x/Lampe.blend", 1.0)):
