@@ -758,7 +758,8 @@ def _adopt(root, prefix, host, sections, known, archive):
         _restart["state"] = "offline"             # tried again when the share is there (_tick)
         return
     present = set(names)
-    stamp = re.compile(re.escape(prefix) + r"(\d{8}-\d{6})_")
+    stamp = re.compile(r"(?:\d_(\d{8}-\d{6})_" + re.escape(prefix) + "|" + re.escape(prefix)
+                       + r"(\d{8}-\d{6})_)")    # 2_<time>_<file>_… (priority first) or <file>_<time>_… (before)
     newest, halves = {}, []
     for name in names:
         hit = stamp.match(name)
@@ -775,7 +776,7 @@ def _adopt(root, prefix, host, sections, known, archive):
         if not name.endswith(".json") or name[:-5] in known:
             continue
         try:
-            when = time.mktime(time.strptime(hit.group(1), "%Y%m%d-%H%M%S"))
+            when = time.mktime(time.strptime(hit.group(1) or hit.group(2), "%Y%m%d-%H%M%S"))
         except ValueError:
             continue
         if time.time() - when > ADOPT_DAYS * 86400:
