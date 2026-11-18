@@ -94,34 +94,57 @@ def _launch(film_dir):
     return proc.pid
 
 
-_copy = {"path": "", "changes": -1, "file": ""}   # the last scene copy: jobs started without an edit share it
+_copy = {"path": "", "changes": None, "file": "", "time": 0.0}   # the last scene copy: jobs started without
+COPY_FOR = 900.0                                                  # an edit share it (at most 15 min)
+
+
+def _copy_key():
+    """What a copy of the file depends on: the real edits (geometry, materials, lights, moves – not AI
+    Studio's lists, frame changes, the Video Editor) and the render settings of the 3D scenes. Before, every
+    update counted (the queue, a strip's colour …): each section and each preview image saved the whole
+    file again (0.5 GB, Blender stood still each time a film was sent)."""
+    from . import autoquality, cut
+    settings = []
+    for scene in bpy.data.scenes:
+        if scene.get(cut.FILM_KEY):
+            continue
+        r = scene.render
+        settings.append((scene.name, r.engine, r.resolution_x, r.resolution_y, r.resolution_percentage,
+                         scene.frame_start, scene.frame_end, getattr(scene.camera, "name", ""),
+                         getattr(scene.world, "name", ""), getattr(getattr(scene, "cycles", None), "samples", 0),
+                         len(scene.timeline_markers)))
+    return autoquality._edits[0], tuple(settings)
 
 
 def _scene_copy(target):
     """The file as it is now into `target` (the film's process opens it). Nothing changed since the last
-    copy (several sections, preview images): the same file again as a hard link, no new GBs. No .blend1."""
+    copy (several sections, preview images, farm jobs): the same file again as a hard link, no new GBs and
+    no wait. No .blend1."""
     from . import runner
-    from .. import autosave
     for path in (target, target + "1"):
         try:
             os.remove(path)
         except OSError:
             pass
     last = _copy["path"]
-    if (last and last != target and _copy["changes"] == autosave.changes[0] and _copy["file"] == bpy.data.filepath
-            and os.path.isfile(last)):
+    key = _copy_key()
+    if (last and last != target and _copy["changes"] == key and _copy["file"] == bpy.data.filepath
+            and time.time() - _copy["time"] < COPY_FOR and os.path.isfile(last)):
         try:
             os.link(last, target)
             return
         except OSError:
             pass
+    started = time.time()
     runner.RUN.preparing = True   # the save handlers must not take this copy for the user's save
     try:
         bpy.ops.wm.save_as_mainfile(filepath=target, copy=True, compress=False,
                                     relative_remap=True, check_existing=False)
     finally:
         runner.RUN.preparing = False
-    _copy.update(path=target, changes=autosave.changes[0], file=bpy.data.filepath)
+    _copy.update(path=target, changes=key, file=bpy.data.filepath, time=time.time())
+    runner.log("scene copy saved for %s (%.1f s)" % (os.path.basename(os.path.dirname(target)) or target,
+                                                    time.time() - started))
 
 
 def drop_scene_copy(film_dir):

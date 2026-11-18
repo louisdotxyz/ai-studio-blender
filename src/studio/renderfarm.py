@@ -1046,6 +1046,14 @@ def _pump():
     return 3.0 if active() or _restart["state"] == "looking" else None
 
 
+def _low_priority():
+    """(in the child) Packing for the farm runs behind your work: Blender's window keeps the cores it needs."""
+    try:
+        os.nice(10)
+    except OSError:
+        pass
+
+
 def _pack(job):
     local = os.path.join(LOCAL, job["job"])
     os.makedirs(local, exist_ok=True)
@@ -1060,7 +1068,7 @@ def _pack(job):
     with open(job["log"], "w", encoding="utf-8") as log:
         proc = subprocess.Popen([bpy.app.binary_path, "-b", job["raw"], "--factory-startup", "-noaudio", "--python",
                                  script, "--", cfg], stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                start_new_session=True)
+                                start_new_session=True, preexec_fn=_low_priority)
     _procs[job["job"]] = proc
     job["phase"] = "packing"
 

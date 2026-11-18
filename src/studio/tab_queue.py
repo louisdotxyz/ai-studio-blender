@@ -119,7 +119,12 @@ class STUDIO_OT_add(Operator):
         from . import cut
         scene = cut.film_scene(context.scene)        # from the Video Editor's scene: the film's 3D scene
         if self.mode == 'ANIM':
-            return self._film(context, scene)
+            import time as _time
+            started = _time.time()
+            result = self._film(context, scene)
+            runner.log("render a film: %.2f s in Blender's window (%s)" % (_time.time() - started,
+                                                                          self.section or "all sections"))
+            return result
         # The camera bar's camera, not the viewport selection: cameras are usually
         # hidden, and hidden objects cannot be selected.
         cam = scene.objects.get(self.camera) if self.camera else active_camera(scene)

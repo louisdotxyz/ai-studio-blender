@@ -3216,6 +3216,15 @@ def reliability():
         film._scene_copy(path)
     check("two films without an edit share one copy of the file (no new GBs)",
           os.path.samefile(first, second) and not os.path.exists(first + "1"))
+    third, fourth = os.path.join(copies, "c", "scene.blend"), os.path.join(copies, "d", "scene.blend")
+    os.makedirs(os.path.dirname(third))
+    os.makedirs(os.path.dirname(fourth))
+    autosave.changes[0] += 5                       # AI Studio's own updates (queue, strips): still the same file
+    film._scene_copy(third)
+    mod("studio.autoquality")._edits[0] += 1       # a real edit: a new copy
+    film._scene_copy(fourth)
+    check("sending more sections after AI Studio's own updates: no new save; after an edit: a new copy",
+          os.path.samefile(first, third) and not os.path.samefile(third, fourth))
     film.drop_scene_copy(os.path.dirname(first))
     check("a film done: its copy of the file goes", not os.path.exists(first) and os.path.exists(second))
     temp_file = os.path.join(tempfile.gettempdir(), "VELO_now_123_autosave.blend")
