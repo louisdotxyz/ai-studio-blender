@@ -320,6 +320,8 @@ def register():
     light_paint.register()
     light_ui.register()
     tab_finish.register()
+    from . import mockup
+    mockup.register()
     variants_ab.register()
     film.register()
     renderfarm.register()
@@ -366,6 +368,8 @@ def unregister():
     render_size.unregister()
     chat_render.unregister()
     variants_ab.unregister()
+    from . import mockup
+    mockup.unregister()
     tab_finish.unregister()
     light_ui.unregister()
     light_paint.unregister()

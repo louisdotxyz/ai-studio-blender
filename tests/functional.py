@@ -998,6 +998,112 @@ def _raises(func):
 
 
 @section
+def mockup_photo():
+    """The product in a photo: a scene of its own, the camera moves (never the product), montage, Krea."""
+    import numpy as np
+    from bpy_extras.object_utils import world_to_camera_view
+    from mathutils import Vector
+    mock, mi, api, krea = mod("studio.mockup"), mod("studio.mockup_image"), mod("studio.api"), mod("studio.krea")
+    source = bpy.context.scene
+    render_state = {o.name: o.hide_render for o in source.objects}
+    for obj in list(source.objects):
+        obj.hide_render = True
+    bpy.ops.mesh.primitive_cube_add(size=0.2, location=(1.0, 2.0, 0.1))
+    pod = bpy.context.active_object
+    pod.name = "Mockup Test Pod"
+    photo = os.path.join(TMP, "street.png")
+    img = bpy.data.images.new("mockup photo", 600, 400)
+    px = np.zeros((400, 600, 4), dtype=np.float32)
+    px[..., 0], px[..., 1], px[..., 2], px[..., 3] = 0.2, np.linspace(0.1, 0.6, 400)[:, None], 0.5, 1.0
+    img.pixels.foreach_set(px.reshape(-1))
+    img.filepath_raw, img.file_format = photo, 'PNG'
+    img.save()
+    bpy.data.images.remove(img)
+    keep_camera, keep_size = source.camera, (source.render.resolution_x, source.render.resolution_y)
+    scene = None
+    try:
+        state = api.mockup_start(photo, product="test pod", pos_x=0.25, pos_y=0.7, size=0.2, focal=50, turn=30)
+        scene = bpy.data.scenes[state["scene"]]
+        cam = scene.camera
+        at = world_to_camera_view(scene, cam, Vector((1.0, 2.0, 0.1)))
+        check("mockup: the product sits where it was put; the camera moved, not the product; the studio scene "
+              "keeps its camera and size", abs(at.x - 0.25) < 0.01 and abs(at.y - 0.7) < 0.01
+              and tuple(round(v, 4) for v in pod.location) == (1.0, 2.0, 0.1) and source.camera == keep_camera
+              and (source.render.resolution_x, source.render.resolution_y) == keep_size
+              and state["picture"] == [600, 400] and state["product_px"] == 80 and scene.render.film_transparent
+              and pod.name in scene.objects, (tuple(at), state))
+        far = api.mockup_set(scene=scene.name, on_ground=True, camera_height=1.5, horizon=0.6, pos_y=0.45)
+        near = api.mockup_set(scene=scene.name, pos_y=0.2)
+        check("mockup: standing on the ground its size follows from the place (nearer = bigger), its foot on "
+              "the ground", abs(far["above_ground_m"]) < 0.01 and abs(near["above_ground_m"]) < 0.01
+              and near["product_px"] > far["product_px"] * 1.3 and near["distance_m"] < far["distance_m"],
+              (far["product_px"], near["product_px"], far["above_ground_m"]))
+        wide = api.mockup_set(scene=scene.name, format='16:9', on_ground=False, pos_x=0.25, pos_y=0.7, size=0.2)
+        rect, (fw, fh) = wide["photo_in_picture"], wide["picture"]
+        at = world_to_camera_view(scene, scene.camera, Vector((1.0, 2.0, 0.1)))
+        check("mockup: a wider format keeps the whole photo (bars for Krea) and the product's place in it",
+              abs(fw / fh - 16 / 9) < 0.01 and rect[2:] == [600, 400]
+              and abs(at.x - (rect[0] + 0.25 * 600) / fw) < 0.01 and abs(at.y - 0.7) < 0.01, (wide["picture"], rect))
+        api.mockup_set(scene=scene.name, format='PHOTO')
+        look = api.mockup_look(scene=scene.name)
+        shaded = mock.product_render(scene)
+        raw = os.path.join(TMP, "Pod_%s_01.png" % scene.camera.name)
+        mock._write(shaded, raw)
+        montage = mock.use_render(scene, raw)
+        got = mock._read(montage)
+        ys, xs = np.nonzero(shaded[..., 3] > 0.5)
+        cy, cx = int(ys.mean()), int(xs.mean())
+        check("mockup: a quick look and the montage (photo behind, product on it) at the picture's size",
+              os.path.isfile(look) and got.shape == (400, 600, 4) and abs(cx / 600 - 0.25) < 0.03
+              and abs(float(got[2, 2, 2]) - 0.5) < 0.03 and abs(float(got[cy, cx, 2]) - 0.5) > 0.05
+              and float(got[..., 3].min()) == 1.0, (got.shape, cx, cy, got[2, 2], got[cy, cx]))
+        before = float(got[cy, cx, :3].mean())
+        api.mockup_set(scene=scene.name, exposure=-2.0)
+        darker = float(mock._read(montage)[cy, cx, :3].mean())
+        api.mockup_set(scene=scene.name, exposure=0.0)
+        check("mockup: a montage slider changes the picture without a new render", darker < before - 0.05,
+              (before, darker))
+        plan = mock.krea_plan(scene, "at night, wet street", 'REGION')
+        body = mock.krea_body(plan, "https://x/img.png")
+        box = body["regions"][0]
+        check("mockup → Krea: only the product's box is edited (Krea 3 regional), the wish first, the product "
+              "kept in one sentence", body["regional_edit"] and box["x"] < 0.25 < box["x"] + box["width"]
+              and box["y"] < 0.3 < box["y"] + box["height"] and plan["prompt"].startswith("At night, wet street. ")
+              and "@product" in plan["prompt"] and "test pod" in plan["prompt"]
+              and mock.MODEL_PATHS['REGION'] == "krea/krea-3", (box, plan["prompt"]))
+        sent = mock._read(plan["send"])
+        fake = np.roll(sent, (3, -5), axis=(0, 1)) * np.array([0.6, 0.6, 0.8, 1.0], dtype=np.float32)
+        result = os.path.join(TMP, "krea_fake.png")
+        mock._write(fake.astype(np.float32), result)
+        secured, info = mock.after_krea(plan["send"], result)
+        final = mock._read(secured)
+        check("mockup → Krea: the result is cut to the picture, moved back and saved next to the montage",
+              secured.endswith("_mockup_krea_01.png") and final.shape == got.shape
+              and info["moved"] == [5, -3] and not info["restored"] and mock.after_krea(raw, result) is None,
+              (secured, info))
+        wide_plan = mock.krea_plan(scene, "", 'NANO21')
+        check("mockup → Krea: the whole picture with Nano Banana 2.1, the pictures' roles named",
+              mock.krea_body(wide_plan, "u")["thinking_level"] == "minimal"
+              and wide_plan["prompt"].startswith("Turn image 1 into one realistic photograph")
+              and "Keep exactly the same" in wide_plan["prompt"], wide_plan["prompt"])
+        skill = open(os.path.join(os.path.dirname(mod("core").__file__), "skills_default", "mockup.md"),
+                     encoding="utf-8").read()
+        check("mockup: its skill checks its own look and asks Krea's price first", "mockup_look" in skill
+              and "preflight=true" in skill and "studio_tab: MOCKUP" in skill)
+    finally:
+        if scene is not None:
+            mock.show(bpy.context, source)
+            name = scene.name
+            mock.remove(scene)
+            check("mockup: removing it leaves the product and the studio scene",
+                  name not in bpy.data.scenes and pod.name in source.objects and len(pod.users_collection) == 1)
+        bpy.data.objects.remove(pod)
+        for name, value in render_state.items():
+            if name in source.objects:
+                source.objects[name].hide_render = value
+
+
+@section
 def krea_plan_scale_mask():
     import json as _json
     import numpy as np

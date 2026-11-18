@@ -317,6 +317,36 @@ def upload_to(upload_url, path, fields=None):
     return url
 
 
+def run_job(key, path, body, target, model, width, height):
+    """(thread) Starts the job at Krea's model `path`, waits for it and downloads the picture to
+    target + ".download"; job["state"] becomes "loaded"."""
+    job["state"] = "working"
+    started = _call("POST", "/generate/image/" + path, key, json.dumps(body).encode(),
+                    {"Content-Type": "application/json"})
+    job_id = started.get("job_id") if isinstance(started, dict) else ""
+    if not job_id:
+        raise RuntimeError("Krea did not start the job: %s" % str(started)[:200])
+    deadline = time.monotonic() + LIMIT
+    while True:
+        time.sleep(POLL)
+        state = _call("GET", "/jobs/" + job_id, key)
+        status = state.get("status") if isinstance(state, dict) else ""
+        if status == "completed":
+            urls = (state.get("result") or {}).get("urls") or []
+            if not urls:
+                raise RuntimeError("Krea finished without an image")
+            break
+        if status in {"failed", "cancelled"}:
+            error = state.get("error") or {}
+            raise RuntimeError("Krea: %s %s" % (error.get("code", status), error.get("message", "")))
+        if time.monotonic() > deadline:
+            raise RuntimeError("Krea took longer than %d s" % LIMIT)
+    job["state"] = "download"
+    urllib.request.urlretrieve(urls[0], target + ".download")
+    _add_log(model, width, height)
+    job.update(state="loaded", result=target)
+
+
 def _work(key, model, prompt, source, width, height, target, environment, zoom, view, scale="", mask="", room=True):
     try:
         job["state"] = "upload"
@@ -326,30 +356,7 @@ def _work(key, model, prompt, source, width, height, target, environment, zoom, 
         job["state"] = "working"
         body = request_body(model, prompt, image_url, width, height, environment_url, zoom, view, scale, mask_url,
                             room)
-        started = _call("POST", "/generate/" + "image/" + model_path(model), key, json.dumps(body).encode(),
-                        {"Content-Type": "application/json"})
-        job_id = started.get("job_id") if isinstance(started, dict) else ""
-        if not job_id:
-            raise RuntimeError("Krea did not start the job: %s" % str(started)[:200])
-        deadline = time.monotonic() + LIMIT
-        while True:
-            time.sleep(POLL)
-            state = _call("GET", "/jobs/" + job_id, key)
-            status = state.get("status") if isinstance(state, dict) else ""
-            if status == "completed":
-                urls = (state.get("result") or {}).get("urls") or []
-                if not urls:
-                    raise RuntimeError("Krea finished without an image")
-                break
-            if status in {"failed", "cancelled"}:
-                error = state.get("error") or {}
-                raise RuntimeError("Krea: %s %s" % (error.get("code", status), error.get("message", "")))
-            if time.monotonic() > deadline:
-                raise RuntimeError("Krea took longer than %d s" % LIMIT)
-        job["state"] = "download"
-        urllib.request.urlretrieve(urls[0], target + ".download")
-        _add_log(model, width, height)
-        job.update(state="loaded", result=target)
+        run_job(key, model_path(model), body, target, model, width, height)
     except Exception as exc:         # everything goes to the panel as text
         job.update(state="error", text=str(exc))
 
@@ -469,6 +476,10 @@ def _finish():
         try:
             width, height = image_size(job["source"])
             fit_size(job["result"], width, height)
+            from . import mockup
+            secured = mockup.after_krea(job["source"], job["result"])    # a mockup: cut, the product secured
+            if secured:
+                job["result"] = secured[0]
             job.update(state="done", text=os.path.basename(job["result"]))
             from . import runner, tab_queue
             runner._images_cache["time"] = 0.0      # list the new image right away

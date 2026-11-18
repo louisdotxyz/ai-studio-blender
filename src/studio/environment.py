@@ -37,7 +37,8 @@ def product_objects(scene):
     for obj in scene.objects:
         if obj.type not in {'MESH', 'CURVE', 'SURFACE', 'META', 'FONT'} or obj.hide_render:
             continue
-        if obj.get(STUDIO_KEY) or obj.get("as_env") or any(c.name.startswith("ENV |") for c in obj.users_collection):
+        if obj.get(STUDIO_KEY) or obj.get("as_env") or obj.get("as_mockup") or obj.get("as_mockup_front") \
+                or any(c.name.startswith("ENV |") for c in obj.users_collection):
             continue
         out.append(obj)
     return out

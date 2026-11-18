@@ -291,6 +291,91 @@ def krea_failed(reason):
     return reason
 
 
+def _mockup_scene(scene=None):
+    from . import mockup
+    found = bpy.data.scenes.get(scene) if isinstance(scene, str) else (scene or bpy.context.scene)
+    if found is None or not mockup.is_mockup(found):
+        raise ValueError("No mockup scene: api.mockup_start(photo) first (or pass scene=\"Mockup …\")")
+    return found
+
+
+def mockup_start(photo, product=None, **values):
+    """The product in a photo: makes the mockup scene for `photo` (a file) from the scene shown (your studio
+    scene stays untouched, the product is never moved: the camera moves) and shows it. product: what it is,
+    in English ("small bike light"), for Krea. values: any settings (see mockup_set). Returns mockup_state()."""
+    from . import mockup
+    scene = mockup.create(bpy.context, photo)
+    if product:
+        scene.studio_mockup.product_name = product
+    return mockup.set_values(scene, **values) if values else mockup.state(scene)
+
+
+def mockup_state(scene=None):
+    """The mockup's settings and what follows from them: "picture" [w, h], "product_cm", "product_px" (its
+    longest side in the picture), "distance_m", "above_ground_m" (its foot above the photo's ground: a
+    measure of whether camera height and horizon are right)."""
+    from . import mockup
+    return mockup.state(_mockup_scene(scene))
+
+
+def mockup_set(scene=None, **values):
+    """Sets mockup settings, all at once (angles in degrees). Returns mockup_state().
+    The photo's camera: focal (mm on full frame), horizon (0 bottom … 1 top of the photo), roll,
+      camera_height (m).
+    The product: pos_x, pos_y (0-1 in the photo, y from the bottom), size (its longest side as a share of the
+      picture's height) or on_ground=True (it stands on the photo's ground: the size follows from the place),
+      turn (around its upright axis), tilt, lean.
+    Light: light_from (0 = from behind the camera, 90 = from the right, 180 = backlight), light_height,
+      light_strength, light_warmth (Kelvin), light_soft (0 hard … 1 soft shadow), ambient (the photo's own
+      light on the product), use_ground (shadow on the photo's ground).
+    Picture: format ('PHOTO', '16:9', '3:2', '4:3', '1:1', '4:5', '9:16'; bars are filled by Krea).
+    Montage (no new render): shadow_strength, exposure (stops), warmth (-1…1), saturation, soften, glow,
+      grain, night (the photo darker)."""
+    from . import mockup
+    return mockup.set_values(_mockup_scene(scene), **values)
+
+
+def mockup_look(scene=None, longest=1024):
+    """A quick look to check place, size and angle (a second, no Cycles): the product plainly shaded over
+    the photo. Returns the JPEG's path: read it, compare with the photo, correct with mockup_set, look again."""
+    from . import mockup
+    return mockup.placement_preview(_mockup_scene(scene), longest)
+
+
+def mockup_render(scene=None, quality="LOW"):
+    """Renders the product in the background (quality LOW or HIGH); the montage with the photo follows by
+    itself (…_mockup.png next to the render, mockup_state()["result"]). Check with api.render_status()."""
+    from . import mockup
+    return mockup.render(_mockup_scene(scene), str(quality).upper())
+
+
+def mockup_krea_prepare(upload_url, wish="", model=None, scene=None):
+    """Krea blends the mockup in, with the user's plan (Krea connector). wish: what else should happen, in
+    English ("at night, wet street"). model: 'REGION' (Krea 3, only inside the product's box: the photo stays
+    pixel for pixel, ~36 credits), 'NANO21' (Nano Banana 2.1, the whole picture anew: night, mood, filling a
+    wider format, ~33), 'PRECISE' (Ideogram, everything but the product, ~163); None = the panel's choice.
+    Uploads the montage (and mask / close-up) to upload_url and returns {"model", "input", "credits_about",
+    "prompt"}: preflight, api.krea_quote, generate, then api.krea_save(url) as for a render – the product is
+    secured in the saved picture (…_mockup_krea_01.png); api.mockup_last() says what was done to it."""
+    from . import mockup
+    return mockup.krea_prepare(_mockup_scene(scene), upload_url, wish, model)
+
+
+def mockup_krea(wish="", model=None, scene=None):
+    """Without the Krea connector (API token): sends the montage to Krea in the background."""
+    from . import mockup
+    plan, target = mockup.krea_start(_mockup_scene(scene), wish, model)
+    return {"model": plan["key"], "prompt": plan["prompt"], "credits_about": mockup.UNITS[plan["key"]]}
+
+
+def mockup_last():
+    """What happened to the last Krea result of a mockup: {"path", "moved" (Krea's picture had slid by so many
+    pixels and was moved back), "changed" (0-1, how different Krea's product was), "restored" (True: Krea had
+    painted the product away or anew, the render was put back as it was)}."""
+    from . import mockup
+    return dict(mockup.last)
+
+
 def krea_refine(prompt, model="AUTO", environment=None, zoom="KEEP", view="KEEP", protect=None):
     """Without Claude's Krea connector: refines the render shown in the Refine tab with the user's Krea API
     token (its own balance; in the background, the Refine tab shows it). Same arguments as krea_prepare."""

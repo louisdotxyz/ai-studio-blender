@@ -755,6 +755,11 @@ class STUDIO_PT_finish(Panel):
         tab_head(layout, STUDIO_MT_edit_presets.bl_idname, "Adjustments", STUDIO_OT_edit_save_preset.bl_idname,
                  STUDIO_PT_finish_settings.__name__, icon='IMAGE_DATA')
         path = _draw_image(layout, context)
+        from . import mockup
+        box, _head, is_open = section(layout, "mockup", "Mockup: Product in a Photo", 'IMAGE_REFERENCE',
+                                      default_open=mockup.is_mockup(context.scene))
+        if is_open:
+            mockup.draw(box, context)
         draw_look(layout, context)            # 1. the look (and every effect in the compositor)
         _draw_adjust(layout, context, path)   # 2. adjustments of the finished image
         _draw_krea(layout, context, path)     # 3. Krea
