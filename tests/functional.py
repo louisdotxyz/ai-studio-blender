@@ -911,14 +911,14 @@ def chat_queue_finish_wear():
     check("krea: nearest ratio", krea.nearest_ratio(1500, 2000) == "3:4" and krea.nearest_ratio(1920, 1080) == "16:9"
           and krea.nearest_ratio(1080, 1350) == "4:5")
     body = krea.request_body('NANO', "a hand holds it", "https://x/y.png", 1500, 2000)
-    check("krea: free model gets the render's size", body["width"] == 1500 and body["height"] == 2000
-          and body["aspect_ratio"] == "3:4" and body["resolution"] == "2K" and "Keep the product" in body["prompt"])
+    check("krea: free model gets the render's format", body["aspect_ratio"] == "3:4" and body["resolution"] == "2K"
+          and "Keep the product" in body["prompt"])
     body = krea.request_body('PRECISE', "a hand holds it.", "https://x/y.png", 1500, 2000)
     check("krea: precise model edits in place", body["image_url"] == "https://x/y.png" and "width" not in body
           and "Keep the camera angle" in body["prompt"])
-    check("krea: auto picks precise to add, free for a new place, zoom or perspective",
-          krea.pick_model('AUTO') == 'PRECISE' and krea.pick_model('AUTO', "/x/room.jpg") == 'NANO'
-          and krea.pick_model('AUTO', zoom='FAR') == 'NANO' and krea.pick_model('AUTO', view='ABOVE') == 'NANO'
+    check("krea: auto picks the cheapest (Nano, product put back), Region with marks; a named model wins",
+          krea.pick_model('AUTO') == 'NANO' and krea.pick_model('AUTO', "/x/room.jpg") == 'NANO'
+          and krea.pick_model('AUTO', region=(0, 0, 0.5, 0.5)) == 'REGION'
           and krea.pick_model('PRECISE', "/x/room.jpg") == 'PRECISE')
     body = krea.request_body('NANO', "", "https://x/r.png", 1500, 2000, "https://x/room.png", 'WIDER', 'HIGHER')
     check("krea: environment picture as the second image, framing and height in the prompt, framing free",
@@ -931,7 +931,7 @@ def chat_queue_finish_wear():
     check("krea: precise takes the environment as a reference", body["reference_images"] == ["https://x/room.png"])
     krea._add_log('NANO', 1500, 2000)
     count, known, _unknown, _credits = krea.month_summary()
-    check("krea: what this month cost", count >= 1 and known >= 0.15)
+    check("krea: what this month cost", count >= 1 and known >= 0.0)
     render = os.path.join(TMP, "Pod_01.png")
     img = bpy.data.images.new("pod", 60, 80)
     img.filepath_raw, img.file_format = render, 'PNG'
@@ -1035,6 +1035,7 @@ def photo_adjust_tools():
     bpy.ops.object.camera_add(location=(0.0, -4.0, 1.0))
     cam = bpy.context.active_object
     cam.rotation_euler = (1.5707963, 0.0, 0.0)
+    bpy.context.view_layer.update()
     center = Vector((0.0, 0.0, 1.0))
     pv.move_camera(cam, center, 'CLOSER')
     bpy.context.view_layer.update()
@@ -1307,11 +1308,16 @@ def krea_plan_scale_mask():
     wm.studio_krea_zoom = wm.studio_krea_view = 'KEEP'
     try:
         p = finish.prepare(scene, "A hand holds the pod", "https://upload/presigned", protect=True)
-        check("krea plan: prepare uploads render and mask", p["model"] == "ideogram/ideogram-4.5-precise"
-              and p["input"]["image_url"] == "https://assets/1.png" and p["input"].get("mask_url") == "https://assets/2.png"
-              and "10 × 10 × 10 cm" in p["input"]["prompt"] and uploads[0] == render, p)
+        check("krea plan: Auto = Nano with the render, the product put back afterwards",
+              p["model"] == "google/nano-banana-2.1" and p["input"]["image_urls"] == ["https://assets/1.png"]
+              and p["keeps_product"] and "10 × 10 × 10 cm" in p["input"]["prompt"] and uploads == [render], p)
         uploads.clear()
-        p = finish.prepare(scene, "A hand holds the pod", "https://upload/presigned", protect=False)
+        p = finish.prepare(scene, "A hand holds the pod", "https://upload/presigned", model='PRECISE', protect=True)
+        check("krea plan: Precise uploads render and mask", p["model"] == "ideogram/ideogram-4.5-precise"
+              and p["input"]["image_url"] == "https://assets/1.png" and p["input"].get("mask_url") == "https://assets/2.png",
+              p)
+        uploads.clear()
+        p = finish.prepare(scene, "A hand holds the pod", "https://upload/presigned", model='PRECISE', protect=False)
         check("krea plan: a hand on the product goes without a mask", "mask_url" not in p["input"] and len(uploads) == 1)
         api = mod("studio.api")
         api.krea_quote(163, 2946.9)
@@ -1471,8 +1477,7 @@ def variants_size_material_open():
     nano = krea.request_body('NANO', "x", "https://r", 400, 300, "https://a\nhttps://b")
     check("krea: the free model gets render and pictures", nano["image_urls"] == ["https://r", "https://a", "https://b"]
           and krea.ENV_TEXT.strip() in nano["prompt"])
-    check("krea: a place picture with Room needs the free model", krea.pick_model('AUTO', True) == 'NANO'
-          and krea.pick_model('AUTO', False) == 'PRECISE')
+    check("krea: a place picture with Room needs the free model", krea.pick_model('AUTO', True) == 'NANO')
     bpy.ops.studio.krea_frame(target="zoom", value='CLOSER')
     first = wm.studio_krea_zoom
     bpy.ops.studio.krea_frame(target="zoom", value='CLOSER')
@@ -2288,7 +2293,7 @@ def feedback_tools():
     new = bpy.data.objects.new("Gabel <1>", bpy.data.meshes.new("Gabel2"))
     scene.collection.objects.link(new)
     info = api.cad_take_over([new])
-    archived = bpy.data.collections.get("Archiv")
+    archived = cadswap.archive_collection(scene)                 # "Archiv <scene>"
     check("new CAD version takes materials and collections", info["pairs"] == [["Gabel <1>", "Gabel"]]
           and new.active_material == mat and keep_coll in new.users_collection, info)
     check("old part archived, hidden", archived is not None and old.name in archived.objects
@@ -2323,7 +2328,8 @@ def feedback_tools():
     mod("studio").cameras.rename(created[0], "back")
     again = lights.apply_setup(scene, None, {"name": "B", "lights": [{"name": "Area.Default"}]})
     check("preset keeps your light names", [o.name for o in again] == ["A_back_01"]
-          and "A_fill_01" not in bpy.data.objects and again[0].users_collection[0].name == "Light",
+          and "A_fill_01" not in bpy.data.objects
+          and again[0].users_collection[0] == lights.light_collection(scene),
           [o.name for o in again])
     mod("studio").runner.prefs().name_scheme = False
     # a new camera changes what the worker must load

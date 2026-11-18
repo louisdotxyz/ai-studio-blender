@@ -941,7 +941,7 @@ def draw_export(layout, context, path):
     row.prop(wm, "studio_export_stars", text="")
     row = layout.row(align=True)
     row.scale_y = 1.3
-    row.operator(STUDIO_OT_photo_export.bl_idname, text="Presentation Set (✓)", icon='PRESENTATION').which = 'SET'
+    row.operator(STUDIO_OT_photo_export.bl_idname, text="Presentation Set (✓)", icon='RENDERLAYERS').which = 'SET'
 
 
 classes = (STUDIO_OT_photo_layout, STUDIO_OT_photo_compare, STUDIO_OT_photo_export, STUDIO_OT_photo_fit,

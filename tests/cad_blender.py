@@ -143,8 +143,8 @@ def take_over_with_sidecar():
           and (new_front.matrix_world.translation - Vector((0, -0.02, 0.05))).length < 1e-4,
           new_front.matrix_world.translation)
     check("property and visibility kept", new_front.get("finish") == "matt" and not new_front.visible_shadow)
-    archive = bpy.data.collections.get("Archiv")
-    v2 = bpy.data.collections.get("Archiv V2")
+    archive = cadswap.archive_collection(bpy.context.scene)       # "Archiv <scene>"
+    v2 = bpy.data.collections.get(archive.name + " V2")
     check("old parts archived by version", housing.name in v2.objects and front.name in archive.objects
           and archive.hide_render, [c.name for c in bpy.data.collections])
     check("new part: placeholder material named after the CAD", clip.active_material
@@ -169,7 +169,7 @@ def take_over_with_sidecar():
     report = cadimport.cad_import(path)
     bpy.context.view_layer.update()
     newest = next(o for o in bpy.data.objects if o.get("cad_id") == "Leuchte | Front" and o.get("cad_version") == "V4")
-    v3 = bpy.data.collections.get("Archiv V3")
+    v3 = bpy.data.collections.get(cadswap.archive_collection(bpy.context.scene).name + " V3")
     check("V3 archived, modifier still there", v3 and new_front.name in v3.objects and newest.modifiers
           and newest.active_material == mat, report)
     check("old part without partner reported", clip.name in report["old_without_partner"], report)

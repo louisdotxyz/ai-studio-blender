@@ -465,18 +465,18 @@ def _state(scene):
             view.use_curve_mapping, display.display_device)
 
 
-_later = set()
+_pending = set()
 
 
 def _sync_later():
-    for name in list(_later):
+    for name in list(_pending):
         scene = bpy.data.scenes.get(name)
         if scene is not None:
             try:
                 sync(scene)
             except Exception as ex:
                 print("ID Toolkit: background:", ex)
-    _later.clear()
+    _pending.clear()
     return None
 
 
@@ -486,7 +486,7 @@ def schedule_sync(scene):
     a second while Cycles drew the viewport: Blender crashed)."""
     if _busy[0] or _cache.get(scene.name) == _state(scene):
         return
-    _later.add(scene.name)
+    _pending.add(scene.name)
     if bpy.app.timers.is_registered(_sync_later):
         bpy.app.timers.unregister(_sync_later)
     bpy.app.timers.register(_sync_later, first_interval=0.35)

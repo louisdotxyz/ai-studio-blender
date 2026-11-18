@@ -16,20 +16,22 @@ them first. The wish already holds the sentences of the buttons the user pressed
    shadows and reflections of the render). Name the product by what it is ("the black rounded bike light
    pod on its metal mount"). The add-on adds "keep the product" and the true scale itself (it reads the
    product's size from Blender: a hand is drawn at real size). Do not invent sizes.
-2. Model: PRECISE when something is added to the picture as it is (a hand, props, a person next to it).
-   NANO when the environment changes, the user wants to zoom out or another perspective. A model named in
-   the message wins. protect (a mask keeps the product untouched, Precise only): as the message says, but
+2. Model: leave model=None (the panel's choice, usually Auto). Auto: NANO (Nano Banana 2.1, ~44 credits)
+   paints the picture anew and the add-on puts the product back from the render afterwards (exact); with
+   marks drawn on the picture ("Only inside the region I marked" in the message) REGION (Krea 3, ~77)
+   changes only there. PRECISE (~163) only when the message names it. protect: as the message says, but
    protect=False when a hand or a person touches the product (fingers go over it); say so then.
 3. get_upload_url, then in execute_python:
    p = api.krea_prepare(prompt, upload_url, model=…, environment=None, zoom=None, view=None, protect=…)
-   (None = the Refine tab's choice, also for the pictures: leave environment=None; zoom CLOSER/KEEP/WIDER, view = camera height LOWER/KEEP/HIGHER, from
-   the wish: "näher" CLOSER, "weiter weg" WIDER, "von oben" HIGHER). It returns {"model", "input", ...}:
+   (None = the panel's choice, also for the pictures and the marked region: leave environment=None.
+   Leave zoom and view None: a closer, wider, higher or lower view is a camera change in Blender
+   (Adjust › Camera, or move the camera and render again), never Krea – Krea would paint the product anew). It returns {"model", "input", ...}:
    pass both on unchanged. The product's size is measured from what the user marked as the product
    (Refine tab); the message's "Product:" line shows it. If it looks wrong (much bigger than the product),
    ask the user to select the product and click "Product = Selection" first.
 4. Price first: generate_image(model=p["model"], input=p["input"], preflight=true). Then
    api.krea_quote(credits, balance) so the Refine tab shows it, and say it in the chat. More than
-   400 credits, or fewer credits left than it costs: ask the user before going on.
+   100 credits, or fewer credits left than it costs: ask the user before going on.
 5. generate_image(model, input, sync=true, timeoutSeconds=280). Still running: get_job until it is done.
    Then api.krea_save(result_url, credits=…, balance=…) (balance after it: balance − credits).
    It failed: api.krea_failed(reason) and tell the user why. Never start more than one picture unasked.
