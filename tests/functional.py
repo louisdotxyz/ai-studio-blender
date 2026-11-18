@@ -624,9 +624,11 @@ def light_list_map_looks():
     extra = lights_mod.add_light(scene, None)
     api.flag(key, "DAPPLE", speed=0.5)
     looks.switch(scene, 0)
+    per_camera = mod("studio.lightsets").enabled(scene)
     check("looks: A is back as it was", abs(key.data.energy - 100) < 1e-3
-          and abs(deg(items.angles(scene, item)[0]) + 40) < 0.05 and rs.background_color[0] > 0.8
-          and abs(rs.hdri_pins[0].strength - 5.0) < 1e-4 and extra.hide_render and env.flag_of(key) is None,
+          and abs(deg(items.angles(scene, item)[0]) + 40) < 0.05 and extra.hide_render and env.flag_of(key) is None
+          # with light sets a variant holds the camera's lights only: World and background are one for all
+          and (per_camera or (rs.background_color[0] > 0.8 and abs(rs.hdri_pins[0].strength - 5.0) < 1e-4)),
           (key.data.energy, deg(items.angles(scene, item)[0]), rs.hdri_pins[0].strength))
     looks.switch(scene, 1)
     flag = env.flag_of(key)
