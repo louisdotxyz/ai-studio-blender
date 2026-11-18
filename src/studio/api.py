@@ -351,9 +351,10 @@ def mockup_render(scene=None, quality="LOW"):
 
 def mockup_krea_prepare(upload_url, wish="", model=None, scene=None):
     """Krea blends the mockup in, with the user's plan (Krea connector). wish: what else should happen, in
-    English ("at night, wet street"). model: 'REGION' (Krea 3, only inside the product's box: the photo stays
-    pixel for pixel, ~77 credits at 2K), 'NANO21' (Nano Banana 2.1, the whole picture anew: night, mood, filling a
-    wider format, ~44), 'PRECISE' (Ideogram, everything but the product, ~163); None = the panel's choice.
+    English ("at night, wet street"). model: 'NANO21' (Nano Banana 2.1 makes one photograph of the montage: the
+    most natural, also night, mood, a wider format to fill, ~44 credits at 2K), 'REGION' (Krea 3, only inside
+    the product's box: the photo stays pixel for pixel, ~77), 'PRECISE' (Ideogram, everything but the product,
+    ~163); None = the panel's choice.
     Uploads the montage (and mask / close-up) to upload_url and returns {"model", "input", "credits_about",
     "prompt"}: preflight, api.krea_quote, generate, then api.krea_save(url) as for a render – the product is
     secured in the saved picture (…_mockup_krea_01.png); api.mockup_last() says what was done to it."""

@@ -41,9 +41,10 @@ Measure, never guess: look at the photo, set values, look at the check picture, 
    here unless Krea was asked for ("blend in", "night", "realistic", "Krea").
 7. Krea (the Krea connector, mcp__claude_ai_Krea__*; no Krea tools: say that Krea must be connected in Claude
    or an API token added, and stop). One picture, never comparisons of models unless asked:
-   - model: 'REGION' when only the product should sit better in the photo (the photo stays pixel for pixel),
-     'NANO21' when the whole picture changes (night, mood, weather, a wider format to fill),
-     'PRECISE' when everything but the product is to change and the product must stay pixel-exact.
+   - model: 'NANO21' by default (one photograph of the montage: the most natural; also night, mood, weather,
+     a wider format to fill; the product is secured afterwards), 'REGION' when the photo must stay pixel for
+     pixel (only the product's box is edited; can look pasted on), 'PRECISE' when everything but the product
+     is to change and the product must stay pixel-exact.
    - wish in English, concrete, said as what is wanted: "It is 11 pm: black sky, sodium street lamps, the wet
      asphalt reflects them; the bike light glows neutral white and lights the road in front of the wheel."
      The add-on writes the rest (roles of the pictures, blend in, keep the product, true scale).
@@ -51,6 +52,6 @@ Measure, never guess: look at the photo, set values, look at the check picture, 
      input=p["input"], preflight=true) → api.krea_quote(credits, balance) → over 150 credits or less than
      that left: ask first → generate → get_job until done → api.krea_save(url, credits, balance).
    - api.mockup_last(): "restored" true means Krea had repainted the product and the render was put back:
-     say so, and that 'REGION' or a calmer wish keeps it; "moved": the picture was shifted back.
+     say so, and that a calmer wish or 'REGION' keeps it; "moved": the picture was shifted back.
 Never: several models for one picture, a second paid run without being asked, moving the user's objects
 (only api.mockup_set), saving the file.

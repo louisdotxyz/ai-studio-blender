@@ -41,11 +41,12 @@ FORMATS = [('PHOTO', "Photo", "The photo's own format"),
            ('16:9', "16:9", "Wide; Krea fills what the photo does not cover"),
            ('3:2', "3:2", ""), ('4:3', "4:3", ""), ('1:1', "1:1", ""), ('4:5', "4:5", ""), ('9:16', "9:16", "")]
 KREA_MODELS = [
-    ('REGION', "Blend In", "Krea 3, only inside the product's box: light, shadow and grain are matched, the rest "
-                           "of the photo stays pixel for pixel (about 77 credits at 2K)"),
-    ('NANO21', "Whole Picture", "Nano Banana 2.1 paints the whole picture anew from your montage: for night, "
-                                "another mood or filling a wider format (about 44 credits at 2K). People and things "
-                                "can change a little; your product is put back afterwards"),
+    ('NANO21', "Whole Picture", "Nano Banana 2.1 makes one photograph of your montage: the most natural result, also "
+                                "for night, another mood or filling a wider format (about 44 credits at 2K). People "
+                                "and things can change a little; your product is secured again afterwards"),
+    ('REGION', "Only the Product", "Krea 3, only inside the product's box: light, shadow and grain are matched, the "
+                                   "rest of the photo stays pixel for pixel (about 77 credits at 2K). Can look a "
+                                   "little pasted on"),
     ('PRECISE', "Around It", "Ideogram 4.5 Precise changes everything but the product (a mask keeps it as it "
                              "is): another environment, weather, time of day (about 163 credits)"),
 ]
@@ -181,7 +182,7 @@ class StudioMockup(PropertyGroup):
                          update=_montage_changed, options=set(),
                          description="The photo darker and cooler (towards dusk and night); the product keeps its light")
     # Krea
-    krea_model: EnumProperty(name="Krea", items=KREA_MODELS, default='REGION', options=set())
+    krea_model: EnumProperty(name="Krea", items=KREA_MODELS, default='NANO21', options=set())
     fidelity: FloatProperty(name="Keep My Product", default=1.0, min=0.0, max=1.0, subtype='FACTOR', options=set(),
                             description="After Krea: 100 % = every edge and detail of the product from your render "
                                         "(Krea's light and colour stay); 0 % = Krea's product as it painted it")
